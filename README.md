@@ -1,5 +1,9 @@
 # sharedrive
 
+!!!warning
+
+  **IN DEVELOPMENT**
+
 Experimental connectors and scripts for moving files across SharePoint, Google Drive, and S3 using a descriptor-driven workflow.
 
 ## Current scope
