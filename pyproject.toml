@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sharedrive"
+version = "0.0.1"
+description = "Connectors to make reading across content managment systems easier"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.10.6",
+    "pyyaml>=6.0.2",
+    "requests>=2.32.3",
+    "python-dotenv>=1.0.1",
+    # TODO: Move below dependencies to own groups? Make separate packages for each type of tool?
+    "GitPython>=3.1.44",
+    "google-auth-oauthlib>=1.2.1",
+    "google>=3.0.0",
+
+    # TODO: add to dedicated lib
+
+    "msal>=1.33.0",
+
+    # "dplib-py>=1.1.0", # NOTE: may want to add this in future as optional functionality for retrieving resources becomes more opinionated
+
+    # "networkx>=3.5" # NOTE: may/may not (risk of increasing scope) -- connecting cross system files via graph -- may not need anyway for this as it may be overkill 
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.optional-dependencies]
+dev = [
+    "jupyter",
+    "black",
+    "ipykernel>=6.29.5",
+    "ruff>=0.11.5"
+]
+
+docs = ["quarto-cli"]
+dev-datamgmt = [
+    "frictionless"
+]
+test = [
+    "pytest"
+]
+
+[tool.ruff]
+line-length = 88
+indent-width = 4
+
+[tool.ruff.format]
+quote-style = "double"
+line-ending = "auto"
+docstring-code-format = true
+skip-magic-trailing-comma = true
+preview = true  # Enables improved formatter behavior
+

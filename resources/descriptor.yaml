@@ -1,0 +1,8 @@
+"$schema": https://github.com/frictionlessdata/datapackage/blob/main/profiles/dataresource.json
+resources:
+  - name: placeholder
+    path: background/.gitkeep
+    description: Placeholder for background information
+  - name: exports
+    path: exports/.gitkeep
+    description: Placeholder for export files
