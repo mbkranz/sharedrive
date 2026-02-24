@@ -25,13 +25,9 @@ dependencies = [
     # "dplib-py>=1.1.0", # NOTE: may want to add this in future as optional functionality for retrieving resources becomes more opinionated
 
     # "networkx>=3.5" # NOTE: may/may not (risk of increasing scope) -- connecting cross system files via graph -- may not need anyway for this as it may be overkill 
-]
+    # NOTE: could add rustworkx or something like that -- its in sqllineage
 
-[tool.setuptools]
-package-dir = {"" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
+]   
 
 [project.optional-dependencies]
 dev = [
@@ -48,6 +44,9 @@ dev-datamgmt = [
 test = [
     "pytest"
 ]
+
+[tool.setuptools]
+packages = ["sharedrive"]
 
 [tool.ruff]
 line-length = 88

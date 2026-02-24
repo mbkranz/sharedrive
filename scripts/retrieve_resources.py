@@ -1,12 +1,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "python-dotenv>=1.0.0",
 #   "sharedrive",
-#   "pydantic>=2.10.6",
-#   "pyyaml>=6.0",
-#   "load_dotenv",
-# #  "cloudpathlib",
 #   "boto3"
 # ]
 # [tool.uv.sources]
@@ -31,7 +26,7 @@ from pydantic import BaseModel, Field, SecretStr, field_validator
 # from cloudpathlib import S3Path
 
 
-from pmd_utils.io.adapters.sharepoint import SharepointClient
+from sharedrive.sharepoint import SharepointClient
 
 load_dotenv()
 AZURE_TENANT_ID = os.getenv("AZURE_TENANT_ID")
@@ -171,6 +166,10 @@ def parse_s3_source_url(source_url: str) -> tuple[str, str]:
     return bucket, key
 
 def run(dry_run: bool, descriptor: Path|str, include_types: str|list[str] = "all") -> None:
+    clients = {}
+
+    if "all" in include_types or "sharepoint" in include_types:
+        clients["sharepoint"] = SpoConfig().to_client()
 
     if isinstance(descriptor,Path):
         resources = load_descriptor(descriptor)
@@ -208,8 +207,7 @@ def run(dry_run: bool, descriptor: Path|str, include_types: str|list[str] = "all
             continue
 
         if adapter_name == "sharepoint":
-            client = SpoConfig().to_client()
-            client.download_from_weburl(url=source_url, output_path=output_path, dry_run=dry_run)
+            clients["sharepoint"].download_from_weburl(url=source_url, output_path=output_path, dry_run=dry_run)
         elif adapter_name == "s3":
             client = boto3.client("s3")
             bucket, key = parse_s3_source_url(source_url)
