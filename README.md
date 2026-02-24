@@ -4,8 +4,8 @@ Experimental connectors and scripts for moving files across SharePoint, Google D
 
 ## Current scope
 
-- `src/sharedrive/sharepoint.py`: Microsoft Graph SharePoint client (`SharepointClient`)
-- `src/sharedrive/googledrive.py`: Google Drive client (`GoogleDriveClient`)
+- `sharedrive/sharepoint.py`: Microsoft Graph SharePoint client (`SharepointClient`)
+- `sharedrive/googledrive.py`: Google Drive client (`GoogleDriveClient`)
 - `scripts/retrieve_resources.py`: pulls resources from descriptor entries (SharePoint + S3 today)
 - `scripts/dev_adapters.py`: manual smoke-test script for adapter development
 
@@ -106,7 +106,7 @@ Use carefully:
 
 ## Known gaps
 
-- `src/sharedrive/cli.py` and `src/sharedrive/app.py` are currently placeholders.
+- `sharedrive/cli.py` and `sharedrive/app.py` are currently placeholders.
 - test suite scaffolding exists, but there are no committed tests yet.
 - retrieve script include choices contain legacy values (`background`, `output`) while adapter filtering currently behaves by adapter type (`sharepoint`, `s3`, `all`).
 
@@ -119,7 +119,7 @@ sharedrive/
   scripts/
     dev_adapters.py
     retrieve_resources.py
-  src/sharedrive/
+  sharedrive/
     sharepoint.py
     googledrive.py
     cli.py
