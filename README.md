@@ -4,77 +4,69 @@
 
   **IN DEVELOPMENT**
 
-Experimental connectors and scripts for moving files across SharePoint, Google Drive, and S3 using a descriptor-driven workflow.
+Experimental connectors and workflows for moving files across SharePoint, Google Drive, and S3.
 
 ## Current scope
 
 - `sharedrive/sharepoint.py`: Microsoft Graph SharePoint client (`SharepointClient`)
 - `sharedrive/googledrive.py`: Google Drive client (`GoogleDriveClient`)
-- `scripts/retrieve_resources.py`: pulls resources from descriptor entries (SharePoint + S3 today)
-- `scripts/dev_adapters.py`: manual smoke-test script for adapter development
-
-## Lineage and compatibility
-
-This repo is currently aligned with prior `pmd-utils` usage patterns in the All of Us repos:
-
-- `scripts/retrieve_resources.py` matches `allofus/ppsc-participant-tracks/scripts/retrieve_resources.py`
-- `scripts/dev_adapters.py` matches `allofus/ppsc-pmd-utils/scripts/dev/dev_adapters.py`
-- downstream repos that still import `pmd_utils.io.adapters.*` include:
-  - `allofus/ppsc-participant-tracks`
-  - `allofus/ppsc-salesforce`
-  - `allofus/aou-qualtrics-specs-poc`
-
-Important: the development scripts still import adapters from the `pmd_utils` namespace. Keep this in mind when wiring environments.
+- `sharedrive/azure.py`: SharePoint credential/config model (`SpoConfig`)
+- `sharedrive/aws.py`: S3 URL parsing/download helpers (cloudpathlib + boto3 fallback)
+- `sharedrive/retrieve.py`: reusable descriptor-based retrieval Python API
+- `sharedrive/cli.py`: Typer CLI (`sharedrive`)
+- `scripts/retrieve_resources.py`: compatibility wrapper for descriptor retrieval
+- `scripts/dev_adapters.py`: manual adapter smoke checks
 
 ## Setup
-
-### 1. Create environment
-
-Using `uv`:
 
 ```bash
 uv sync
 ```
 
-Using `pip`:
-
-```bash
-pip install -e ".[dev,test]"
-```
-
-### 2. Configure secrets
-
-```bash
-cp .env-sample .env
-```
-
-Set values for:
+Configure `.env` from `.env-sample` and set:
 
 - `AZURE_TENANT_ID`
 - `AZURE_CLIENT_ID`
 - `AZURE_CLIENT_SECRET`
 - `GOOGLE_APPLICATION_CREDENTIALS`
-- AWS credentials (if running S3 retrieval through `boto3`)
+- AWS credentials for S3 access
 
-## Descriptor-driven retrieval
+## Retrieval
 
-Run a dry-run first:
+CLI:
+
+```bash
+sharedrive retrieve run --descriptor resources/descriptor.yaml --dry-run
+sharedrive retrieve sharepoint --descriptor resources/descriptor.yaml
+sharedrive retrieve s3 --descriptor resources/descriptor.yaml
+```
+
+Python API:
+
+```python
+from pathlib import Path
+from sharedrive.retrieve import retrieve_from_descriptor
+
+summary = retrieve_from_descriptor(
+    descriptor=Path("resources/descriptor.yaml"),
+    include="all",  # or: "sharepoint", "s3", "googledrive", ["s3", "sharepoint"]
+    output_dir=Path("resources"),
+    dry_run=True,
+)
+
+if not summary.ok:
+    raise RuntimeError(f"Retrieval failed for {summary.failures} resources")
+```
+
+Compatibility script:
 
 ```bash
 python scripts/retrieve_resources.py --dry-run
 ```
 
-Typical runs:
+## Descriptor format
 
-```bash
-python scripts/retrieve_resources.py --include all
-python scripts/retrieve_resources.py --include sharepoint
-python scripts/retrieve_resources.py --include s3 --descriptor resources/descriptor.yaml
-```
-
-### Descriptor format
-
-`scripts/retrieve_resources.py` expects a top-level object with `resources`:
+`resources/descriptor.yaml` (or json/yml) must contain top-level `resources`:
 
 ```yaml
 resources:
@@ -82,7 +74,7 @@ resources:
     path: background/specs/spec-workbook.xlsx
     x-adapter: sharepoint
     sources:
-      - path: https://norc.sharepoint.com/sites/....
+      - path: https://norc.sharepoint.com/sites/...
 
   - name: source-export
     path: background/exports/source-export.csv
@@ -91,42 +83,67 @@ resources:
       - path: s3://my-bucket/path/to/source-export.csv
 ```
 
-Behavior notes:
+Compatibility behavior preserved:
 
-- `path` is required and is resolved under `--output-dir` unless absolute.
-- source URL can be from `sources[0].path` (preferred) or legacy `source`.
-- adapter resolution uses `x-adapter` first, then URL inference:
-  - SharePoint host -> `sharepoint`
-  - `s3://` or S3 HTTP URL -> `s3`
+- `resources` top-level array
+- `sources[].path` and legacy `source`
+- `x-adapter` override support
 
-## Adapter smoke testing
+## Documentation site (MkDocs)
 
-`scripts/dev_adapters.py` is a manual integration/dev script. It contains real-style example operations (get/download/update) and is not a unit test.
+This repository now uses MkDocs for docs-site navigation and static markdown docs.
 
-Use carefully:
+Install docs dependencies:
 
-- it can perform writes (`update_file`)
-- it uses hard-coded file IDs as examples
+```bash
+uv sync --extra docs
+```
 
-## Known gaps
+Run docs locally:
 
-- `sharedrive/cli.py` and `sharedrive/app.py` are currently placeholders.
-- test suite scaffolding exists, but there are no committed tests yet.
-- retrieve script include choices contain legacy values (`background`, `output`) while adapter filtering currently behaves by adapter type (`sharepoint`, `s3`, `all`).
+```bash
+uv run mkdocs serve
+```
+
+Build static docs:
+
+```bash
+uv run mkdocs build
+```
+
+Regenerate GitHub-viewable CLI/API markdown docs:
+
+```bash
+python scripts/update_docs_markdown.py
+```
+
+Docs sources:
+
+- `mkdocs.yml`
+- `docs/index.md`
+- `docs/cli.md`
+- `docs/api.md`
+- `scripts/update_docs_markdown.py`
 
 ## Repository layout
 
 ```text
 sharedrive/
-  resources/
-    descriptor.yaml
+  docs/
+    index.md
+    cli.md
+    api.md
   scripts/
     dev_adapters.py
     retrieve_resources.py
   sharedrive/
+    aws.py
+    azure.py
+    retrieve.py
     sharepoint.py
     googledrive.py
     cli.py
     app.py
-  tests/
+  resources/
+    descriptor.yaml
 ```
