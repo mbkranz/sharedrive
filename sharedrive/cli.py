@@ -46,8 +46,8 @@ app.add_typer(s3_app, name="s3")
 
 
 def _examples_epilog(*lines: str) -> str:
-    codeblocks = "\n\n".join(f"```bash\n{line.strip()}\n```" for line in lines)
-    return f"\n\n**Examples**\n\n{codeblocks}"
+    codeblocks = "\n\n".join(f"```bash\n\n\n{line.strip()}\n\n\n```" for line in lines)
+    return f"\n\n**Examples**\n\n\n{codeblocks}"
 
 
 def _echo_json(payload: Any) -> None:
