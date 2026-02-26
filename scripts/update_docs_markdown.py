@@ -20,11 +20,6 @@ RUNNER = CliRunner()
 CLI_COMMANDS: list[tuple[str, list[str]]] = [
     ("sharedrive --help", ["--help"]),
     ("sharedrive retrieve --help", ["retrieve", "--help"]),
-    ("sharedrive retrieve run --help", ["retrieve", "run", "--help"]),
-    ("sharedrive retrieve descriptor --help", ["retrieve", "descriptor", "--help"]),
-    ("sharedrive retrieve s3 --help", ["retrieve", "s3", "--help"]),
-    ("sharedrive retrieve sharepoint --help", ["retrieve", "sharepoint", "--help"]),
-    ("sharedrive retrieve googledrive --help", ["retrieve", "googledrive", "--help"]),
     ("sharedrive gdrive --help", ["gdrive", "--help"]),
     ("sharedrive gdrive list --help", ["gdrive", "list", "--help"]),
     ("sharedrive gdrive get --help", ["gdrive", "get", "--help"]),

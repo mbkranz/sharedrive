@@ -36,9 +36,10 @@ Configure `.env` from `.env-sample` and set:
 CLI:
 
 ```bash
-sharedrive retrieve run --descriptor resources/descriptor.yaml --dry-run
-sharedrive retrieve sharepoint --descriptor resources/descriptor.yaml
-sharedrive retrieve s3 --descriptor resources/descriptor.yaml
+sharedrive retrieve resources/descriptor.yaml --dry-run
+sharedrive retrieve resources/descriptor.yaml --include sharepoint
+sharedrive retrieve resources/descriptor.yaml --include s3,googledrive
+sharedrive retrieve resources/descriptor.yaml --include spec-workbook
 ```
 
 Python API:
@@ -88,6 +89,7 @@ Compatibility behavior preserved:
 - `resources` top-level array
 - `sources[].path` and legacy `source`
 - `x-adapter` override support
+- `targets` output paths beside `sources` (string, object, or list entries with `path`)
 
 ## Documentation site (MkDocs)
 

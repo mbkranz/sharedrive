@@ -10,7 +10,7 @@ import typer
 from dotenv import load_dotenv
 
 from sharedrive.aws import download_s3_url
-from sharedrive.retrieve import resolve_default_descriptor, retrieve_from_descriptor
+from sharedrive.retrieve import retrieve_from_descriptor
 
 try:
     from cloudpathlib import S3Path
@@ -28,10 +28,6 @@ app = typer.Typer(
     help="Shared drive utilities for SharePoint, Google Drive, and S3.",
     rich_markup_mode="markdown",
 )
-retrieve_app = typer.Typer(
-    help="Descriptor-driven retrieval commands.",
-    rich_markup_mode="markdown",
-)
 gdrive_app = typer.Typer(
     help="Google Drive commands.",
     rich_markup_mode="markdown",
@@ -44,7 +40,6 @@ s3_app = typer.Typer(
     help="S3 commands.",
     rich_markup_mode="markdown",
 )
-app.add_typer(retrieve_app, name="retrieve")
 app.add_typer(gdrive_app, name="gdrive")
 app.add_typer(sharepoint_app, name="sharepoint")
 app.add_typer(s3_app, name="s3")
@@ -72,9 +67,21 @@ def _make_gdrive_client(credentials_path: Optional[str], scope: Optional[list[st
     return GoogleDriveClient(credentials_path=path, scope=scope)
 
 
+def _parse_include_values(values: list[str] | None) -> str | list[str]:
+    if not values:
+        return "all"
+    tokens: list[str] = []
+    for value in values:
+        tokens.extend(part.strip() for part in value.split(","))
+    normalized = [token for token in tokens if token]
+    if not normalized or "all" in {token.lower() for token in normalized}:
+        return "all"
+    return normalized
+
+
 def _run_retrieve_command(
     descriptor: Path,
-    include: str,
+    include: str | list[str],
     output_dir: Path,
     dry_run: bool,
 ) -> None:
@@ -91,87 +98,40 @@ def _run_retrieve_command(
         raise typer.Exit(code=1)
 
 
-@retrieve_app.command(
-    "run",
+@app.command(
+    "retrieve",
     epilog=_examples_epilog(
-        "sharedrive retrieve run --dry-run",
-        "sharedrive retrieve run --descriptor resources/descriptor.yaml --include all",
-        "sharedrive retrieve run --include sharepoint --output-dir resources",
+        "sharedrive retrieve resources/descriptor.yaml --dry-run",
+        "sharedrive retrieve resources/descriptor.yaml --include s3 --include sharepoint",
+        "sharedrive retrieve resources/descriptor.yaml --include spec-workbook --output-dir resources",
     ),
 )
-def retrieve_run(
-    descriptor: Path = typer.Option(resolve_default_descriptor(), exists=False, help="Descriptor file path."),
-    include: str = typer.Option("all", help="One of: all, sharepoint, s3, googledrive"),
+def retrieve(
+    descriptor: Path = typer.Argument(
+        ...,
+        exists=False,
+        help="Descriptor file path.",
+    ),
+    include: Optional[list[str]] = typer.Option(
+        None,
+        "--include",
+        "-i",
+        help=(
+            "Include adapter types and/or resource names. "
+            "Repeat the option or pass a comma-separated list."
+        ),
+    ),
     output_dir: Path = typer.Option(Path("resources"), help="Base output directory for relative resource paths."),
     dry_run: bool = typer.Option(False, help="Print actions without downloading."),
 ) -> None:
-    """Copy resources from a descriptor and exit non-zero if any resource fails."""
-    _run_retrieve_command(descriptor=descriptor, include=include, output_dir=output_dir, dry_run=dry_run)
-
-
-@retrieve_app.command(
-    "descriptor",
-    epilog=_examples_epilog(
-        "sharedrive retrieve descriptor --descriptor resources/descriptor.yaml",
-        "sharedrive retrieve descriptor --include s3 --dry-run",
-    ),
-)
-def retrieve_descriptor(
-    descriptor: Path = typer.Option(resolve_default_descriptor(), exists=False, help="Descriptor file path."),
-    include: str = typer.Option("all", help="One of: all, sharepoint, s3, googledrive"),
-    output_dir: Path = typer.Option(Path("resources"), help="Base output directory for relative resource paths."),
-    dry_run: bool = typer.Option(False, help="Print actions without downloading."),
-) -> None:
-    """Copy resources from a descriptor; explicit alias for retrieve run."""
-    _run_retrieve_command(descriptor=descriptor, include=include, output_dir=output_dir, dry_run=dry_run)
-
-
-@retrieve_app.command(
-    "s3",
-    epilog=_examples_epilog(
-        "sharedrive retrieve s3 --descriptor resources/descriptor.yaml",
-        "sharedrive retrieve s3 --output-dir resources/background --dry-run",
-    ),
-)
-def retrieve_s3(
-    descriptor: Path = typer.Option(resolve_default_descriptor(), exists=False, help="Descriptor file path."),
-    output_dir: Path = typer.Option(Path("resources"), help="Base output directory for relative resource paths."),
-    dry_run: bool = typer.Option(False, help="Print actions without downloading."),
-) -> None:
-    """Copy only S3-backed resources from a descriptor."""
-    _run_retrieve_command(descriptor=descriptor, include="s3", output_dir=output_dir, dry_run=dry_run)
-
-
-@retrieve_app.command(
-    "sharepoint",
-    epilog=_examples_epilog(
-        "sharedrive retrieve sharepoint --descriptor resources/descriptor.yaml",
-        "sharedrive retrieve sharepoint --dry-run",
-    ),
-)
-def retrieve_sharepoint(
-    descriptor: Path = typer.Option(resolve_default_descriptor(), exists=False, help="Descriptor file path."),
-    output_dir: Path = typer.Option(Path("resources"), help="Base output directory for relative resource paths."),
-    dry_run: bool = typer.Option(False, help="Print actions without downloading."),
-) -> None:
-    """Copy only SharePoint-backed resources from a descriptor."""
-    _run_retrieve_command(descriptor=descriptor, include="sharepoint", output_dir=output_dir, dry_run=dry_run)
-
-
-@retrieve_app.command(
-    "googledrive",
-    epilog=_examples_epilog(
-        "sharedrive retrieve googledrive --descriptor resources/descriptor.yaml",
-        "sharedrive retrieve googledrive --output-dir resources/background",
-    ),
-)
-def retrieve_googledrive(
-    descriptor: Path = typer.Option(resolve_default_descriptor(), exists=False, help="Descriptor file path."),
-    output_dir: Path = typer.Option(Path("resources"), help="Base output directory for relative resource paths."),
-    dry_run: bool = typer.Option(False, help="Print actions without downloading."),
-) -> None:
-    """Copy only Google Drive-backed resources from a descriptor."""
-    _run_retrieve_command(descriptor=descriptor, include="googledrive", output_dir=output_dir, dry_run=dry_run)
+    """Retrieve descriptor resources by adapter type or resource name filters."""
+    include_values = _parse_include_values(include)
+    _run_retrieve_command(
+        descriptor=descriptor,
+        include=include_values,
+        output_dir=output_dir,
+        dry_run=dry_run,
+    )
 
 
 @gdrive_app.command(

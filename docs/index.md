@@ -20,7 +20,7 @@ Configure `.env` with:
 CLI:
 
 ```bash
-sharedrive retrieve run --descriptor resources/descriptor.yaml --dry-run
+sharedrive retrieve resources/descriptor.yaml --dry-run
 ```
 
 Python:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -91,6 +92,57 @@ def resource_output_path(resource: dict[str, Any], output_dir: Path) -> Path:
     return output_dir / path
 
 
+def resource_output_paths(resource: dict[str, Any], output_dir: Path) -> list[Path]:
+    """Resolve primary resource.path plus optional targets[] into local output paths."""
+
+    def _resolve_local_path(path_value: str) -> Path:
+        path = Path(path_value.strip())
+        if path.is_absolute():
+            return path
+        return output_dir / path
+
+    paths: list[Path] = [resource_output_path(resource, output_dir)]
+    targets = resource.get("targets")
+    if targets is None:
+        return paths
+
+    target_values: list[str] = []
+    if isinstance(targets, str):
+        target_values.append(targets)
+    elif isinstance(targets, dict):
+        target_path = targets.get("path")
+        if isinstance(target_path, str) and target_path.strip():
+            target_values.append(target_path)
+        else:
+            raise ValueError("Target object must include a non-empty string 'path'")
+    elif isinstance(targets, list):
+        for idx, target in enumerate(targets):
+            if isinstance(target, str) and target.strip():
+                target_values.append(target)
+            elif isinstance(target, dict):
+                target_path = target.get("path")
+                if isinstance(target_path, str) and target_path.strip():
+                    target_values.append(target_path)
+                else:
+                    raise ValueError(
+                        f"Target at index {idx} must include a non-empty string 'path'"
+                    )
+            else:
+                raise ValueError(
+                    "targets must contain strings or objects with 'path' values"
+                )
+    else:
+        raise ValueError(
+            "targets must be a string, object with 'path', or list of target entries"
+        )
+
+    deduped: dict[str, Path] = {str(paths[0]): paths[0]}
+    for target_value in target_values:
+        resolved = _resolve_local_path(target_value)
+        deduped.setdefault(str(resolved), resolved)
+    return list(deduped.values())
+
+
 def resource_adapter_name(resource: dict[str, Any], source_url: str | None) -> str:
     """Resolve adapter from x-adapter override or infer from URL."""
     adapter = resource.get("x-adapter")
@@ -118,7 +170,12 @@ def _normalize_include(include: str | Iterable[str]) -> set[str]:
         include_items = [include]
     else:
         include_items = list(include)
-    normalized = {item.strip().lower() for item in include_items if item and item.strip()}
+    flattened: list[str] = []
+    for item in include_items:
+        if not item:
+            continue
+        flattened.extend(part.strip() for part in str(item).split(","))
+    normalized = {item.lower() for item in flattened if item}
     return normalized or {"all"}
 
 
@@ -167,10 +224,15 @@ def retrieve_from_descriptor(
             continue
 
         resource_name = resource.get("name", f"resource[{index}]")
+        resource_name_key = str(resource_name).strip().lower()
         source_url = resource_source_url(resource)
         adapter_name = resource_adapter_name(resource, source_url)
 
-        if "all" not in include_set and adapter_name not in include_set:
+        if (
+            "all" not in include_set
+            and adapter_name not in include_set
+            and resource_name_key not in include_set
+        ):
             emit(
                 f"Skipping {resource_name}; adapter '{adapter_name}' not selected."
             )
@@ -182,7 +244,15 @@ def retrieve_from_descriptor(
             continue
 
         try:
-            output_path = resource_output_path(resource, output_dir_path)
+            output_paths = resource_output_paths(resource, output_dir_path)
+            output_path = output_paths[0]
+            if dry_run:
+                for destination in output_paths:
+                    emit(f"Would download {source_url} to {destination}")
+                summary.dry_run_actions += len(output_paths)
+                continue
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+
             if adapter_name == "sharepoint":
                 if "sharepoint" not in clients:
                     factory = (
@@ -193,47 +263,40 @@ def retrieve_from_descriptor(
                 clients["sharepoint"].download_from_weburl(
                     url=source_url,
                     output_path=output_path,
-                    dry_run=dry_run,
+                    dry_run=False,
                 )
-                if dry_run:
-                    summary.dry_run_actions += 1
-                else:
-                    summary.downloaded += 1
             elif adapter_name == "s3":
                 result = download_s3_url(
                     source_url,
                     output_path,
-                    dry_run=dry_run,
+                    dry_run=False,
                     use_cloudpathlib=use_cloudpathlib,
                 )
                 if result is None:
-                    summary.dry_run_actions += 1
-                else:
-                    summary.downloaded += 1
+                    raise RuntimeError("S3 download returned no output path")
             elif adapter_name == "googledrive":
-                if dry_run:
-                    emit(
-                        f"Would download Google Drive resource {source_url} to {output_path}"
+                if "googledrive" not in clients:
+                    factory = (
+                        googledrive_client_factory
+                        or _default_googledrive_client_factory
                     )
-                    summary.dry_run_actions += 1
-                else:
-                    if "googledrive" not in clients:
-                        factory = (
-                            googledrive_client_factory
-                            or _default_googledrive_client_factory
-                        )
-                        clients["googledrive"] = factory()
-                    clients["googledrive"].download_from_weburl(
-                        source_url,
-                        output_path=str(output_path),
-                    )
-                    emit(f"Downloaded Google Drive resource to {output_path}")
-                    summary.downloaded += 1
+                    clients["googledrive"] = factory()
+                clients["googledrive"].download_from_weburl(
+                    source_url,
+                    output_path=str(output_path),
+                )
             else:
                 emit(
                     f"Warning, {resource_name} has unsupported adapter '{adapter_name}'"
                 )
                 summary.failures += 1
+                continue
+
+            for destination in output_paths[1:]:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(output_path, destination)
+
+            summary.downloaded += len(output_paths)
         except Exception as exc:
             emit(f"Warning, {resource_name} failed: {exc}")
             summary.failures += 1
@@ -265,6 +328,7 @@ __all__ = [
     "resolve_default_descriptor",
     "resource_source_url",
     "resource_output_path",
+    "resource_output_paths",
     "resource_adapter_name",
     "retrieve_from_descriptor",
     "retrieve_resources",

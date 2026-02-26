@@ -15,126 +15,33 @@ Usage: sharedrive [OPTIONS] COMMAND [ARGS]...
  --help                        Show this message and exit.
 
  Commands
- gdrive                                       Google Drive commands.
- retrieve                                     Descriptor-driven retrieval commands.
- s3                                           S3 commands.
- sharepoint                                   SharePoint commands.
+ gdrive                     Google Drive commands.
+ retrieve                   Retrieve descriptor resources by adapter type or resource name filters.
+ s3                         S3 commands.
+ sharepoint                 SharePoint commands.
 ```
 
 ## `sharedrive retrieve --help`
 
 ```text
-Usage: sharedrive retrieve [OPTIONS] COMMAND [ARGS]...
+Usage: sharedrive retrieve [OPTIONS] DESCRIPTOR
 
- Descriptor-driven retrieval commands.
+ Retrieve descriptor resources by adapter type or resource name filters.
 
- Options
- --help          Show this message and exit.
-
- Commands
- descriptor                   Copy resources from a descriptor; explicit alias for retrieve run.
- googledrive                  Copy only Google Drive-backed resources from a descriptor.
- run                          Copy resources from a descriptor and exit non-zero if any resource fails.
- s3                           Copy only S3-backed resources from a descriptor.
- sharepoint                   Copy only SharePoint-backed resources from a descriptor.
-```
-
-## `sharedrive retrieve run --help`
-
-```text
-Usage: sharedrive retrieve run [OPTIONS]
-
- Copy resources from a descriptor and exit non-zero if any resource fails.
+ Arguments
+ *    descriptor      PATH  Descriptor file path. [default: None] [required]
 
  Options
- --descriptor                    PATH  Descriptor file path. [default: resources\descriptor.yaml]
- --include                       TEXT  One of: all, sharepoint, s3, googledrive [default: all]
- --output-dir                    PATH  Base output directory for relative resource paths. [default: resources]
- --dry-run       --no-dry-run          Print actions without downloading. [default: no-dry-run]
- --help                                Show this message and exit.
+ --include     -i                  TEXT  Include adapter types and/or resource names. Repeat the option or pass a comma-separated list. [default: None]
+ --output-dir                      PATH  Base output directory for relative resource paths. [default: resources]
+ --dry-run         --no-dry-run          Print actions without downloading. [default: no-dry-run]
+ --help                                  Show this message and exit.
 
 
  **Examples**
- ```bash sharedrive retrieve run --dry-run ```
- ```bash sharedrive retrieve run --descriptor resources/descriptor.yaml --include all ```
- ```bash sharedrive retrieve run --include sharepoint --output-dir resources ```
-```
-
-## `sharedrive retrieve descriptor --help`
-
-```text
-Usage: sharedrive retrieve descriptor [OPTIONS]
-
- Copy resources from a descriptor; explicit alias for retrieve run.
-
- Options
- --descriptor                    PATH  Descriptor file path. [default: resources\descriptor.yaml]
- --include                       TEXT  One of: all, sharepoint, s3, googledrive [default: all]
- --output-dir                    PATH  Base output directory for relative resource paths. [default: resources]
- --dry-run       --no-dry-run          Print actions without downloading. [default: no-dry-run]
- --help                                Show this message and exit.
-
-
- **Examples**
- ```bash sharedrive retrieve descriptor --descriptor resources/descriptor.yaml ```
- ```bash sharedrive retrieve descriptor --include s3 --dry-run ```
-```
-
-## `sharedrive retrieve s3 --help`
-
-```text
-Usage: sharedrive retrieve s3 [OPTIONS]
-
- Copy only S3-backed resources from a descriptor.
-
- Options
- --descriptor                    PATH  Descriptor file path. [default: resources\descriptor.yaml]
- --output-dir                    PATH  Base output directory for relative resource paths. [default: resources]
- --dry-run       --no-dry-run          Print actions without downloading. [default: no-dry-run]
- --help                                Show this message and exit.
-
-
- **Examples**
- ```bash sharedrive retrieve s3 --descriptor resources/descriptor.yaml ```
- ```bash sharedrive retrieve s3 --output-dir resources/background --dry-run ```
-```
-
-## `sharedrive retrieve sharepoint --help`
-
-```text
-Usage: sharedrive retrieve sharepoint [OPTIONS]
-
- Copy only SharePoint-backed resources from a descriptor.
-
- Options
- --descriptor                    PATH  Descriptor file path. [default: resources\descriptor.yaml]
- --output-dir                    PATH  Base output directory for relative resource paths. [default: resources]
- --dry-run       --no-dry-run          Print actions without downloading. [default: no-dry-run]
- --help                                Show this message and exit.
-
-
- **Examples**
- ```bash sharedrive retrieve sharepoint --descriptor resources/descriptor.yaml ```
- ```bash sharedrive retrieve sharepoint --dry-run ```
-```
-
-## `sharedrive retrieve googledrive --help`
-
-```text
-Usage: sharedrive retrieve googledrive [OPTIONS]
-
- Copy only Google Drive-backed resources from a descriptor.
-
- Options
- --descriptor                    PATH  Descriptor file path. [default: resources\descriptor.yaml]
- --output-dir                    PATH  Base output directory for relative resource paths. [default: resources]
- --dry-run       --no-dry-run          Print actions without downloading. [default: no-dry-run]
- --help                                Show this message and exit.
-
-
- **Examples**
- ```bash sharedrive retrieve googledrive --descriptor resources/descriptor.yaml ```
- ```bash sharedrive retrieve googledrive --output-dir resources/background ```
+ ```bash sharedrive retrieve resources/descriptor.yaml --dry-run ```
+ ```bash sharedrive retrieve resources/descriptor.yaml --include s3 --include sharepoint ```
+ ```bash sharedrive retrieve resources/descriptor.yaml --include spec-workbook --output-dir resources ```
 ```
 
 ## `sharedrive gdrive --help`
