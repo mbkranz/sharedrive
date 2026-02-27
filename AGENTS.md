@@ -8,7 +8,7 @@ Build and evolve reusable shared-drive adapters (SharePoint, Google Drive, S3-or
 
 ## Fast context
 
-- Main adapters live in `src/sharedrive/sharepoint.py` and `src/sharedrive/googledrive.py`.
+- Main adapters live in `sharedrive/sharepoint.py` and `sharedrive/googledrive.py`.
 - Retrieval workflow is in `scripts/retrieve_resources.py`.
 - Manual adapter smoke checks are in `scripts/dev_adapters.py`.
 - Current script lineage intentionally mirrors:
@@ -17,11 +17,12 @@ Build and evolve reusable shared-drive adapters (SharePoint, Google Drive, S3-or
 
 ## Preferred commands
 
-- Install: `uv sync`
+- Install (dev): `uv sync --extra dev --extra test`
+- Install (docs): `uv sync --extra docs`
 - Lint: `uv run ruff check .`
 - Format: `uv run ruff format .`
 - Tests: `uv run pytest`
-- Safe retrieval dry-run: `python scripts/retrieve_resources.py --dry-run`
+- Safe retrieval dry-run: `uv run python scripts/retrieve_resources.py --dry-run`
 
 ## Development guardrails
 

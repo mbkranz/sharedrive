@@ -19,8 +19,61 @@ Experimental connectors and workflows for moving files across SharePoint, Google
 
 ## Setup
 
+### Prerequisites
+
+- Python 3.12+ (see `requires-python` in `pyproject.toml`)
+- `uv` installed (recommended)
+  - Install instructions: https://docs.astral.sh/uv/getting-started/installation/
+
+### Install (CLI tool)
+
+If you primarily want the `sharedrive` CLI, install it as a `uv` tool (no repo checkout / venv activation needed):
+
+```bash
+# from a local clone (path to the git repo)
+uv tool install "<path-to-sharedrive-repo>"
+
+# if you're already in the repo directory
+uv tool install .
+
+# OR from a git repo URL
+uv tool install "sharedrive @ git+https://github.com/<org>/<repo>.git"
+```
+
+After install, run:
+
+```bash
+sharedrive --help
+```
+
+### Install (Python API dependency)
+
+If you want to call `sharedrive` from your own Python project:
+
+```bash
+# from a local clone (path to the git repo)
+uv add "<path-to-sharedrive-repo>"
+
+# OR from a git repo URL
+uv add "sharedrive @ git+https://github.com/<org>/<repo>.git"
+```
+
+Alternative (without `uv`):
+
+```bash
+pip install "<path-to-sharedrive-repo>"
+
+# or, if you're already in the repo directory
+pip install .
+```
+
+### Install (repo development)
+
+If you are developing in this repository:
+
 ```bash
 uv sync
+uv sync --extra dev --extra test
 ```
 
 Configure `.env` from `.env-sample` and set:
@@ -40,6 +93,12 @@ sharedrive retrieve resources/descriptor.yaml --dry-run
 sharedrive retrieve resources/descriptor.yaml --include sharepoint
 sharedrive retrieve resources/descriptor.yaml --include s3,googledrive
 sharedrive retrieve resources/descriptor.yaml --include spec-workbook
+```
+
+If you are running from a repo checkout without activating an environment, prefix commands with `uv run`:
+
+```bash
+uv run sharedrive retrieve resources/descriptor.yaml --dry-run
 ```
 
 Python API:
@@ -62,7 +121,7 @@ if not summary.ok:
 Compatibility script:
 
 ```bash
-python scripts/retrieve_resources.py --dry-run
+uv run python scripts/retrieve_resources.py --dry-run
 ```
 
 ## Descriptor format
@@ -116,7 +175,7 @@ uv run mkdocs build
 Regenerate GitHub-viewable CLI/API markdown docs:
 
 ```bash
-python scripts/update_docs_markdown.py
+uv run python scripts/update_docs_markdown.py
 ```
 
 Docs sources:

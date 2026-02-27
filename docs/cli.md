@@ -7,18 +7,19 @@ Auto-generated from live `sharedrive --help` output.
 ```text
 Usage: sharedrive [OPTIONS] COMMAND [ARGS]...
 
- Shared drive utilities for SharePoint, Google Drive, and S3.
+  Shared drive utilities for SharePoint, Google Drive, and S3.
 
- Options
- --install-completion          Install completion for the current shell.
- --show-completion             Show completion for the current shell, to copy it or customize the installation.
- --help                        Show this message and exit.
+Options:
+  --install-completion  Install completion for the current shell.
+  --show-completion     Show completion for the current shell, to copy it or
+                        customize the installation.
+  --help                Show this message and exit.
 
- Commands
- gdrive                     Google Drive commands.
- retrieve                   Retrieve descriptor resources by adapter type or resource name filters.
- s3                         S3 commands.
- sharepoint                 SharePoint commands.
+Commands:
+  retrieve    Retrieve descriptor resources by adapter type or resource...
+  gdrive      Google Drive commands.
+  sharepoint  SharePoint commands.
+  s3          S3 commands.
 ```
 
 ## `sharedrive retrieve --help`
@@ -26,22 +27,43 @@ Usage: sharedrive [OPTIONS] COMMAND [ARGS]...
 ```text
 Usage: sharedrive retrieve [OPTIONS] DESCRIPTOR
 
- Retrieve descriptor resources by adapter type or resource name filters.
+  Retrieve descriptor resources by adapter type or resource name filters.
 
- Arguments
- *    descriptor      PATH  Descriptor file path. [default: None] [required]
+Arguments:
+  DESCRIPTOR  Descriptor file path.  [required]
 
- Options
- --include     -i                  TEXT  Include adapter types and/or resource names. Repeat the option or pass a comma-separated list. [default: None]
- --output-dir                      PATH  Base output directory for relative resource paths. [default: resources]
- --dry-run         --no-dry-run          Print actions without downloading. [default: no-dry-run]
- --help                                  Show this message and exit.
+Options:
+  -i, --include TEXT        Include adapter types and/or resource names. Repeat
+                            the option or pass a comma-separated list.
+  --output-dir PATH         Base output directory for relative resource paths.
+                            [default: resources]
+  --dry-run / --no-dry-run  Print actions without downloading.  [default: no-
+                            dry-run]
+  --env-file PATH           Path to .env file for credentials. Defaults to .env
+                            in the current directory.
+  --help                    Show this message and exit.
 
+  **Examples**
 
- **Examples**
- ```bash sharedrive retrieve resources/descriptor.yaml --dry-run ```
- ```bash sharedrive retrieve resources/descriptor.yaml --include s3 --include sharepoint ```
- ```bash sharedrive retrieve resources/descriptor.yaml --include spec-workbook --output-dir resources ```
+  ```bash
+
+  sharedrive retrieve resources/descriptor.yaml --dry-run
+
+  ```
+
+  ```bash
+
+  sharedrive retrieve resources/descriptor.yaml --include s3 --include
+  sharepoint
+
+  ```
+
+  ```bash
+
+  sharedrive retrieve resources/descriptor.yaml --include spec-workbook
+  --output-dir resources
+
+  ```
 ```
 
 ## `sharedrive gdrive --help`
@@ -49,16 +71,16 @@ Usage: sharedrive retrieve [OPTIONS] DESCRIPTOR
 ```text
 Usage: sharedrive gdrive [OPTIONS] COMMAND [ARGS]...
 
- Google Drive commands.
+  Google Drive commands.
 
- Options
- --help          Show this message and exit.
+Options:
+  --help  Show this message and exit.
 
- Commands
- download            Download one Google Drive file and print the written local output path.
- export              Export a Google Workspace file and print output path or exported byte count.
- get                 Print JSON metadata for one Google Drive file resolved from an ID or web URL.
- list                Print JSON metadata for all files visible to the authenticated Google Drive client.
+Commands:
+  list      Print JSON metadata for all files visible to the authenticated...
+  get       Print JSON metadata for one Google Drive file resolved from an...
+  download  Download one Google Drive file and print the written local...
+  export    Export a Google Workspace file and print output path or...
 ```
 
 ## `sharedrive gdrive list --help`
@@ -66,16 +88,28 @@ Usage: sharedrive gdrive [OPTIONS] COMMAND [ARGS]...
 ```text
 Usage: sharedrive gdrive list [OPTIONS]
 
- Print JSON metadata for all files visible to the authenticated Google Drive client.
+  Print JSON metadata for all files visible to the authenticated Google Drive
+  client.
 
- Options
- --credentials-path        TEXT  Path to service account JSON; defaults to GOOGLE_APPLICATION_CREDENTIALS. [default: None]
- --help                          Show this message and exit.
+Options:
+  --credentials-path TEXT  Path to service account JSON; defaults to
+                           GOOGLE_APPLICATION_CREDENTIALS.
+  --help                   Show this message and exit.
 
+  **Examples**
 
- **Examples**
- ```bash sharedrive gdrive list ```
- ```bash sharedrive gdrive list --credentials-path ./secrets/google-service-account.json ```
+  ```bash
+
+  sharedrive gdrive list
+
+  ```
+
+  ```bash
+
+  sharedrive gdrive list --credentials-path ./secrets/google-service-
+  account.json
+
+  ```
 ```
 
 ## `sharedrive gdrive get --help`
@@ -83,19 +117,28 @@ Usage: sharedrive gdrive list [OPTIONS]
 ```text
 Usage: sharedrive gdrive get [OPTIONS] FILE_ID_OR_URL
 
- Print JSON metadata for one Google Drive file resolved from an ID or web URL.
+  Print JSON metadata for one Google Drive file resolved from an ID or web URL.
 
- Arguments
- *    file_id_or_url      TEXT  Google file ID or web URL. [default: None] [required]
+Arguments:
+  FILE_ID_OR_URL  Google file ID or web URL.  [required]
 
- Options
- --credentials-path        TEXT  Path to credentials JSON. [default: None]
- --help                          Show this message and exit.
+Options:
+  --credentials-path TEXT  Path to credentials JSON.
+  --help                   Show this message and exit.
 
+  **Examples**
 
- **Examples**
- ```bash sharedrive gdrive get 1lvWns43FFPerUjFpHPFfFnPLr-B-ERAqG83AVC4bpME ```
- ```bash sharedrive gdrive get https://docs.google.com/document/d/<id>/edit ```
+  ```bash
+
+  sharedrive gdrive get 1lvWns43FFPerUjFpHPFfFnPLr-B-ERAqG83AVC4bpME
+
+  ```
+
+  ```bash
+
+  sharedrive gdrive get https://docs.google.com/document/d/<id>/edit
+
+  ```
 ```
 
 ## `sharedrive gdrive download --help`
@@ -103,20 +146,31 @@ Usage: sharedrive gdrive get [OPTIONS] FILE_ID_OR_URL
 ```text
 Usage: sharedrive gdrive download [OPTIONS] FILE_ID_OR_URL OUTPUT_PATH
 
- Download one Google Drive file and print the written local output path.
+  Download one Google Drive file and print the written local output path.
 
- Arguments
- *    file_id_or_url      TEXT  Google file ID or web URL. [default: None] [required]
- *    output_path         PATH  Local output path. [default: None] [required]
+Arguments:
+  FILE_ID_OR_URL  Google file ID or web URL.  [required]
+  OUTPUT_PATH     Local output path.  [required]
 
- Options
- --credentials-path        TEXT  Path to credentials JSON. [default: None]
- --help                          Show this message and exit.
+Options:
+  --credentials-path TEXT  Path to credentials JSON.
+  --help                   Show this message and exit.
 
+  **Examples**
 
- **Examples**
- ```bash sharedrive gdrive download 1lvWns43FFPerUjFpHPFfFnPLr-B-ERAqG83AVC4bpME resources/test.docx ```
- ```bash sharedrive gdrive download https://docs.google.com/document/d/<id>/edit resources/test.docx ```
+  ```bash
+
+  sharedrive gdrive download 1lvWns43FFPerUjFpHPFfFnPLr-B-ERAqG83AVC4bpME
+  resources/test.docx
+
+  ```
+
+  ```bash
+
+  sharedrive gdrive download https://docs.google.com/document/d/<id>/edit
+  resources/test.docx
+
+  ```
 ```
 
 ## `sharedrive gdrive export --help`
@@ -124,21 +178,32 @@ Usage: sharedrive gdrive download [OPTIONS] FILE_ID_OR_URL OUTPUT_PATH
 ```text
 Usage: sharedrive gdrive export [OPTIONS] FILE_ID_OR_URL
 
- Export a Google Workspace file and print output path or exported byte count.
+  Export a Google Workspace file and print output path or exported byte count.
 
- Arguments
- *    file_id_or_url      TEXT  Google file ID or web URL. [default: None] [required]
+Arguments:
+  FILE_ID_OR_URL  Google file ID or web URL.  [required]
 
- Options
- --mime-type               TEXT  Target export MIME type. [default: None]
- --output-path             PATH  Optional output path. [default: None]
- --credentials-path        TEXT  Path to credentials JSON. [default: None]
- --help                          Show this message and exit.
+Options:
+  --mime-type TEXT         Target export MIME type.
+  --output-path PATH       Optional output path.
+  --credentials-path TEXT  Path to credentials JSON.
+  --help                   Show this message and exit.
 
+  **Examples**
 
- **Examples**
- ```bash sharedrive gdrive export 1lvWns43FFPerUjFpHPFfFnPLr-B-ERAqG83AVC4bpME --mime-type application/pdf --output-path resources/test.pdf ```
- ```bash sharedrive gdrive export https://docs.google.com/spreadsheets/d/<id>/edit --mime-type text/csv ```
+  ```bash
+
+  sharedrive gdrive export 1lvWns43FFPerUjFpHPFfFnPLr-B-ERAqG83AVC4bpME --mime-
+  type application/pdf --output-path resources/test.pdf
+
+  ```
+
+  ```bash
+
+  sharedrive gdrive export https://docs.google.com/spreadsheets/d/<id>/edit
+  --mime-type text/csv
+
+  ```
 ```
 
 ## `sharedrive sharepoint --help`
@@ -146,14 +211,14 @@ Usage: sharedrive gdrive export [OPTIONS] FILE_ID_OR_URL
 ```text
 Usage: sharedrive sharepoint [OPTIONS] COMMAND [ARGS]...
 
- SharePoint commands.
+  SharePoint commands.
 
- Options
- --help          Show this message and exit.
+Options:
+  --help  Show this message and exit.
 
- Commands
- download             Download one SharePoint file to disk and print the local path when not dry-run.
- get                  Print JSON metadata for a SharePoint file or folder URL.
+Commands:
+  get       Print JSON metadata for a SharePoint file or folder URL.
+  download  Download one SharePoint file to disk and print the local path...
 ```
 
 ## `sharedrive sharepoint get --help`
@@ -161,17 +226,22 @@ Usage: sharedrive sharepoint [OPTIONS] COMMAND [ARGS]...
 ```text
 Usage: sharedrive sharepoint get [OPTIONS] URL
 
- Print JSON metadata for a SharePoint file or folder URL.
+  Print JSON metadata for a SharePoint file or folder URL.
 
- Arguments
- *    url      TEXT  SharePoint URL. [default: None] [required]
+Arguments:
+  URL  SharePoint URL.  [required]
 
- Options
- --help          Show this message and exit.
+Options:
+  --help  Show this message and exit.
 
+  **Examples**
 
- **Examples**
- ```bash sharedrive sharepoint get https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx ```
+  ```bash
+
+  sharedrive sharepoint get
+  https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx
+
+  ```
 ```
 
 ## `sharedrive sharepoint download --help`
@@ -179,20 +249,34 @@ Usage: sharedrive sharepoint get [OPTIONS] URL
 ```text
 Usage: sharedrive sharepoint download [OPTIONS] URL OUTPUT_PATH
 
- Download one SharePoint file to disk and print the local path when not dry-run.
+  Download one SharePoint file to disk and print the local path when not dry-
+  run.
 
- Arguments
- *    url              TEXT  SharePoint URL. [default: None] [required]
- *    output_path      PATH  Local output path. [default: None] [required]
+Arguments:
+  URL          SharePoint URL.  [required]
+  OUTPUT_PATH  Local output path.  [required]
 
- Options
- --dry-run    --no-dry-run      Print action only. [default: no-dry-run]
- --help                         Show this message and exit.
+Options:
+  --dry-run / --no-dry-run  Print action only.  [default: no-dry-run]
+  --help                    Show this message and exit.
 
+  **Examples**
 
- **Examples**
- ```bash sharedrive sharepoint download https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx resources/file.xlsx ```
- ```bash sharedrive sharepoint download https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx resources/file.xlsx --dry-run ```
+  ```bash
+
+  sharedrive sharepoint download
+  https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx
+  resources/file.xlsx
+
+  ```
+
+  ```bash
+
+  sharedrive sharepoint download
+  https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx
+  resources/file.xlsx --dry-run
+
+  ```
 ```
 
 ## `sharedrive s3 --help`
@@ -200,15 +284,15 @@ Usage: sharedrive sharepoint download [OPTIONS] URL OUTPUT_PATH
 ```text
 Usage: sharedrive s3 [OPTIONS] COMMAND [ARGS]...
 
- S3 commands.
+  S3 commands.
 
- Options
- --help          Show this message and exit.
+Options:
+  --help  Show this message and exit.
 
- Commands
- cat        Print text contents of an S3 object decoded with the selected encoding.
- cp         Copy one S3 object to a local path and print the local file path when written.
- ls         List entries under an S3 prefix and print one path per line.
+Commands:
+  cp   Copy one S3 object to a local path and print the local file path...
+  ls   List entries under an S3 prefix and print one path per line.
+  cat  Print text contents of an S3 object decoded with the selected encoding.
 ```
 
 ## `sharedrive s3 cp --help`
@@ -216,21 +300,33 @@ Usage: sharedrive s3 [OPTIONS] COMMAND [ARGS]...
 ```text
 Usage: sharedrive s3 cp [OPTIONS] SOURCE_URL OUTPUT_PATH
 
- Copy one S3 object to a local path and print the local file path when written.
+  Copy one S3 object to a local path and print the local file path when written.
 
- Arguments
- *    source_url       TEXT  S3 URL (s3://bucket/key or compatible HTTPS). [default: None] [required]
- *    output_path      PATH  Local output path. [default: None] [required]
+Arguments:
+  SOURCE_URL   S3 URL (s3://bucket/key or compatible HTTPS).  [required]
+  OUTPUT_PATH  Local output path.  [required]
 
- Options
- --dry-run            --no-dry-run              Print action only. [default: no-dry-run]
- --no-cloudpathlib    --no-no-cloudpathlib      Disable cloudpathlib and use boto3 download fallback. [default: no-no-cloudpathlib]
- --help                                         Show this message and exit.
+Options:
+  --dry-run / --no-dry-run        Print action only.  [default: no-dry-run]
+  --no-cloudpathlib / --no-no-cloudpathlib
+                                  Disable cloudpathlib and use boto3 download
+                                  fallback.  [default: no-no-cloudpathlib]
+  --help                          Show this message and exit.
 
+  **Examples**
 
- **Examples**
- ```bash sharedrive s3 cp s3://my-bucket/path/file.csv resources/file.csv ```
- ```bash sharedrive s3 cp https://s3.amazonaws.com/my-bucket/path/file.csv resources/file.csv --no-cloudpathlib ```
+  ```bash
+
+  sharedrive s3 cp s3://my-bucket/path/file.csv resources/file.csv
+
+  ```
+
+  ```bash
+
+  sharedrive s3 cp https://s3.amazonaws.com/my-bucket/path/file.csv
+  resources/file.csv --no-cloudpathlib
+
+  ```
 ```
 
 ## `sharedrive s3 ls --help`
@@ -238,17 +334,21 @@ Usage: sharedrive s3 cp [OPTIONS] SOURCE_URL OUTPUT_PATH
 ```text
 Usage: sharedrive s3 ls [OPTIONS] SOURCE_URL
 
- List entries under an S3 prefix and print one path per line.
+  List entries under an S3 prefix and print one path per line.
 
- Arguments
- *    source_url      TEXT  S3 URL prefix. [default: None] [required]
+Arguments:
+  SOURCE_URL  S3 URL prefix.  [required]
 
- Options
- --help          Show this message and exit.
+Options:
+  --help  Show this message and exit.
 
+  **Examples**
 
- **Examples**
- ```bash sharedrive s3 ls s3://my-bucket/path/ ```
+  ```bash
+
+  sharedrive s3 ls s3://my-bucket/path/
+
+  ```
 ```
 
 ## `sharedrive s3 cat --help`
@@ -256,17 +356,26 @@ Usage: sharedrive s3 ls [OPTIONS] SOURCE_URL
 ```text
 Usage: sharedrive s3 cat [OPTIONS] SOURCE_URL
 
- Print text contents of an S3 object decoded with the selected encoding.
+  Print text contents of an S3 object decoded with the selected encoding.
 
- Arguments
- *    source_url      TEXT  S3 object URL. [default: None] [required]
+Arguments:
+  SOURCE_URL  S3 object URL.  [required]
 
- Options
- --encoding        TEXT  Text encoding for output. [default: utf-8]
- --help                  Show this message and exit.
+Options:
+  --encoding TEXT  Text encoding for output.  [default: utf-8]
+  --help           Show this message and exit.
 
+  **Examples**
 
- **Examples**
- ```bash sharedrive s3 cat s3://my-bucket/path/file.txt ```
- ```bash sharedrive s3 cat s3://my-bucket/path/file.json --encoding utf-8 ```
+  ```bash
+
+  sharedrive s3 cat s3://my-bucket/path/file.txt
+
+  ```
+
+  ```bash
+
+  sharedrive s3 cat s3://my-bucket/path/file.json --encoding utf-8
+
+  ```
 ```
