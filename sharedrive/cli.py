@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 import typer
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 from sharedrive.aws import download_s3_url
 from sharedrive.retrieve import retrieve_from_descriptor
@@ -21,7 +21,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from sharedrive.googledrive import GoogleDriveClient
     from sharedrive.sharepoint import SharepointClient
 
-load_dotenv()
+load_dotenv(find_dotenv(usecwd=True))
 
 app = typer.Typer(
     name="sharedrive",
@@ -123,8 +123,11 @@ def retrieve(
     ),
     output_dir: Path = typer.Option(Path("resources"), help="Base output directory for relative resource paths."),
     dry_run: bool = typer.Option(False, help="Print actions without downloading."),
+    env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
 ) -> None:
     """Retrieve descriptor resources by adapter type or resource name filters."""
+    if env_file is not None:
+        load_dotenv(str(env_file), override=True)
     include_values = _parse_include_values(include)
     _run_retrieve_command(
         descriptor=descriptor,

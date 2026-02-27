@@ -1,19 +1,24 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-import os
-
-from dotenv import load_dotenv
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from dotenv import find_dotenv, load_dotenv
+from pydantic import Field, SecretStr, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from sharedrive.sharepoint import SharepointClient
 
-load_dotenv()
 
+class SpoConfig(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=find_dotenv(usecwd=True),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
-class SpoConfig(BaseModel):
-    tenant_id: str = Field(default=os.getenv("AZURE_TENANT_ID"))
-    client_id: str = Field(default=os.getenv("AZURE_CLIENT_ID"))
-    client_secret: SecretStr | None = Field(default=os.getenv("AZURE_CLIENT_SECRET"))
+    tenant_id: str = Field(alias="AZURE_TENANT_ID", default="")
+    client_id: str = Field(alias="AZURE_CLIENT_ID", default="")
+    client_secret: SecretStr | None = Field(
+        alias="AZURE_CLIENT_SECRET", default=None, validate_default=True
+    )
     scope: list[str] = Field(default=["https://graph.microsoft.com/.default"])
     user_delegated_access: bool = Field(default=True)
     host_url: str = Field(default="")
