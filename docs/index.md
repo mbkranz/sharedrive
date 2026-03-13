@@ -15,6 +15,11 @@ Configure `.env` with:
 - `AZURE_CLIENT_SECRET`
 - `GOOGLE_APPLICATION_CREDENTIALS`
 
+Google Drive auth supports two layers:
+
+- Compatibility mode for CLI and descriptor retrieval using `GOOGLE_APPLICATION_CREDENTIALS` or ADC.
+- Explicit Python auth strategies via `sharedrive.auth.google` for ADC, service account, user OAuth, and chained fallback.
+
 ## Retrieval
 
 CLI:

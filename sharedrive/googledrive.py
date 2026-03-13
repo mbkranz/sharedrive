@@ -1,28 +1,17 @@
-import re
+from __future__ import annotations
+
 import json
-import requests
+import re
 from enum import Enum
-from typing import Dict, Any, List, Literal, Optional, Union
-import google.auth
+from typing import Any, Dict, Literal, Optional, Sequence, Union
 
-# Google Auth SDK 
-from google.auth.transport.requests import Request
-import google
+import requests
+from google.auth.credentials import Credentials
 
-class GoogleApiError(Exception):
-    """Custom exception for Google API errors."""
-    def __init__(self, message, status_code=None, response_text=None):
-        super().__init__(message)
-        self.status_code = status_code
-        self.response_text = response_text
-
-class GoogleAuthError(GoogleApiError):
-    """Custom exception for Google authentication errors."""
-    pass
-
-class GoogleApiDriveError(GoogleApiError):
-    """Custom exception for Google Drive API errors."""
-    pass
+from sharedrive.auth.base import CredentialStrategy
+from sharedrive.auth.google import default_drive_strategy, normalize_google_scopes
+from sharedrive.exceptions import GoogleDriveError
+from sharedrive.google_base import GoogleBaseClient
 
 
 
@@ -69,8 +58,10 @@ ALT_EXPORTS = {
     # "zip":  "application/zip",
 }
 
+GoogleApiDriveError = GoogleDriveError
 
-class GoogleDriveClient:
+
+class GoogleDriveClient(GoogleBaseClient):
     """
     Minimal Google Drive client (ID-first) with read/write and full export coverage for Google-native files.
     Uses ADC (google-auth). Works with My Drive and Shared Drives.
@@ -80,22 +71,37 @@ class GoogleDriveClient:
         2. Or set the GOOGLE_APPLICATION_CREDENTIALS env var to point to a service account JSON key file.
     """
 
-    def __init__(self, credentials_path: str, scope: Optional[List[str]] = None):
-        # For read+write, 'drive.file' is a good least-privilege default.
-        self.scopes = scope or ["https://www.googleapis.com/auth/drive"]
+    api_error_cls = GoogleDriveError
 
-        if credentials_path:
-            self._creds = google.auth.load_credentials_from_file(credentials_path, scopes=self.scopes,default_scopes=self.scopes)[0]
-        else:
-            self._creds, _ = google.auth.default()
-            self._creds = self._creds.with_scopes(self.scopes)
+    def __init__(
+        self,
+        credentials_path: str | None = None,
+        scope: Sequence[str] | str | None = None,
+        *,
+        credential_strategy: CredentialStrategy | None = None,
+        credentials: Credentials | None = None,
+        session: requests.Session | None = None,
+        timeout: int = 120,
+    ):
+        self.scopes = normalize_google_scopes(scope)
+        self._credentials_path = credentials_path
+        resolved_strategy = credential_strategy
+        if credentials is None and resolved_strategy is None:
+            resolved_strategy = default_drive_strategy(
+                credentials_path=credentials_path,
+                scopes=self.scopes,
+            )
 
-        self._creds.refresh(Request())
-        self._token = self._creds.token
+        super().__init__(
+            credential_strategy=resolved_strategy,
+            credentials=credentials,
+            session=session,
+            timeout=timeout,
+        )
 
-    @property
-    def _hdrs(self):
-        return {"Authorization": f"Bearer {self._token}"}
+    @staticmethod
+    def _is_google_workspace_file(file_mime_type: str) -> bool:
+        return file_mime_type in {mime.value for mime in GoogleMimeTypes}
 
     # ----------------------------------------------------------------------
     # Metadata / listing
@@ -116,9 +122,7 @@ class GoogleDriveClient:
             if page_token:
                 params["pageToken"] = page_token
 
-            r = requests.get(f"{DRIVE_URL}/files", headers=self._hdrs, params=params)
-            r.raise_for_status()
-            resp = r.json()
+            resp = self._request("GET", f"{DRIVE_URL}/files", params=params).json()
             files.extend(resp.get("files", []))
             page_token = resp.get("nextPageToken")
             if not page_token:
@@ -129,9 +133,10 @@ class GoogleDriveClient:
 
     def get_file(self, file_id: str, **kwargs) -> Dict[str, Any]:
         endpoint = f"{DRIVE_URL}/files/{file_id}"
-        r = requests.get(endpoint, headers=self._hdrs, params={"supportsAllDrives": "true", **kwargs})
-        r.raise_for_status()
-        return r.json()
+        response = self._request(
+            "GET", endpoint, params={"supportsAllDrives": "true", **kwargs}
+        )
+        return response.json()
     
     def infer_export_mime_type(self, file_id: str) -> Optional[str]:
         """
@@ -209,10 +214,6 @@ class GoogleDriveClient:
             pdf_bytes = client.download_file(doc_id, mime_type="application/pdf")
         """
         
-        def is_google_workspace_file(file_mime_type: str) -> bool:
-            """Check if file is a Google Workspace native type."""
-            return file_mime_type in [mime.value for mime in GoogleMimeTypes]
-        
         def build_params():
             """Build request parameters for download."""
             params = {
@@ -235,7 +236,7 @@ class GoogleDriveClient:
         file_mime_type = file_metadata.get("mimeType", "")
         
         # If it's a Google Workspace file, use export instead
-        if is_google_workspace_file(file_mime_type):
+        if self._is_google_workspace_file(file_mime_type):
             # Delegate to export_file with all relevant parameters
             return self.export_file(
                 file_id=file_id,
@@ -247,24 +248,20 @@ class GoogleDriveClient:
         else:
             
             # Regular file download
-            r = requests.get(
+            response = self._request(
+                "GET",
                 f"{DRIVE_URL}/files/{file_id}",
                 headers=build_headers(),
                 params=build_params(),
                 stream=True,
             )
-            r.raise_for_status()
             
             # Stream to file if output_path provided (memory-efficient)
             if output_path:
-                with open(output_path, 'wb') as f:
-                    for chunk in r.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                return output_path
+                return self._write_stream_to_path(response, output_path)
             
             # Return as bytes if no output_path (loads into memory)
-            return b"".join(chunk for chunk in r.iter_content(chunk_size=8192) if chunk)
+            return self._read_stream_to_bytes(response)
 
     def export_file(
         self,
@@ -319,24 +316,19 @@ class GoogleDriveClient:
             mime_type = inferred_mime
         
         # Execute request
-        r = requests.get(
+        response = self._request(
+            "GET",
             f"{DRIVE_URL}/files/{file_id}/export",
-            headers=self._hdrs,
             params=build_params(mime_type),
             stream=True,
         )
-        r.raise_for_status()
         
         # Stream to file if output_path provided
         if output_path:
-            with open(output_path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-            return output_path
+            return self._write_stream_to_path(response, output_path)
         
         # Return as bytes if no output_path
-        return b"".join(chunk for chunk in r.iter_content(chunk_size=8192) if chunk)
+        return self._read_stream_to_bytes(response)
 
     # ----------------------------------------------------------------------
     # Upload / Create / Update (write)
@@ -416,9 +408,8 @@ class GoogleDriveClient:
         params = build_params()
         
         # Execute request
-        r = requests.post(UPLOAD_URL, headers=headers, params=params, data=body)
-        r.raise_for_status()
-        return r.json()
+        response = self._request("POST", UPLOAD_URL, headers=headers, params=params, data=body)
+        return response.json()
 
     def update_file(
         self, 
@@ -479,9 +470,12 @@ class GoogleDriveClient:
 
         # Determine update type and build request params
 
+        file_in_bytes: bytes | None = None
         if isinstance(file_in_bytes_or_path, str):
             with open(file_in_bytes_or_path, 'rb') as f:
                 file_in_bytes = f.read()
+        elif isinstance(file_in_bytes_or_path, bytes):
+            file_in_bytes = file_in_bytes_or_path
 
 
         if file_in_bytes and metadata:
@@ -500,23 +494,22 @@ class GoogleDriveClient:
             raise ValueError("Must provide either file_in_bytes or metadata (or both)")
         
         # Execute request
-        r = requests.patch(f"{UPLOAD_URL}/{file_id}", **request_params)
-        r.raise_for_status()
-        return r.json()
+        response = self._request("PATCH", f"{UPLOAD_URL}/{file_id}", **request_params)
+        return response.json()
 
 
     def create_folder(self, parent_folder_id: str, name: str) -> Dict[str, Any]:
         """Create a folder under a parent folder ID."""
         headers = {**self._hdrs, "Content-Type": "application/json; charset=UTF-8"}
         payload = {"name": name, "mimeType": FOLDER_MIME, "parents": [parent_folder_id]}
-        r = requests.post(
+        response = self._request(
+            "POST",
             f"{DRIVE_URL}/files",
             headers=headers,
             params={"supportsAllDrives": "true"},
             data=json.dumps(payload),
         )
-        r.raise_for_status()
-        return r.json()
+        return response.json()
 
     # ----------------------------------------------------------------------
     # Web URL wrappers
@@ -525,9 +518,9 @@ class GoogleDriveClient:
     def get_from_weburl(self, web_url: str, fields: str = "*") -> Dict[str, Any]:
         """Extract ID from a Drive URL and return metadata."""
         file_id = self._extract_id_from_url(web_url)
-        return self.get_file(file_id)
+        return self.get_file(file_id, fields=fields)
 
-    def download_from_weburl(self, web_url: str, **kwargs) -> bytes:
+    def download_from_weburl(self, web_url: str, **kwargs) -> Union[bytes, str]:
         """
         Extract ID from a Drive URL and download.
         Forwards all kwargs to download_file() method.
@@ -535,7 +528,9 @@ class GoogleDriveClient:
         file_id = self._extract_id_from_url(web_url)
         return self.download_file(file_id, **kwargs)
 
-    def export_from_weburl(self, web_url: str, mime_type: Optional[str] = None, **kwargs) -> bytes:
+    def export_from_weburl(
+        self, web_url: str, mime_type: Optional[str] = None, **kwargs
+    ) -> Union[bytes, str]:
         """
         Extract ID from a Drive URL and export to a specific MIME type.
         If mime_type is not provided, it will be inferred from DEFAULT_EXPORTS.
@@ -564,6 +559,8 @@ class GoogleDriveClient:
     def _extract_id_from_url(url: str) -> str:
         patterns = [
             r"/document/d/([a-zA-Z0-9_-]+)",
+            r"/spreadsheets/d/([a-zA-Z0-9_-]+)",
+            r"/presentation/d/([a-zA-Z0-9_-]+)",
             r"/file/d/([a-zA-Z0-9_-]+)",
             r"/folders/([a-zA-Z0-9_-]+)",
             r"(?:\?|&)id=([a-zA-Z0-9_-]+)",

@@ -84,6 +84,44 @@ Configure `.env` from `.env-sample` and set:
 - `GOOGLE_APPLICATION_CREDENTIALS`
 - AWS credentials for S3 access
 
+## Google Auth
+
+`sharedrive` now separates Google credential acquisition from `GoogleDriveClient` itself.
+
+For existing CLI and retrieval flows, the compatibility behavior is unchanged:
+
+- `sharedrive gdrive ...` and `sharedrive retrieve ...` still use `GOOGLE_APPLICATION_CREDENTIALS` when set.
+- If `GOOGLE_APPLICATION_CREDENTIALS` is not set, the Google Drive client falls back to Application Default Credentials.
+
+For Python API usage, you can now choose an explicit auth strategy:
+
+```python
+from sharedrive.auth.google import AdcStrategy, UserOAuthStrategy
+from sharedrive.auth.token_store import JsonTokenStore
+from sharedrive.googledrive import GoogleDriveClient
+
+adc_client = GoogleDriveClient(
+  credential_strategy=AdcStrategy(),
+)
+
+oauth_client = GoogleDriveClient(
+  credential_strategy=UserOAuthStrategy(
+    client_secrets_path=".google/oauth-credentials.json",
+    token_store=JsonTokenStore(".google/oauth-token.json"),
+    scopes=["https://www.googleapis.com/auth/drive.readonly"],
+  )
+)
+```
+
+Supported first-class Google auth patterns:
+
+- Application Default Credentials via `AdcStrategy`
+- Service account JSON via `ServiceAccountStrategy`
+- Installed-app user OAuth via `UserOAuthStrategy`
+- Ordered fallback via `ChainedStrategy`
+
+Token persistence for user OAuth should use `JsonTokenStore`; pickle-based persistence is intentionally not the default.
+
 ## Retrieval
 
 CLI:

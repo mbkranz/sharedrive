@@ -77,6 +77,34 @@ API_SURFACE = [
         },
     },
     {
+        "module": "sharedrive.auth.google",
+        "path": ROOT / "sharedrive" / "auth" / "google.py",
+        "functions": ["normalize_google_scopes", "default_drive_strategy"],
+        "classes": {
+            "AdcStrategy": ["build"],
+            "ServiceAccountStrategy": ["build"],
+            "UserOAuthStrategy": ["build"],
+            "ChainedStrategy": ["build"],
+        },
+    },
+    {
+        "module": "sharedrive.auth.token_store",
+        "path": ROOT / "sharedrive" / "auth" / "token_store.py",
+        "functions": [],
+        "classes": {"JsonTokenStore": ["load", "save"]},
+    },
+    {
+        "module": "sharedrive.google_base",
+        "path": ROOT / "sharedrive" / "google_base.py",
+        "functions": [],
+        "classes": {
+            "GoogleBaseClient": [
+                "_ensure_valid_credentials",
+                "_request",
+            ]
+        },
+    },
+    {
         "module": "sharedrive.sharepoint",
         "path": ROOT / "sharedrive" / "sharepoint.py",
         "functions": [],
@@ -128,7 +156,7 @@ def _render_cli_markdown() -> str:
 
 
 def _parse_module(path: Path) -> ast.Module:
-    return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    return ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
 
 
 def _doc_first_line(node: ast.AST) -> str:

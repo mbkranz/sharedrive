@@ -62,11 +62,11 @@ Auto-generated from source signatures and docstrings.
   - `def get_file(self, file_id: str, **kwargs) -> Dict[str, Any]`
   - `def download_file(self, file_id: str, output_path: Optional[str] = None, mime_type: Optional[str] = None, acknowledge_abuse: bool = False, byte_range: Optional[str] = None, supports_all_drives: bool = True, **kwargs) -> Union[bytes, str]`
     - Download file content (handles both regular files and Google Workspace documents automatically).
-  - `def download_from_weburl(self, web_url: str, **kwargs) -> bytes`
+  - `def download_from_weburl(self, web_url: str, **kwargs) -> Union[bytes, str]`
     - Extract ID from a Drive URL and download.
   - `def export_file(self, file_id: str, mime_type: Optional[str] = None, output_path: Optional[str] = None, supports_all_drives: bool = True, **kwargs) -> Union[bytes, str]`
     - Export Google Workspace document content to a specific format.
-  - `def export_from_weburl(self, web_url: str, mime_type: Optional[str] = None, **kwargs) -> bytes`
+  - `def export_from_weburl(self, web_url: str, mime_type: Optional[str] = None, **kwargs) -> Union[bytes, str]`
     - Extract ID from a Drive URL and export to a specific MIME type.
   - `def update_file(self, file_id: str, file_in_bytes_or_path: Optional[Union[str, bytes]] = None, mime_type: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]`
     - Update file content and/or metadata.
@@ -76,6 +76,66 @@ Auto-generated from source signatures and docstrings.
     - Create a new file via multipart upload (for files ≤5MB).
   - `def create_folder(self, parent_folder_id: str, name: str) -> Dict[str, Any]`
     - Create a folder under a parent folder ID.
+
+
+## `sharedrive.auth.google`
+
+### Functions
+
+- `def normalize_google_scopes(scopes: Sequence[str] | str | None, *, default: Sequence[str] = DEFAULT_DRIVE_SCOPES) -> list[str]`
+- `def default_drive_strategy(credentials_path: str | Path | None = None, scopes: Sequence[str] | str | None = None) -> CredentialStrategy`
+
+### Classes
+
+#### `AdcStrategy`
+- Fields:
+  - `scopes: Sequence[str] | str | None`
+- Methods:
+  - `def build(self) -> Credentials`
+
+#### `ServiceAccountStrategy`
+- Fields:
+  - `credentials_path: str | Path`
+  - `scopes: Sequence[str] | str | None`
+- Methods:
+  - `def build(self) -> Credentials`
+
+#### `UserOAuthStrategy`
+- Fields:
+  - `client_secrets_path: str | Path`
+  - `scopes: Sequence[str] | str | None`
+  - `token_store: TokenStore | None`
+  - `use_local_server: bool`
+- Methods:
+  - `def build(self) -> Credentials`
+
+#### `ChainedStrategy`
+- Fields:
+  - `strategies: Sequence[CredentialStrategy]`
+- Methods:
+  - `def build(self) -> Credentials`
+
+
+## `sharedrive.auth.token_store`
+
+### Classes
+
+#### `JsonTokenStore`
+- Persist authorized-user OAuth credentials as JSON on disk.
+- Methods:
+  - `def load(self) -> Credentials | None`
+  - `def save(self, creds: Credentials) -> None`
+
+
+## `sharedrive.google_base`
+
+### Classes
+
+#### `GoogleBaseClient`
+- Shared Google client base for auth lifecycle and HTTP transport helpers.
+- Methods:
+  - `def _ensure_valid_credentials(self) -> None`
+  - `def _request(self, method: str, url: str, **kwargs) -> requests.Response`
 
 
 ## `sharedrive.sharepoint`

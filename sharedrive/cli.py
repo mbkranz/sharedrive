@@ -61,10 +61,13 @@ def _make_sharepoint_client() -> SharepointClient:
 
 
 def _make_gdrive_client(credentials_path: Optional[str], scope: Optional[list[str]] = None) -> GoogleDriveClient:
+    from sharedrive.auth.google import default_drive_strategy
     from sharedrive.googledrive import GoogleDriveClient
 
     path = credentials_path or os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
-    return GoogleDriveClient(credentials_path=path, scope=scope)
+    return GoogleDriveClient(
+        credential_strategy=default_drive_strategy(credentials_path=path, scopes=scope)
+    )
 
 
 def _parse_include_values(values: list[str] | None) -> str | list[str]:
