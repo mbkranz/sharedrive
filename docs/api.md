@@ -2,20 +2,24 @@
 
 Auto-generated from source signatures and docstrings.
 
-## `sharedrive.retrieve`
+## `sharedrive.actions.fetch`
 
 ### Functions
 
 - `def resolve_default_descriptor() -> Path`
   - Return the first existing default descriptor path.
+- `def fetch_from_descriptor(descriptor: Path | str, include: str | Iterable[str] = 'all', output_dir: Path | str = Path('resources'), dry_run: bool = False, *, log: LogFn | None = print, sharepoint_client_factory: Callable[[], Any] | None = None, googledrive_client_factory: Callable[[], Any] | None = None, use_cloudpathlib: bool = True) -> FetchSummary`
+  - Fetch resources from a descriptor using adapter-specific clients.
+- `def fetch_resources(descriptor: Path | str, include: str | Iterable[str] = 'all', output_dir: Path | str = Path('resources'), dry_run: bool = False, *, log: LogFn | None = print) -> FetchSummary`
+  - Convenience alias for fetch_from_descriptor.
 - `def retrieve_from_descriptor(descriptor: Path | str, include: str | Iterable[str] = 'all', output_dir: Path | str = Path('resources'), dry_run: bool = False, *, log: LogFn | None = print, sharepoint_client_factory: Callable[[], Any] | None = None, googledrive_client_factory: Callable[[], Any] | None = None, use_cloudpathlib: bool = True) -> RetrieveSummary`
-  - Retrieve resources from a descriptor using adapter-specific clients.
+  - Backward-compatible alias for fetch_from_descriptor.
 - `def retrieve_resources(descriptor: Path | str, include: str | Iterable[str] = 'all', output_dir: Path | str = Path('resources'), dry_run: bool = False, *, log: LogFn | None = print) -> RetrieveSummary`
-  - Convenience alias for retrieve_from_descriptor.
+  - Backward-compatible alias for fetch_resources.
 
 ### Classes
 
-#### `RetrieveSummary`
+#### `FetchSummary`
 - Fields:
   - `total_resources: int`
   - `downloaded: int`
@@ -50,9 +54,15 @@ Auto-generated from source signatures and docstrings.
 - `def download_s3_url(source_url: str, output_path: Path, *, dry_run: bool = False, use_cloudpathlib: bool = True) -> Path | None`
 
 
-## `sharedrive.googledrive`
+## `sharedrive.clients.google`
 
 ### Classes
+
+#### `GoogleBaseClient`
+- Shared Google client base for auth lifecycle and HTTP transport helpers.
+- Methods:
+  - `def _ensure_valid_credentials(self) -> None`
+  - `def _request(self, method: str, url: str, **kwargs) -> requests.Response`
 
 #### `GoogleDriveClient`
 - Minimal Google Drive client (ID-first) with read/write and full export coverage for Google-native files.
@@ -61,21 +71,13 @@ Auto-generated from source signatures and docstrings.
     - List all files the authenticated user has access to.
   - `def get_file(self, file_id: str, **kwargs) -> Dict[str, Any]`
   - `def download_file(self, file_id: str, output_path: Optional[str] = None, mime_type: Optional[str] = None, acknowledge_abuse: bool = False, byte_range: Optional[str] = None, supports_all_drives: bool = True, **kwargs) -> Union[bytes, str]`
-    - Download file content (handles both regular files and Google Workspace documents automatically).
   - `def download_from_weburl(self, web_url: str, **kwargs) -> Union[bytes, str]`
-    - Extract ID from a Drive URL and download.
   - `def export_file(self, file_id: str, mime_type: Optional[str] = None, output_path: Optional[str] = None, supports_all_drives: bool = True, **kwargs) -> Union[bytes, str]`
-    - Export Google Workspace document content to a specific format.
   - `def export_from_weburl(self, web_url: str, mime_type: Optional[str] = None, **kwargs) -> Union[bytes, str]`
-    - Extract ID from a Drive URL and export to a specific MIME type.
   - `def update_file(self, file_id: str, file_in_bytes_or_path: Optional[Union[str, bytes]] = None, mime_type: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]`
-    - Update file content and/or metadata.
   - `def update_from_weburl(self, web_url: str, **kwargs) -> Dict[str, Any]`
-    - Extract ID from a Drive URL and update file content and/or metadata.
   - `def create_file(self, parent_folder_id: str, file_in_bytes: Optional[bytes] = None, mime_type: Optional[str] = None, name: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None, supports_all_drives: bool = True, **kwargs) -> Dict[str, Any]`
-    - Create a new file via multipart upload (for files ≤5MB).
   - `def create_folder(self, parent_folder_id: str, name: str) -> Dict[str, Any]`
-    - Create a folder under a parent folder ID.
 
 
 ## `sharedrive.auth.google`
@@ -127,15 +129,26 @@ Auto-generated from source signatures and docstrings.
   - `def save(self, creds: Credentials) -> None`
 
 
-## `sharedrive.google_base`
+## `sharedrive.auth.settings`
+
+### Functions
+
+- `def make_google_drive_client_from_settings(config: GoogleAuthConfig | None = None)`
 
 ### Classes
 
-#### `GoogleBaseClient`
-- Shared Google client base for auth lifecycle and HTTP transport helpers.
+#### `GoogleAuthMode`
+
+#### `GoogleAuthConfig`
+- Fields:
+  - `auth_mode: GoogleAuthMode`
+  - `service_account_credentials: Path | None`
+  - `oauth_client_secrets: Path | None`
+  - `oauth_token_path: Path | None`
+  - `scopes: list[str]`
+  - `use_local_server: bool`
 - Methods:
-  - `def _ensure_valid_credentials(self) -> None`
-  - `def _request(self, method: str, url: str, **kwargs) -> requests.Response`
+  - `def to_strategy(self) -> CredentialStrategy`
 
 
 ## `sharedrive.sharepoint`

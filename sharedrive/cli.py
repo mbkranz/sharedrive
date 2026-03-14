@@ -10,7 +10,7 @@ import typer
 from dotenv import find_dotenv, load_dotenv
 
 from sharedrive.aws import download_s3_url
-from sharedrive.retrieve import retrieve_from_descriptor
+from sharedrive.actions.fetch import fetch_from_descriptor
 
 try:
     from cloudpathlib import S3Path
@@ -18,7 +18,7 @@ except ImportError:  # pragma: no cover
     S3Path = None
 
 if TYPE_CHECKING:  # pragma: no cover
-    from sharedrive.googledrive import GoogleDriveClient
+    from sharedrive.clients.google import GoogleDriveClient
     from sharedrive.sharepoint import SharepointClient
 
 load_dotenv(find_dotenv(usecwd=True))
@@ -42,6 +42,7 @@ s3_app = typer.Typer(
 )
 app.add_typer(gdrive_app, name="gdrive")
 app.add_typer(sharepoint_app, name="sharepoint")
+app.add_typer(sharepoint_app, name="spo")
 app.add_typer(s3_app, name="s3")
 
 
@@ -62,12 +63,18 @@ def _make_sharepoint_client() -> SharepointClient:
 
 def _make_gdrive_client(credentials_path: Optional[str], scope: Optional[list[str]] = None) -> GoogleDriveClient:
     from sharedrive.auth.google import default_drive_strategy
-    from sharedrive.googledrive import GoogleDriveClient
+    from sharedrive.clients.google import GoogleDriveClient
 
     path = credentials_path or os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
     return GoogleDriveClient(
         credential_strategy=default_drive_strategy(credentials_path=path, scopes=scope)
     )
+
+
+def _make_gdrive_client_from_settings() -> GoogleDriveClient:
+    from sharedrive.auth.settings import make_google_drive_client_from_settings
+
+    return make_google_drive_client_from_settings()
 
 
 def _parse_include_values(values: list[str] | None) -> str | list[str]:
@@ -82,13 +89,13 @@ def _parse_include_values(values: list[str] | None) -> str | list[str]:
     return normalized
 
 
-def _run_retrieve_command(
+def _run_fetch_command(
     descriptor: Path,
     include: str | list[str],
     output_dir: Path,
     dry_run: bool,
 ) -> None:
-    summary = retrieve_from_descriptor(
+    summary = fetch_from_descriptor(
         descriptor=descriptor,
         include=include,
         output_dir=output_dir,
@@ -102,11 +109,50 @@ def _run_retrieve_command(
 
 
 @app.command(
+    "fetch",
+    epilog=_examples_epilog(
+        "sharedrive fetch resources/descriptor.yaml --dry-run",
+        "sharedrive fetch resources/descriptor.yaml --include s3 --include sharepoint",
+        "sharedrive fetch resources/descriptor.yaml --include spec-workbook --output-dir resources",
+    ),
+)
+def fetch(
+    descriptor: Path = typer.Argument(
+        ...,
+        exists=False,
+        help="Descriptor file path.",
+    ),
+    include: Optional[list[str]] = typer.Option(
+        None,
+        "--include",
+        "-i",
+        help=(
+            "Include adapter types and/or resource names. "
+            "Repeat the option or pass a comma-separated list."
+        ),
+    ),
+    output_dir: Path = typer.Option(Path("resources"), help="Base output directory for relative resource paths."),
+    dry_run: bool = typer.Option(False, help="Print actions without downloading."),
+    env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
+) -> None:
+    """Fetch descriptor resources by adapter type or resource name filters."""
+    if env_file is not None:
+        load_dotenv(str(env_file), override=True)
+    include_values = _parse_include_values(include)
+    _run_fetch_command(
+        descriptor=descriptor,
+        include=include_values,
+        output_dir=output_dir,
+        dry_run=dry_run,
+    )
+
+
+@app.command(
     "retrieve",
+    hidden=True,
     epilog=_examples_epilog(
         "sharedrive retrieve resources/descriptor.yaml --dry-run",
         "sharedrive retrieve resources/descriptor.yaml --include s3 --include sharepoint",
-        "sharedrive retrieve resources/descriptor.yaml --include spec-workbook --output-dir resources",
     ),
 )
 def retrieve(
@@ -128,15 +174,13 @@ def retrieve(
     dry_run: bool = typer.Option(False, help="Print actions without downloading."),
     env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
 ) -> None:
-    """Retrieve descriptor resources by adapter type or resource name filters."""
-    if env_file is not None:
-        load_dotenv(str(env_file), override=True)
-    include_values = _parse_include_values(include)
-    _run_retrieve_command(
+    """Backward-compatible alias for fetch."""
+    fetch(
         descriptor=descriptor,
-        include=include_values,
+        include=include,
         output_dir=output_dir,
         dry_run=dry_run,
+        env_file=env_file,
     )
 
 
@@ -229,6 +273,7 @@ def gdrive_export(
     "get",
     epilog=_examples_epilog(
         "sharedrive sharepoint get https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx",
+        "sharedrive spo get https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx",
     ),
 )
 def sharepoint_get(url: str = typer.Argument(..., help="SharePoint URL.")) -> None:
@@ -242,6 +287,8 @@ def sharepoint_get(url: str = typer.Argument(..., help="SharePoint URL.")) -> No
     epilog=_examples_epilog(
         "sharedrive sharepoint download https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx resources/file.xlsx",
         "sharedrive sharepoint download https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx resources/file.xlsx --dry-run",
+        "sharedrive spo download https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx resources/file.xlsx",
+        "sharedrive spo download https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx resources/file.xlsx --dry-run",
     ),
 )
 def sharepoint_download(

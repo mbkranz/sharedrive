@@ -25,16 +25,16 @@ Google Drive auth supports two layers:
 CLI:
 
 ```bash
-sharedrive retrieve resources/descriptor.yaml --dry-run
+sharedrive fetch resources/descriptor.yaml --dry-run
 ```
 
 Python:
 
 ```python
 from pathlib import Path
-from sharedrive.retrieve import retrieve_from_descriptor
+from sharedrive.actions.fetch import fetch_from_descriptor
 
-summary = retrieve_from_descriptor(
+summary = fetch_from_descriptor(
     descriptor=Path("resources/descriptor.yaml"),
     include="all",
     output_dir=Path("resources"),

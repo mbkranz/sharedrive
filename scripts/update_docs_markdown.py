@@ -9,9 +9,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import typer.rich_utils as rich_utils
-from sharedrive.cli import app
-from typer.testing import CliRunner
+import typer.rich_utils as rich_utils  # noqa: E402
+from sharedrive.cli import app  # noqa: E402
+from typer.testing import CliRunner  # noqa: E402
 
 ANSI_PATTERN = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 CLI_WIDTH = 200
@@ -19,7 +19,7 @@ RUNNER = CliRunner()
 
 CLI_COMMANDS: list[tuple[str, list[str]]] = [
     ("sharedrive --help", ["--help"]),
-    ("sharedrive retrieve --help", ["retrieve", "--help"]),
+    ("sharedrive fetch --help", ["fetch", "--help"]),
     ("sharedrive gdrive --help", ["gdrive", "--help"]),
     ("sharedrive gdrive list --help", ["gdrive", "list", "--help"]),
     ("sharedrive gdrive get --help", ["gdrive", "get", "--help"]),
@@ -28,6 +28,9 @@ CLI_COMMANDS: list[tuple[str, list[str]]] = [
     ("sharedrive sharepoint --help", ["sharepoint", "--help"]),
     ("sharedrive sharepoint get --help", ["sharepoint", "get", "--help"]),
     ("sharedrive sharepoint download --help", ["sharepoint", "download", "--help"]),
+    ("sharedrive spo --help", ["spo", "--help"]),
+    ("sharedrive spo get --help", ["spo", "get", "--help"]),
+    ("sharedrive spo download --help", ["spo", "download", "--help"]),
     ("sharedrive s3 --help", ["s3", "--help"]),
     ("sharedrive s3 cp --help", ["s3", "cp", "--help"]),
     ("sharedrive s3 ls --help", ["s3", "ls", "--help"]),
@@ -36,14 +39,16 @@ CLI_COMMANDS: list[tuple[str, list[str]]] = [
 
 API_SURFACE = [
     {
-        "module": "sharedrive.retrieve",
-        "path": ROOT / "sharedrive" / "retrieve.py",
+        "module": "sharedrive.actions.fetch",
+        "path": ROOT / "sharedrive" / "actions" / "fetch.py",
         "functions": [
             "resolve_default_descriptor",
+            "fetch_from_descriptor",
+            "fetch_resources",
             "retrieve_from_descriptor",
             "retrieve_resources",
         ],
-        "classes": {"RetrieveSummary": ["ok"]},
+        "classes": {"FetchSummary": ["ok"]},
     },
     {
         "module": "sharedrive.azure",
@@ -58,10 +63,14 @@ API_SURFACE = [
         "classes": {},
     },
     {
-        "module": "sharedrive.googledrive",
-        "path": ROOT / "sharedrive" / "googledrive.py",
+        "module": "sharedrive.clients.google",
+        "path": ROOT / "sharedrive" / "clients" / "google.py",
         "functions": [],
         "classes": {
+            "GoogleBaseClient": [
+                "_ensure_valid_credentials",
+                "_request",
+            ],
             "GoogleDriveClient": [
                 "list_files",
                 "get_file",
@@ -73,7 +82,7 @@ API_SURFACE = [
                 "update_from_weburl",
                 "create_file",
                 "create_folder",
-            ]
+            ],
         },
     },
     {
@@ -94,14 +103,12 @@ API_SURFACE = [
         "classes": {"JsonTokenStore": ["load", "save"]},
     },
     {
-        "module": "sharedrive.google_base",
-        "path": ROOT / "sharedrive" / "google_base.py",
-        "functions": [],
+        "module": "sharedrive.auth.settings",
+        "path": ROOT / "sharedrive" / "auth" / "settings.py",
+        "functions": ["make_google_drive_client_from_settings"],
         "classes": {
-            "GoogleBaseClient": [
-                "_ensure_valid_credentials",
-                "_request",
-            ]
+            "GoogleAuthMode": [],
+            "GoogleAuthConfig": ["to_strategy"],
         },
     },
     {

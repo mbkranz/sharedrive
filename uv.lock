@@ -2211,12 +2211,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-dev = [
-    { name = "black" },
-    { name = "ipykernel" },
-    { name = "jupyter" },
-    { name = "ruff" },
-]
 dev-datamgmt = [
     { name = "frictionless" },
 ]
@@ -2224,34 +2218,48 @@ docs = [
     { name = "mkdocs" },
     { name = "mkdocs-material" },
 ]
+
+[package.dev-dependencies]
+dev = [
+    { name = "black" },
+    { name = "ipykernel" },
+    { name = "jupyter" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
 test = [
     { name = "pytest" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "black", marker = "extra == 'dev'" },
     { name = "boto3", specifier = ">=1.42.55" },
     { name = "cloudpathlib", extras = ["s3"], specifier = ">=0.23.0" },
     { name = "frictionless", marker = "extra == 'dev-datamgmt'" },
     { name = "gitpython", specifier = ">=3.1.44" },
     { name = "google", specifier = ">=3.0.0" },
     { name = "google-auth-oauthlib", specifier = ">=1.2.1" },
-    { name = "ipykernel", marker = "extra == 'dev'", specifier = ">=6.29.5" },
-    { name = "jupyter", marker = "extra == 'dev'" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6.1" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.7.1" },
     { name = "msal", specifier = ">=1.33.0" },
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "pydantic-settings", specifier = ">=2.7.0" },
-    { name = "pytest", marker = "extra == 'test'" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "requests", specifier = ">=2.32.3" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11.5" },
     { name = "typer", specifier = ">=0.24.1" },
 ]
-provides-extras = ["dev", "docs", "dev-datamgmt", "test"]
+provides-extras = ["docs", "dev-datamgmt"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "black" },
+    { name = "ipykernel", specifier = ">=6.29.5" },
+    { name = "jupyter" },
+    { name = "pytest" },
+    { name = "ruff", specifier = ">=0.11.5" },
+]
+test = [{ name = "pytest" }]
 
 [[package]]
 name = "shellingham"

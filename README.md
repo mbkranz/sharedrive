@@ -12,7 +12,8 @@ Experimental connectors and workflows for moving files across SharePoint, Google
 - `sharedrive/googledrive.py`: Google Drive client (`GoogleDriveClient`)
 - `sharedrive/azure.py`: SharePoint credential/config model (`SpoConfig`)
 - `sharedrive/aws.py`: S3 URL parsing/download helpers (cloudpathlib + boto3 fallback)
-- `sharedrive/retrieve.py`: reusable descriptor-based retrieval Python API
+- `sharedrive/actions/fetch.py`: reusable descriptor-based fetch Python API
+- `sharedrive/retrieve.py`: compatibility shim for the older retrieval module path
 - `sharedrive/cli.py`: Typer CLI (`sharedrive`)
 - `scripts/retrieve_resources.py`: compatibility wrapper for descriptor retrieval
 - `scripts/dev_adapters.py`: manual adapter smoke checks
@@ -88,9 +89,9 @@ Configure `.env` from `.env-sample` and set:
 
 `sharedrive` now separates Google credential acquisition from `GoogleDriveClient` itself.
 
-For existing CLI and retrieval flows, the compatibility behavior is unchanged:
+For existing CLI and fetch flows, the compatibility behavior is unchanged:
 
-- `sharedrive gdrive ...` and `sharedrive retrieve ...` still use `GOOGLE_APPLICATION_CREDENTIALS` when set.
+- `sharedrive gdrive ...` and `sharedrive fetch ...` still use `GOOGLE_APPLICATION_CREDENTIALS` when set.
 - If `GOOGLE_APPLICATION_CREDENTIALS` is not set, the Google Drive client falls back to Application Default Credentials.
 
 For Python API usage, you can now choose an explicit auth strategy:
@@ -98,7 +99,7 @@ For Python API usage, you can now choose an explicit auth strategy:
 ```python
 from sharedrive.auth.google import AdcStrategy, UserOAuthStrategy
 from sharedrive.auth.token_store import JsonTokenStore
-from sharedrive.googledrive import GoogleDriveClient
+from sharedrive.clients.google import GoogleDriveClient
 
 adc_client = GoogleDriveClient(
   credential_strategy=AdcStrategy(),
@@ -122,30 +123,45 @@ Supported first-class Google auth patterns:
 
 Token persistence for user OAuth should use `JsonTokenStore`; pickle-based persistence is intentionally not the default.
 
-## Retrieval
+If you prefer env-validated configuration instead of building strategies manually, use `GoogleAuthConfig`:
+
+```python
+from sharedrive.auth.settings import GoogleAuthConfig, make_google_drive_client_from_settings
+
+config = GoogleAuthConfig()
+client = make_google_drive_client_from_settings(config)
+```
+
+The settings layer is additive. Existing `GOOGLE_APPLICATION_CREDENTIALS` behavior in the CLI and retrieval flows still works.
+
+## Fetch
+
+CLI aliases:
+
+- `sharepoint` and `spo` are equivalent subcommands for SharePoint operations.
 
 CLI:
 
 ```bash
-sharedrive retrieve resources/descriptor.yaml --dry-run
-sharedrive retrieve resources/descriptor.yaml --include sharepoint
-sharedrive retrieve resources/descriptor.yaml --include s3,googledrive
-sharedrive retrieve resources/descriptor.yaml --include spec-workbook
+sharedrive fetch resources/descriptor.yaml --dry-run
+sharedrive fetch resources/descriptor.yaml --include sharepoint
+sharedrive fetch resources/descriptor.yaml --include s3,googledrive
+sharedrive fetch resources/descriptor.yaml --include spec-workbook
 ```
 
 If you are running from a repo checkout without activating an environment, prefix commands with `uv run`:
 
 ```bash
-uv run sharedrive retrieve resources/descriptor.yaml --dry-run
+uv run sharedrive fetch resources/descriptor.yaml --dry-run
 ```
 
 Python API:
 
 ```python
 from pathlib import Path
-from sharedrive.retrieve import retrieve_from_descriptor
+from sharedrive.actions.fetch import fetch_from_descriptor
 
-summary = retrieve_from_descriptor(
+summary = fetch_from_descriptor(
     descriptor=Path("resources/descriptor.yaml"),
     include="all",  # or: "sharepoint", "s3", "googledrive", ["s3", "sharepoint"]
     output_dir=Path("resources"),
@@ -153,7 +169,7 @@ summary = retrieve_from_descriptor(
 )
 
 if not summary.ok:
-    raise RuntimeError(f"Retrieval failed for {summary.failures} resources")
+  raise RuntimeError(f"Fetch failed for {summary.failures} resources")
 ```
 
 Compatibility script:
@@ -238,6 +254,8 @@ sharedrive/
   sharedrive/
     aws.py
     azure.py
+    actions/
+      fetch.py
     retrieve.py
     sharepoint.py
     googledrive.py

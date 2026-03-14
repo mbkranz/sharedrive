@@ -16,18 +16,19 @@ Options:
   --help                Show this message and exit.
 
 Commands:
-  retrieve    Retrieve descriptor resources by adapter type or resource...
+  fetch       Fetch descriptor resources by adapter type or resource name...
   gdrive      Google Drive commands.
   sharepoint  SharePoint commands.
+  spo         SharePoint commands.
   s3          S3 commands.
 ```
 
-## `sharedrive retrieve --help`
+## `sharedrive fetch --help`
 
 ```text
-Usage: sharedrive retrieve [OPTIONS] DESCRIPTOR
+Usage: sharedrive fetch [OPTIONS] DESCRIPTOR
 
-  Retrieve descriptor resources by adapter type or resource name filters.
+  Fetch descriptor resources by adapter type or resource name filters.
 
 Arguments:
   DESCRIPTOR  Descriptor file path.  [required]
@@ -47,21 +48,20 @@ Options:
 
   ```bash
 
-  sharedrive retrieve resources/descriptor.yaml --dry-run
+  sharedrive fetch resources/descriptor.yaml --dry-run
 
   ```
 
   ```bash
 
-  sharedrive retrieve resources/descriptor.yaml --include s3 --include
-  sharepoint
+  sharedrive fetch resources/descriptor.yaml --include s3 --include sharepoint
 
   ```
 
   ```bash
 
-  sharedrive retrieve resources/descriptor.yaml --include spec-workbook
-  --output-dir resources
+  sharedrive fetch resources/descriptor.yaml --include spec-workbook --output-
+  dir resources
 
   ```
 ```
@@ -242,6 +242,13 @@ Options:
   https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx
 
   ```
+
+  ```bash
+
+  sharedrive spo get
+  https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx
+
+  ```
 ```
 
 ## `sharedrive sharepoint download --help`
@@ -273,6 +280,118 @@ Options:
   ```bash
 
   sharedrive sharepoint download
+  https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx
+  resources/file.xlsx --dry-run
+
+  ```
+
+  ```bash
+
+  sharedrive spo download
+  https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx
+  resources/file.xlsx
+
+  ```
+
+  ```bash
+
+  sharedrive spo download
+  https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx
+  resources/file.xlsx --dry-run
+
+  ```
+```
+
+## `sharedrive spo --help`
+
+```text
+Usage: sharedrive spo [OPTIONS] COMMAND [ARGS]...
+
+  SharePoint commands.
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  get       Print JSON metadata for a SharePoint file or folder URL.
+  download  Download one SharePoint file to disk and print the local path...
+```
+
+## `sharedrive spo get --help`
+
+```text
+Usage: sharedrive spo get [OPTIONS] URL
+
+  Print JSON metadata for a SharePoint file or folder URL.
+
+Arguments:
+  URL  SharePoint URL.  [required]
+
+Options:
+  --help  Show this message and exit.
+
+  **Examples**
+
+  ```bash
+
+  sharedrive sharepoint get
+  https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx
+
+  ```
+
+  ```bash
+
+  sharedrive spo get
+  https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx
+
+  ```
+```
+
+## `sharedrive spo download --help`
+
+```text
+Usage: sharedrive spo download [OPTIONS] URL OUTPUT_PATH
+
+  Download one SharePoint file to disk and print the local path when not dry-
+  run.
+
+Arguments:
+  URL          SharePoint URL.  [required]
+  OUTPUT_PATH  Local output path.  [required]
+
+Options:
+  --dry-run / --no-dry-run  Print action only.  [default: no-dry-run]
+  --help                    Show this message and exit.
+
+  **Examples**
+
+  ```bash
+
+  sharedrive sharepoint download
+  https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx
+  resources/file.xlsx
+
+  ```
+
+  ```bash
+
+  sharedrive sharepoint download
+  https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx
+  resources/file.xlsx --dry-run
+
+  ```
+
+  ```bash
+
+  sharedrive spo download
+  https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx
+  resources/file.xlsx
+
+  ```
+
+  ```bash
+
+  sharedrive spo download
   https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx
   resources/file.xlsx --dry-run
 

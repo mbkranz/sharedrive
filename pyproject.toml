@@ -37,12 +37,6 @@ dependencies = [
 sharedrive = "sharedrive.cli:main"
 
 [project.optional-dependencies]
-dev = [
-    "jupyter",
-    "black",
-    "ipykernel>=6.29.5",
-    "ruff>=0.11.5"
-]
 
 docs = [
     "mkdocs>=1.6.1",
@@ -51,12 +45,22 @@ docs = [
 dev-datamgmt = [
     "frictionless"
 ]
+
+
+[dependency-groups]
+dev = [
+    "jupyter",
+    "black",
+    "ipykernel>=6.29.5",
+    "ruff>=0.11.5",
+    {include-group = "test"}
+]
 test = [
     "pytest"
 ]
 
 [tool.setuptools]
-packages = ["sharedrive", "sharedrive.auth"]
+packages = ["sharedrive", "sharedrive.actions", "sharedrive.auth", "sharedrive.clients"]
 
 [tool.ruff]
 line-length = 88
