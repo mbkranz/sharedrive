@@ -25,3 +25,22 @@ class GoogleAuthError(GoogleApiError):
 
 class GoogleDriveError(GoogleApiError):
     """Raised when a Google Drive request fails."""
+
+
+class GraphApiError(Exception):
+    """Custom exception raised when fetching a SharePoint drive fails."""
+    def __init__(self, message, status_code=None, response_text=None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.response_text = response_text
+
+class GraphAuthError(GraphApiError):
+    pass 
+
+class GraphApiDriveError(GraphApiError):
+    pass
+
+
+class GraphApiSiteError(GraphApiError):
+    pass
+

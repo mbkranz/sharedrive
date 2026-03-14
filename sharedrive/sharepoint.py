@@ -6,25 +6,7 @@ import mimetypes
 import requests
 import msal
 
-#TODO: separate authetnication and client. class methods should be used to input credentials and the init of spo class should take an auth class
-#TODO: create separate authentication module and classes
-
-class GraphApiError(Exception):
-    """Custom exception raised when fetching a SharePoint drive fails."""
-    def __init__(self, message, status_code=None, response_text=None):
-        super().__init__(message)
-        self.status_code = status_code
-        self.response_text = response_text
-
-class GraphAuthError(GraphApiError):
-    pass 
-
-class GraphApiDriveError(GraphApiError):
-    pass
-
-
-class GraphApiSiteError(GraphApiError):
-    pass
+from sharedrive.exceptions import GraphAuthError, GraphApiDriveError, GraphApiSiteError
 
 
 class SharepointClient:
