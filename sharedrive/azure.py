@@ -1,6 +1,6 @@
 ﻿from __future__ import annotations
 
-from dotenv import find_dotenv, load_dotenv
+from dotenv import find_dotenv
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 

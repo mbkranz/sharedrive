@@ -234,7 +234,7 @@ class SharepointClient:
         """
         def _extract_endpoint(url):
 
-            from urllib.parse import urlparse, unquote
+            from urllib.parse import urlparse
             
             # Parse the URL and its query string
             parsed = urlparse(url)

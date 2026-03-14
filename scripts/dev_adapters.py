@@ -2,8 +2,6 @@
 from dotenv import load_dotenv
 import os
 
-from pmd_utils.io.adapters.sharepoint import SharepointClient
-
 
 from pmd_utils.io.adapters.googledrive import GoogleDriveClient
 
