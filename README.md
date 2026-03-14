@@ -94,6 +94,12 @@ For existing CLI and fetch flows, the compatibility behavior is unchanged:
 - `sharedrive gdrive ...` and `sharedrive fetch ...` still use `GOOGLE_APPLICATION_CREDENTIALS` when set.
 - If `GOOGLE_APPLICATION_CREDENTIALS` is not set, the Google Drive client falls back to Application Default Credentials.
 
+For CLI operators, there are now explicit auth-oriented commands in addition to the transfer commands:
+
+- `sharedrive auth check <descriptor>` validates credentials for the adapters selected by a descriptor before any download starts.
+- `sharedrive auth login gdrive` runs the installed-app Google OAuth flow and can persist an authorized-user token to `GOOGLE_OAUTH_TOKEN_PATH` or an explicit `--oauth-token-path`.
+- `sharedrive fetch ... --check-auth` runs the same descriptor-aware preflight before downloading.
+
 For Python API usage, you can now choose an explicit auth strategy:
 
 ```python
@@ -143,7 +149,10 @@ CLI aliases:
 CLI:
 
 ```bash
+sharedrive auth check resources/descriptor.yaml
+sharedrive auth login gdrive --oauth-client-secrets .google/oauth-credentials.json --oauth-token-path .google/oauth-token.json
 sharedrive fetch resources/descriptor.yaml --dry-run
+sharedrive fetch resources/descriptor.yaml --check-auth
 sharedrive fetch resources/descriptor.yaml --include sharepoint
 sharedrive fetch resources/descriptor.yaml --include s3,googledrive
 sharedrive fetch resources/descriptor.yaml --include spec-workbook

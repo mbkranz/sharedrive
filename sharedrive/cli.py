@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -10,7 +11,7 @@ import typer
 from dotenv import find_dotenv, load_dotenv
 
 from sharedrive.aws import download_s3_url
-from sharedrive.actions.fetch import fetch_from_descriptor
+from sharedrive.actions.fetch import check_auth_for_descriptor, fetch_from_descriptor
 
 try:
     from cloudpathlib import S3Path
@@ -28,6 +29,14 @@ app = typer.Typer(
     help="Shared drive utilities for SharePoint, Google Drive, and S3.",
     rich_markup_mode="markdown",
 )
+auth_app = typer.Typer(
+    help="Authentication helpers.",
+    rich_markup_mode="markdown",
+)
+auth_login_app = typer.Typer(
+    help="Interactive login commands.",
+    rich_markup_mode="markdown",
+)
 gdrive_app = typer.Typer(
     help="Google Drive commands.",
     rich_markup_mode="markdown",
@@ -40,10 +49,17 @@ s3_app = typer.Typer(
     help="S3 commands.",
     rich_markup_mode="markdown",
 )
+app.add_typer(auth_app, name="auth")
+auth_app.add_typer(auth_login_app, name="login")
 app.add_typer(gdrive_app, name="gdrive")
 app.add_typer(sharepoint_app, name="sharepoint")
 app.add_typer(sharepoint_app, name="spo")
 app.add_typer(s3_app, name="s3")
+
+
+class OutputFormat(str, Enum):
+    TEXT = "text"
+    JSON = "json"
 
 
 def _examples_epilog(*lines: str) -> str:
@@ -53,6 +69,11 @@ def _examples_epilog(*lines: str) -> str:
 
 def _echo_json(payload: Any) -> None:
     typer.echo(json.dumps(payload, indent=2, default=str))
+
+
+def _load_env_file(env_file: Optional[Path]) -> None:
+    if env_file is not None:
+        load_dotenv(str(env_file), override=True)
 
 
 def _make_sharepoint_client() -> SharepointClient:
@@ -65,16 +86,36 @@ def _make_gdrive_client(credentials_path: Optional[str], scope: Optional[list[st
     from sharedrive.auth.google import default_drive_strategy
     from sharedrive.clients.google import GoogleDriveClient
 
+    if not credentials_path and _has_google_settings_configured():
+        return _make_gdrive_client_from_settings(scope)
+
     path = credentials_path or os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
     return GoogleDriveClient(
         credential_strategy=default_drive_strategy(credentials_path=path, scopes=scope)
     )
 
 
-def _make_gdrive_client_from_settings() -> GoogleDriveClient:
-    from sharedrive.auth.settings import make_google_drive_client_from_settings
+def _make_gdrive_client_from_settings(scope: Optional[list[str]] = None) -> GoogleDriveClient:
+    from sharedrive.auth.settings import GoogleAuthConfig, make_google_drive_client_from_settings
 
-    return make_google_drive_client_from_settings()
+    if scope is None:
+        return make_google_drive_client_from_settings()
+
+    return make_google_drive_client_from_settings(GoogleAuthConfig(scopes=scope))
+
+
+def _has_google_settings_configured() -> bool:
+    return any(
+        os.getenv(name)
+        for name in (
+            "GOOGLE_AUTH_MODE",
+            "GOOGLE_SERVICE_ACCOUNT_CREDENTIALS",
+            "GOOGLE_OAUTH_CREDENTIALS",
+            "GOOGLE_OAUTH_TOKEN_PATH",
+            "GOOGLE_SCOPES",
+            "GOOGLE_OAUTH_USE_LOCAL_SERVER",
+        )
+    )
 
 
 def _parse_include_values(values: list[str] | None) -> str | list[str]:
@@ -94,18 +135,34 @@ def _run_fetch_command(
     include: str | list[str],
     output_dir: Path,
     dry_run: bool,
+    check_auth: bool,
 ) -> None:
     summary = fetch_from_descriptor(
         descriptor=descriptor,
         include=include,
         output_dir=output_dir,
         dry_run=dry_run,
+        check_auth=check_auth,
         log=typer.echo,
         sharepoint_client_factory=_make_sharepoint_client,
         googledrive_client_factory=lambda: _make_gdrive_client(None),
     )
     if not summary.ok:
         raise typer.Exit(code=1)
+
+
+def _render_auth_results(results: list[Any], output_format: OutputFormat) -> None:
+    if output_format == OutputFormat.JSON:
+        _echo_json([result.to_dict() for result in results])
+        return
+
+    if not results:
+        typer.echo("No matching adapters were selected.")
+        return
+
+    for result in results:
+        status = "ready" if result.ok else "failed"
+        typer.echo(f"{result.adapter}: {status} - {result.message}")
 
 
 @app.command(
@@ -133,17 +190,18 @@ def fetch(
     ),
     output_dir: Path = typer.Option(Path("resources"), help="Base output directory for relative resource paths."),
     dry_run: bool = typer.Option(False, help="Print actions without downloading."),
+    check_auth: bool = typer.Option(False, "--check-auth", help="Validate service credentials before downloading."),
     env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
 ) -> None:
     """Fetch descriptor resources by adapter type or resource name filters."""
-    if env_file is not None:
-        load_dotenv(str(env_file), override=True)
+    _load_env_file(env_file)
     include_values = _parse_include_values(include)
     _run_fetch_command(
         descriptor=descriptor,
         include=include_values,
         output_dir=output_dir,
         dry_run=dry_run,
+        check_auth=check_auth,
     )
 
 
@@ -172,6 +230,7 @@ def retrieve(
     ),
     output_dir: Path = typer.Option(Path("resources"), help="Base output directory for relative resource paths."),
     dry_run: bool = typer.Option(False, help="Print actions without downloading."),
+    check_auth: bool = typer.Option(False, "--check-auth", help="Validate service credentials before downloading."),
     env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
 ) -> None:
     """Backward-compatible alias for fetch."""
@@ -180,8 +239,84 @@ def retrieve(
         include=include,
         output_dir=output_dir,
         dry_run=dry_run,
+        check_auth=check_auth,
         env_file=env_file,
     )
+
+
+@auth_app.command(
+    "check",
+    epilog=_examples_epilog(
+        "sharedrive auth check resources/descriptor.yaml",
+        "sharedrive auth check resources/descriptor.yaml --include sharepoint",
+        "sharedrive auth check resources/descriptor.yaml --format json",
+    ),
+)
+def auth_check(
+    descriptor: Path = typer.Argument(..., exists=False, help="Descriptor file path."),
+    include: Optional[list[str]] = typer.Option(
+        None,
+        "--include",
+        "-i",
+        help=(
+            "Include adapter types and/or resource names. "
+            "Repeat the option or pass a comma-separated list."
+        ),
+    ),
+    output_format: OutputFormat = typer.Option(OutputFormat.TEXT, "--format", help="Output format."),
+    env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
+) -> None:
+    """Validate credentials for the adapters selected by a descriptor."""
+    _load_env_file(env_file)
+    include_values = _parse_include_values(include)
+    results = check_auth_for_descriptor(
+        descriptor=descriptor,
+        include=include_values,
+        sharepoint_client_factory=_make_sharepoint_client,
+        googledrive_client_factory=lambda: _make_gdrive_client(None),
+    )
+    _render_auth_results(results, output_format)
+    if any(not result.ok for result in results):
+        raise typer.Exit(code=1)
+
+
+@auth_login_app.command(
+    "gdrive",
+    epilog=_examples_epilog(
+        "sharedrive auth login gdrive --oauth-client-secrets .google/oauth-credentials.json --oauth-token-path .google/oauth-token.json",
+        "sharedrive auth login gdrive --scope https://www.googleapis.com/auth/drive.readonly",
+    ),
+)
+def auth_login_gdrive(
+    oauth_client_secrets: Optional[Path] = typer.Option(None, "--oauth-client-secrets", help="Path to Google OAuth client secrets JSON."),
+    oauth_token_path: Optional[Path] = typer.Option(None, "--oauth-token-path", help="Path to persist the authorized-user token JSON."),
+    scope: Optional[list[str]] = typer.Option(None, "--scope", help="OAuth scope. Repeat for multiple scopes."),
+    no_local_server: bool = typer.Option(False, "--no-local-server", help="Use the console flow instead of a local callback server."),
+    env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
+) -> None:
+    """Run the Google installed-app OAuth flow and optionally persist a token."""
+    from sharedrive.auth.settings import GoogleAuthConfig, GoogleAuthMode
+
+    _load_env_file(env_file)
+
+    config_kwargs: dict[str, Any] = {
+        "auth_mode": GoogleAuthMode.USER_OAUTH,
+        "use_local_server": not no_local_server,
+    }
+    if oauth_client_secrets is not None:
+        config_kwargs["oauth_client_secrets"] = oauth_client_secrets
+    if oauth_token_path is not None:
+        config_kwargs["oauth_token_path"] = oauth_token_path
+    if scope is not None:
+        config_kwargs["scopes"] = scope
+
+    config = GoogleAuthConfig(**config_kwargs)
+    config.to_strategy().build()
+
+    if config.oauth_token_path is not None:
+        typer.echo(f"Google Drive login succeeded. Token saved to {config.oauth_token_path}")
+    else:
+        typer.echo("Google Drive login succeeded. No token path was configured, so credentials are only available for this process.")
 
 
 @gdrive_app.command(

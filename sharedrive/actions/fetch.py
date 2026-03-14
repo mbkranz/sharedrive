@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 import yaml
 
-from sharedrive.aws import download_s3_url
+from sharedrive.aws import check_s3_credentials, download_s3_url
 
 LogFn = Callable[[str], None]
 
@@ -29,6 +29,20 @@ class FetchSummary:
 
 
 RetrieveSummary = FetchSummary
+
+
+@dataclass(slots=True)
+class AuthCheckResult:
+    adapter: str
+    ok: bool
+    message: str
+
+    def to_dict(self) -> dict[str, str | bool]:
+        return {
+            "adapter": self.adapter,
+            "ok": self.ok,
+            "message": self.message,
+        }
 
 
 def load_descriptor(path: Path) -> list[dict[str, Any]]:
@@ -198,12 +212,133 @@ def _default_googledrive_client_factory() -> Any:
     )
 
 
+def _selected_adapter_names(
+    resources: Iterable[dict[str, Any]],
+    include: str | Iterable[str] = "all",
+) -> list[str]:
+    include_set = _normalize_include(include)
+    selected: list[str] = []
+    seen: set[str] = set()
+
+    for index, resource in enumerate(resources):
+        if not isinstance(resource, dict):
+            continue
+
+        resource_name = resource.get("name", f"resource[{index}]")
+        resource_name_key = str(resource_name).strip().lower()
+        source_url = resource_source_url(resource)
+        adapter_name = resource_adapter_name(resource, source_url)
+
+        if (
+            "all" not in include_set
+            and adapter_name not in include_set
+            and resource_name_key not in include_set
+        ):
+            continue
+
+        if adapter_name not in seen:
+            seen.add(adapter_name)
+            selected.append(adapter_name)
+
+    return selected
+
+
+def check_auth_for_adapters(
+    adapters: Iterable[str],
+    *,
+    sharepoint_client_factory: Callable[[], Any] | None = None,
+    googledrive_client_factory: Callable[[], Any] | None = None,
+    s3_auth_checker: Callable[[], None] | None = None,
+) -> list[AuthCheckResult]:
+    results: list[AuthCheckResult] = []
+
+    for adapter_name in adapters:
+        try:
+            if adapter_name == "sharepoint":
+                factory = sharepoint_client_factory or _default_sharepoint_client_factory
+                factory()
+                results.append(
+                    AuthCheckResult(
+                        adapter="sharepoint",
+                        ok=True,
+                        message="SharePoint credentials are ready.",
+                    )
+                )
+            elif adapter_name == "googledrive":
+                factory = googledrive_client_factory or _default_googledrive_client_factory
+                client = factory()
+                ensure_valid = getattr(client, "_ensure_valid_credentials", None)
+                if callable(ensure_valid):
+                    ensure_valid()
+                else:
+                    _ = client._hdrs
+                results.append(
+                    AuthCheckResult(
+                        adapter="googledrive",
+                        ok=True,
+                        message="Google Drive credentials are ready.",
+                    )
+                )
+            elif adapter_name == "s3":
+                checker = s3_auth_checker or check_s3_credentials
+                checker()
+                results.append(
+                    AuthCheckResult(
+                        adapter="s3",
+                        ok=True,
+                        message="AWS credentials are ready for S3 operations.",
+                    )
+                )
+            else:
+                results.append(
+                    AuthCheckResult(
+                        adapter=adapter_name,
+                        ok=False,
+                        message=f"Unsupported adapter '{adapter_name}'.",
+                    )
+                )
+        except Exception as exc:
+            prefix = {
+                "sharepoint": "SharePoint authentication failed",
+                "googledrive": "Google Drive authentication failed",
+                "s3": "S3 credential check failed",
+            }.get(adapter_name, f"Adapter '{adapter_name}' authentication failed")
+            results.append(
+                AuthCheckResult(
+                    adapter=adapter_name,
+                    ok=False,
+                    message=f"{prefix}: {exc}",
+                )
+            )
+
+    return results
+
+
+def check_auth_for_descriptor(
+    descriptor: Path | str,
+    include: str | Iterable[str] = "all",
+    *,
+    sharepoint_client_factory: Callable[[], Any] | None = None,
+    googledrive_client_factory: Callable[[], Any] | None = None,
+    s3_auth_checker: Callable[[], None] | None = None,
+) -> list[AuthCheckResult]:
+    resources = load_descriptor(Path(descriptor))
+    adapters = _selected_adapter_names(resources, include)
+    return check_auth_for_adapters(
+        adapters,
+        sharepoint_client_factory=sharepoint_client_factory,
+        googledrive_client_factory=googledrive_client_factory,
+        s3_auth_checker=s3_auth_checker,
+    )
+
+
 def fetch_from_descriptor(
     descriptor: Path | str,
     include: str | Iterable[str] = "all",
     output_dir: Path | str = Path("resources"),
     dry_run: bool = False,
     *,
+    check_auth: bool = False,
     log: LogFn | None = print,
     sharepoint_client_factory: Callable[[], Any] | None = None,
     googledrive_client_factory: Callable[[], Any] | None = None,
@@ -222,6 +357,23 @@ def fetch_from_descriptor(
     def emit(message: str) -> None:
         if log is not None:
             log(message)
+
+    if check_auth:
+        auth_results = check_auth_for_adapters(
+            _selected_adapter_names(resources, include_set),
+            sharepoint_client_factory=sharepoint_client_factory,
+            googledrive_client_factory=googledrive_client_factory,
+        )
+        failed_checks = [result for result in auth_results if not result.ok]
+        if not auth_results:
+            emit("Auth check skipped; no matching adapters were selected.")
+        else:
+            for result in auth_results:
+                status = "ready" if result.ok else "failed"
+                emit(f"Auth check {status} for {result.adapter}: {result.message}")
+        if failed_checks:
+            summary.failures += len(failed_checks)
+            return summary
 
     for index, resource in enumerate(resources):
         if not isinstance(resource, dict):
@@ -308,6 +460,7 @@ def fetch_resources(
     output_dir: Path | str = Path("resources"),
     dry_run: bool = False,
     *,
+    check_auth: bool = False,
     log: LogFn | None = print,
 ) -> FetchSummary:
     """Convenience alias for fetch_from_descriptor."""
@@ -316,6 +469,7 @@ def fetch_resources(
         include=include,
         output_dir=output_dir,
         dry_run=dry_run,
+        check_auth=check_auth,
         log=log,
     )
 
@@ -326,6 +480,7 @@ def retrieve_from_descriptor(
     output_dir: Path | str = Path("resources"),
     dry_run: bool = False,
     *,
+    check_auth: bool = False,
     log: LogFn | None = print,
     sharepoint_client_factory: Callable[[], Any] | None = None,
     googledrive_client_factory: Callable[[], Any] | None = None,
@@ -337,6 +492,7 @@ def retrieve_from_descriptor(
         include=include,
         output_dir=output_dir,
         dry_run=dry_run,
+        check_auth=check_auth,
         log=log,
         sharepoint_client_factory=sharepoint_client_factory,
         googledrive_client_factory=googledrive_client_factory,
@@ -350,6 +506,7 @@ def retrieve_resources(
     output_dir: Path | str = Path("resources"),
     dry_run: bool = False,
     *,
+    check_auth: bool = False,
     log: LogFn | None = print,
 ) -> RetrieveSummary:
     """Backward-compatible alias for fetch_resources."""
@@ -358,11 +515,15 @@ def retrieve_resources(
         include=include,
         output_dir=output_dir,
         dry_run=dry_run,
+        check_auth=check_auth,
         log=log,
     )
 
 
 __all__ = [
+    "AuthCheckResult",
+    "check_auth_for_adapters",
+    "check_auth_for_descriptor",
     "FetchSummary",
     "RetrieveSummary",
     "fetch_from_descriptor",

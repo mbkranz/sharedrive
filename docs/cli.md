@@ -17,6 +17,7 @@ Options:
 
 Commands:
   fetch       Fetch descriptor resources by adapter type or resource name...
+  auth        Authentication helpers.
   gdrive      Google Drive commands.
   sharepoint  SharePoint commands.
   spo         SharePoint commands.
@@ -40,6 +41,7 @@ Options:
                             [default: resources]
   --dry-run / --no-dry-run  Print actions without downloading.  [default: no-
                             dry-run]
+  --check-auth              Validate service credentials before downloading.
   --env-file PATH           Path to .env file for credentials. Defaults to .env
                             in the current directory.
   --help                    Show this message and exit.

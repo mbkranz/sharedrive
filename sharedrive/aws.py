@@ -11,6 +11,20 @@ except ImportError:  # pragma: no cover
     S3Path = None
 
 
+def check_s3_credentials() -> None:
+    """Validate that AWS credentials are available for S3 operations."""
+    session = boto3.Session()
+    credentials = session.get_credentials()
+    if credentials is None:
+        raise RuntimeError(
+            "No AWS credentials were found in the current environment or configuration."
+        )
+
+    frozen = credentials.get_frozen_credentials()
+    if not frozen.access_key or not frozen.secret_key:
+        raise RuntimeError("AWS credentials are incomplete for S3 operations.")
+
+
 def parse_s3_source_url(source_url: str) -> tuple[str, str]:
     parsed = urlparse(source_url)
     scheme = parsed.scheme.lower()
