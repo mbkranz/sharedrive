@@ -216,7 +216,7 @@ SharepointAuthConfig = MicrosoftAuthConfig
 def make_google_drive_client_from_settings(
     config: GoogleAuthConfig | None = None,
 ):
-    from sharedrive.clients.google import GoogleDriveClient
+    from sharedrive.clients.googledrive import GoogleDriveClient
 
     resolved_config = config or GoogleAuthConfig()
     return GoogleDriveClient(credential_strategy=resolved_config.to_strategy())

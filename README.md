@@ -150,7 +150,7 @@ For Python API usage, you can now choose an explicit auth strategy:
 ```python
 from sharedrive.auth.google import AdcStrategy, UserOAuthStrategy
 from sharedrive.auth.token_store import JsonTokenStore
-from sharedrive.clients.google import GoogleDriveClient
+from sharedrive.clients.googledrive import GoogleDriveClient
 
 adc_client = GoogleDriveClient(
   credential_strategy=AdcStrategy(),

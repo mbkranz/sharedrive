@@ -63,8 +63,8 @@ API_SURFACE = [
         "classes": {},
     },
     {
-        "module": "sharedrive.clients.google",
-        "path": ROOT / "sharedrive" / "clients" / "google.py",
+        "module": "sharedrive.clients.googledrive",
+        "path": ROOT / "sharedrive" / "clients" / "googledrive.py",
         "functions": [],
         "classes": {
             "GoogleBaseClient": [

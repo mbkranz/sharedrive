@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from sharedrive.clients.google import GoogleBaseClient, GoogleDriveClient
+from sharedrive.clients.googledrive import GoogleBaseClient, GoogleDriveClient
 from sharedrive.exceptions import GoogleDriveError
 
 
@@ -84,7 +84,7 @@ def test_client_legacy_constructor_uses_default_strategy(
     creds = DummyCreds(valid=True)
     strategy = DummyStrategy(creds)
 
-    monkeypatch.setattr("sharedrive.clients.google.default_drive_strategy", lambda **kwargs: strategy)
+    monkeypatch.setattr("sharedrive.clients.googledrive.default_drive_strategy", lambda **kwargs: strategy)
 
     client = GoogleDriveClient(credentials_path="service-account.json", scope=["scope-a"])
 

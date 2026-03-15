@@ -19,7 +19,7 @@ except ImportError:  # pragma: no cover
     S3Path = None
 
 if TYPE_CHECKING:  # pragma: no cover
-    from sharedrive.clients.google import GoogleDriveClient
+    from sharedrive.clients.googledrive import GoogleDriveClient
     from sharedrive.clients.sharepoint import SharepointClient
 
 load_dotenv(find_dotenv(usecwd=True))
@@ -109,7 +109,7 @@ def _run_microsoft_login(
 
 def _make_gdrive_client(credentials_path: Optional[str], scope: Optional[list[str]] = None) -> GoogleDriveClient:
     from sharedrive.auth.google import default_drive_strategy
-    from sharedrive.clients.google import GoogleDriveClient
+    from sharedrive.clients.googledrive import GoogleDriveClient
 
     if not credentials_path and _has_google_settings_configured():
         return _make_gdrive_client_from_settings(scope)

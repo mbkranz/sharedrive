@@ -111,7 +111,7 @@ def test_make_google_drive_client_from_settings_uses_strategy(monkeypatch: pytes
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr("sharedrive.clients.google.GoogleDriveClient", DummyClient)
+    monkeypatch.setattr("sharedrive.clients.googledrive.GoogleDriveClient", DummyClient)
 
     config = GoogleAuthConfig(auth_mode=GoogleAuthMode.ADC, _env_file=None)
     make_google_drive_client_from_settings(config)

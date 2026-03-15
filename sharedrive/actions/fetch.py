@@ -204,7 +204,7 @@ def _default_sharepoint_client_factory() -> Any:
 
 def _default_googledrive_client_factory() -> Any:
     from sharedrive.auth.google import default_drive_strategy
-    from sharedrive.clients.google import GoogleDriveClient
+    from sharedrive.clients.googledrive import GoogleDriveClient
 
     credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
     return GoogleDriveClient(

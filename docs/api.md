@@ -38,7 +38,7 @@ Auto-generated from source signatures and docstrings.
 - `def download_s3_url(source_url: str, output_path: Path, *, dry_run: bool = False, use_cloudpathlib: bool = True) -> Path | None`
 
 
-## `sharedrive.clients.google`
+## `sharedrive.clients.googledrive`
 
 ### Classes
 
