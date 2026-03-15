@@ -20,7 +20,7 @@ except ImportError:  # pragma: no cover
 
 if TYPE_CHECKING:  # pragma: no cover
     from sharedrive.clients.google import GoogleDriveClient
-    from sharedrive.sharepoint import SharepointClient
+    from sharedrive.clients.sharepoint import SharepointClient
 
 load_dotenv(find_dotenv(usecwd=True))
 
@@ -77,9 +77,34 @@ def _load_env_file(env_file: Optional[Path]) -> None:
 
 
 def _make_sharepoint_client() -> SharepointClient:
-    from sharedrive.azure import SpoConfig
+    from sharedrive.auth.settings import make_sharepoint_client_from_microsoft_auth
 
-    return SpoConfig().to_client()
+    return make_sharepoint_client_from_microsoft_auth()
+
+
+def _run_microsoft_login(
+    auth_mode: Optional[str],
+    host_url: Optional[str],
+    scope: Optional[list[str]],
+    env_file: Optional[Path],
+) -> None:
+    from sharedrive.auth.settings import MicrosoftAuthConfig, MicrosoftAuthMode
+
+    _load_env_file(env_file)
+
+    config_kwargs: dict[str, Any] = {}
+    if auth_mode is not None:
+        config_kwargs["auth_mode"] = MicrosoftAuthMode(auth_mode)
+    if host_url is not None:
+        config_kwargs["host_url"] = host_url
+    if scope is not None:
+        config_kwargs["scopes"] = scope
+
+    config = MicrosoftAuthConfig(**config_kwargs)
+    config.to_strategy().build()
+    typer.echo(
+        f"Microsoft login succeeded using {config.auth_mode.value} mode for {config.host_url}"
+    )
 
 
 def _make_gdrive_client(credentials_path: Optional[str], scope: Optional[list[str]] = None) -> GoogleDriveClient:
@@ -317,6 +342,42 @@ def auth_login_gdrive(
         typer.echo(f"Google Drive login succeeded. Token saved to {config.oauth_token_path}")
     else:
         typer.echo("Google Drive login succeeded. No token path was configured, so credentials are only available for this process.")
+
+
+@auth_login_app.command(
+    "microsoft",
+    epilog=_examples_epilog(
+        "sharedrive auth login microsoft",
+        "sharedrive auth login microsoft --auth-mode delegated",
+        "sharedrive auth login microsoft --host-url norc.sharepoint.com",
+    ),
+)
+def auth_login_microsoft(
+    auth_mode: Optional[str] = typer.Option(None, "--auth-mode", help="Microsoft auth mode: app_only or delegated."),
+    host_url: Optional[str] = typer.Option(None, "--host-url", help="SharePoint host for validating Graph-backed access, for example norc.sharepoint.com."),
+    scope: Optional[list[str]] = typer.Option(None, "--scope", help="Microsoft Graph scope. Repeat for multiple scopes."),
+    env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
+) -> None:
+    """Validate Microsoft authentication used by SharePoint workflows."""
+    _run_microsoft_login(auth_mode, host_url, scope, env_file)
+
+
+@auth_login_app.command(
+    "sharepoint",
+    epilog=_examples_epilog(
+        "sharedrive auth login sharepoint",
+        "sharedrive auth login sharepoint --auth-mode delegated",
+        "sharedrive auth login sharepoint --host-url norc.sharepoint.com",
+    ),
+)
+def auth_login_sharepoint(
+    auth_mode: Optional[str] = typer.Option(None, "--auth-mode", help="Microsoft auth mode for SharePoint: app_only or delegated."),
+    host_url: Optional[str] = typer.Option(None, "--host-url", help="SharePoint host, for example norc.sharepoint.com."),
+    scope: Optional[list[str]] = typer.Option(None, "--scope", help="Microsoft Graph scope. Repeat for multiple scopes."),
+    env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
+) -> None:
+    """Validate SharePoint authentication using the configured auth mode."""
+    _run_microsoft_login(auth_mode, host_url, scope, env_file)
 
 
 @gdrive_app.command(

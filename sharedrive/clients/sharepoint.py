@@ -1,12 +1,17 @@
+from __future__ import annotations
+
 from pathlib import Path
 import json
 import mimetypes
+from typing import TYPE_CHECKING
 
 
 import requests
-import msal
 
-from sharedrive.exceptions import GraphAuthError, GraphApiDriveError, GraphApiSiteError
+from sharedrive.exceptions import GraphApiDriveError, GraphApiSiteError
+
+if TYPE_CHECKING:
+    from sharedrive.auth.microsoft import MicrosoftTokenStrategy
 
 
 class SharepointClient:
@@ -17,84 +22,56 @@ class SharepointClient:
     
     """
 
-    def __init__(self,tenant_id,client_id,client_secret,host_url="norc.sharepoint.com",scope=None,user_delegated_access=False):
+    def __init__(
+        self,
+        tenant_id=None,
+        client_id=None,
+        client_secret=None,
+        host_url="norc.sharepoint.com",
+        scope=None,
+        user_delegated_access=False,
+        *,
+        token_strategy: MicrosoftTokenStrategy | None = None,
+        access_token: str | None = None,
+    ):
 
-        self.host_url = host_url
+        self.host_url = host_url or "norc.sharepoint.com"
         self.tenant_id = tenant_id
-        self.scope = scope = scope or ["https://graph.microsoft.com/.default"]
-        self.client_id = client_id 
+        self.scope = scope or ["https://graph.microsoft.com/.default"]
+        self.client_id = client_id
         self.client_secret = client_secret
 
-        if user_delegated_access:
-            self.access_token = self.get_token_user_delegated(tenant_id, client_id, scope)
-        else:
-            self.access_token = self.get_token_app_only(tenant_id, client_id, client_secret, scope)
+        if access_token is not None and token_strategy is not None:
+            raise ValueError("Provide either access_token or token_strategy, not both.")
+
+        if access_token is None:
+            if token_strategy is not None:
+                access_token = token_strategy.build()
+            else:
+                from sharedrive.auth.microsoft import AppOnlyStrategy, DelegatedStrategy
+
+                if not tenant_id or not client_id:
+                    raise ValueError(
+                        "SharepointClient requires either token_strategy/access_token or tenant_id/client_id."
+                    )
+
+                strategy = DelegatedStrategy(
+                    tenant_id=tenant_id,
+                    client_id=client_id,
+                    scopes=self.scope,
+                ) if user_delegated_access else AppOnlyStrategy(
+                    tenant_id=tenant_id,
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    scopes=self.scope,
+                )
+                access_token = strategy.build()
+
+        self.access_token = access_token
 
         self.auth_header = {
             'Authorization': f'Bearer {self.access_token}'
         }
-
-    # @classmethod
-    # def from_user_delegated_access(cls,tenant_id,client_id,scope,host_url="norc.sharepoint.com"):
-    #     """
-    #     Factory method to create a SharepointClient instance using user delegated access.
-
-    #     NOTE: But see module todos.
-    #     """
-    #     return cls(tenant_id, client_id, client_secret=None, scope=scope, host_url=host_url, user_delegated_access=True)
-
-    # @classmethod
-    # def from_app_only_access(cls,tenant_id,client_id,client_secret,scope,host_url="norc.sharepoint.com"):
-    #     """
-    #     Factory method to create a SharepointClient instance using app-only access.
-
-    #     NOTE: But see module todos.
-    #     """
-    #     return cls(tenant_id, client_id, client_secret, scope, host_url, user_delegated_access=False)
-    #https://github.com/AzureAD/microsoft-authentication-library-for-python/blob/dev/sample/interactive_sample.py
-    @staticmethod
-    def _get_msal_token(result):
-        """
-        Helper function to extract the access token from the MSAL result.
-        """
-        if "access_token" in result:
-            return result["access_token"]
-        else:
-            raise GraphAuthError(f"Token error: {result.get('error_description')}")
-
-
-    @staticmethod
-    def get_token_user_delegated(tenant_id, client_id, scope):
-        """
-        Uses interactive login flow for delegated (user-based) access.
-        """
-        authority = f"https://login.microsoftonline.com/{tenant_id}"
-        app = msal.PublicClientApplication(
-            client_id,  authority=authority)
-        accounts = app.get_accounts()
-        if accounts:
-            # If there are accounts, try to acquire token silently
-            result = app.acquire_token_silent(scope, account=accounts[0])
-        else:
-            result = app.acquire_token_interactive(scopes=scope)
-
-        return SharepointClient._get_msal_token(result)
-
-    @staticmethod
-    def get_token_app_only(tenant_id, client_id, client_secret, scope):
-        """
-        Uses client credentials flow for app-only (application) access.
-        """
-        authority = f"https://login.microsoftonline.com/{tenant_id}"
-        app = msal.ConfidentialClientApplication(
-            client_id=client_id,
-            client_credential=client_secret,
-            authority=authority,
-        )
-
-        result = app.acquire_token_for_client(scopes=scope)
-
-        return SharepointClient._get_msal_token(result)
 
 
 

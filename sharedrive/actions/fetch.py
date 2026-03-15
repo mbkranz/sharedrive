@@ -197,9 +197,9 @@ def _normalize_include(include: str | Iterable[str]) -> set[str]:
 
 
 def _default_sharepoint_client_factory() -> Any:
-    from sharedrive.azure import SpoConfig
+    from sharedrive.auth.settings import make_sharepoint_client_from_microsoft_auth
 
-    return SpoConfig().to_client()
+    return make_sharepoint_client_from_microsoft_auth()
 
 
 def _default_googledrive_client_factory() -> Any:

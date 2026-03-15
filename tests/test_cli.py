@@ -97,6 +97,94 @@ def test_auth_login_gdrive_uses_user_oauth_settings(monkeypatch: pytest.MonkeyPa
     assert "Token saved to" in result.stdout
 
 
+def test_auth_login_sharepoint_uses_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class DummyStrategy:
+        def build(self):
+            captured["build_called"] = True
+            return "token"
+
+    class DummyConfig:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.auth_mode = SimpleNamespace(value=kwargs.get("auth_mode", "app_only"))
+            self.host_url = kwargs.get("host_url", "norc.sharepoint.com")
+
+        def to_strategy(self):
+            return DummyStrategy()
+
+    monkeypatch.setattr("sharedrive.auth.settings.MicrosoftAuthConfig", DummyConfig)
+    monkeypatch.setattr("sharedrive.auth.settings.MicrosoftAuthMode", lambda value: value)
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "auth",
+            "login",
+            "sharepoint",
+            "--auth-mode",
+            "delegated",
+            "--host-url",
+            "tenant.sharepoint.com",
+            "--scope",
+            "scope-a",
+        ],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 0
+    assert captured["auth_mode"] == "delegated"
+    assert captured["host_url"] == "tenant.sharepoint.com"
+    assert captured["scopes"] == ["scope-a"]
+    assert captured["build_called"] is True
+    assert "Microsoft login succeeded" in result.stdout
+
+
+def test_auth_login_microsoft_uses_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class DummyStrategy:
+        def build(self):
+            captured["build_called"] = True
+            return "token"
+
+    class DummyConfig:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.auth_mode = SimpleNamespace(value=kwargs.get("auth_mode", "app_only"))
+            self.host_url = kwargs.get("host_url", "norc.sharepoint.com")
+
+        def to_strategy(self):
+            return DummyStrategy()
+
+    monkeypatch.setattr("sharedrive.auth.settings.MicrosoftAuthConfig", DummyConfig)
+    monkeypatch.setattr("sharedrive.auth.settings.MicrosoftAuthMode", lambda value: value)
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "auth",
+            "login",
+            "microsoft",
+            "--auth-mode",
+            "delegated",
+            "--host-url",
+            "tenant.sharepoint.com",
+            "--scope",
+            "scope-a",
+        ],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 0
+    assert captured["auth_mode"] == "delegated"
+    assert captured["host_url"] == "tenant.sharepoint.com"
+    assert captured["scopes"] == ["scope-a"]
+    assert captured["build_called"] is True
+    assert "Microsoft login succeeded" in result.stdout
+
+
 def test_fetch_passes_check_auth_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(descriptor)
