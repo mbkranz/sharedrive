@@ -62,12 +62,19 @@ def add_resource_to_descriptor(
     title: str | None = None,
     description: str | None = None,
     drive_service: str | None = None,
+    package: bool = False,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     """Append a resource entry to a descriptor and return the created resource."""
     resource_name = _require_non_empty(name, "name")
     resource_path = _require_non_empty(path, "path")
     resource_source = _require_non_empty(source, "source")
     resource_drive_service = normalize_drive_service(resource_source, drive_service)
+    resource_profile = None
+    if profile is not None:
+        resource_profile = _require_non_empty(profile, "profile")
+    if resource_profile is not None and not package:
+        raise ValueError("profile can only be provided when package=True")
 
     document = load_descriptor_document(descriptor)
     resources = get_descriptor_resources(document, create=True)
@@ -90,6 +97,9 @@ def add_resource_to_descriptor(
         resource["title"] = title.strip()
     if description is not None and description.strip():
         resource["description"] = description.strip()
+    if package:
+        resource["profile"] = resource_profile or "data-package"
+        resource["resources"] = []
 
     resources.append(resource)
     save_descriptor_document(descriptor, document)

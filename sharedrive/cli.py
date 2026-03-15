@@ -10,9 +10,10 @@ from typing import TYPE_CHECKING, Any, Optional
 import typer
 from dotenv import find_dotenv, load_dotenv
 
-from sharedrive.aws import download_s3_url
+from sharedrive.clients.aws import download_s3_url
 from sharedrive.actions.add import add_resource_to_descriptor
 from sharedrive.actions.fetch import check_auth_for_descriptor, fetch_from_descriptor
+from sharedrive.actions.sync import sync_package_resource_in_descriptor
 from sharedrive.descriptor import (
     DESCRIPTOR_DEFAULTS_FILE,
     load_descriptor_defaults_store,
@@ -329,7 +330,7 @@ def set_command(
     """Set reusable key/value parameters for sharedrive descriptor workflows."""
     parsed = _parse_set_args(list(ctx.args))
     if descriptor is not None:
-        parsed["descriptor"] = descriptor
+        parsed["descriptor"] = Path(descriptor).as_posix()
     if output_dir is not None:
         parsed["output_dir"] = output_dir
     if not parsed:
@@ -346,6 +347,7 @@ def set_command(
     epilog=_examples_epilog(
         "sharedrive add spec-workbook --path background/specs/spec-workbook.xlsx --source https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx",
         "sharedrive add source-export --path background/exports/source-export.csv --source s3://my-bucket/source-export.csv --drive-service s3",
+        "sharedrive add census-package --path downloads/census --source https://drive.google.com/drive/folders/<id> --drive-service googledrive --package",
     ),
 )
 def add(
@@ -355,6 +357,8 @@ def add(
     title: Optional[str] = typer.Option(None, "--title", help="Optional resource title."),
     description: Optional[str] = typer.Option(None, "--description", help="Optional resource description."),
     drive_service: Optional[str] = typer.Option(None, "--drive-service", help="Drive service override. If omitted, infer from source."),
+    package: bool = typer.Option(False, "--package", help="Create a package resource with nested resources."),
+    profile: Optional[str] = typer.Option(None, "--profile", help="Package profile override. Defaults to data-package when --package is used."),
     descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
 ) -> None:
     """Add a resource entry to a descriptor."""
@@ -369,14 +373,55 @@ def add(
             title=title,
             description=description,
             drive_service=drive_service,
+            package=package,
+            profile=profile,
         )
     except (NotImplementedError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
+    resource_kind = "package resource" if package else "resource"
     typer.echo(
-        f"Added resource '{resource['name']}' to {descriptor_path} "
+        f"Added {resource_kind} '{resource['name']}' to {descriptor_path} "
         f"with driveService '{resource['driveService']}'."
+    )
+
+
+@app.command(
+    "sync",
+    epilog=_examples_epilog(
+        "sharedrive sync census-package --descriptor resources/descriptor.yaml --dry-run",
+        "sharedrive sync census-package --descriptor resources/descriptor.yaml",
+    ),
+)
+def sync(
+    package_name: str = typer.Argument(..., help="Top-level package resource name to sync."),
+    descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
+    dry_run: bool = typer.Option(False, help="Preview descriptor changes without writing them."),
+    env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
+) -> None:
+    """Sync one package resource into nested descriptor resources."""
+    # TODO: If a bulk sync mode is added later, expose it as an explicit flag
+    # such as `--all` rather than making bare `sharedrive sync` mutate every
+    # sync-eligible package resource in the descriptor.
+    _load_env_file(env_file)
+    descriptor_path = resolve_descriptor_path(descriptor)
+
+    try:
+        summary = sync_package_resource_in_descriptor(
+            descriptor=descriptor_path,
+            package_name=package_name,
+            dry_run=dry_run,
+            log=None,
+            googledrive_client_factory=lambda: _make_gdrive_client(None),
+        )
+    except (NotImplementedError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    action = "Would sync" if summary.dry_run else "Synced"
+    typer.echo(
+        f"{action} {summary.generated_resources} resource(s) for package '{summary.package_name}' in {descriptor_path}."
     )
 
 

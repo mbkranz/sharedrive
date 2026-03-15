@@ -9,6 +9,7 @@ import yaml
 from typer.testing import CliRunner
 
 from sharedrive.actions.fetch import AuthCheckResult
+from sharedrive.actions.sync import SyncSummary
 from sharedrive.cli import app
 
 RUNNER = CliRunner()
@@ -408,6 +409,96 @@ def test_add_command_writes_resource_to_descriptor(tmp_path: Path) -> None:
             ],
         }
     ]
+
+
+def test_add_command_writes_package_resource_to_descriptor(tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    descriptor.write_text("resources: []\n", encoding="utf-8")
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "add",
+            "census-package",
+            "--path",
+            "downloads/census",
+            "--descriptor",
+            str(descriptor),
+            "--source",
+            "https://drive.google.com/drive/folders/folder123",
+            "--drive-service",
+            "googledrive",
+            "--package",
+        ],
+        prog_name="sharedrive",
+    )
+
+    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
+
+    assert result.exit_code == 0
+    assert document["resources"] == [
+        {
+            "name": "census-package",
+            "path": "downloads/census",
+            "driveService": "googledrive",
+            "sources": [{"path": "https://drive.google.com/drive/folders/folder123"}],
+            "profile": "data-package",
+            "resources": [],
+        }
+    ]
+
+
+def test_sync_command_passes_descriptor_and_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    descriptor.write_text("resources: []\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_sync_package_resource_in_descriptor(**kwargs):
+        captured.update(kwargs)
+        return SyncSummary(package_name="census-package", generated_resources=2, dry_run=True)
+
+    monkeypatch.setattr(
+        "sharedrive.cli.sync_package_resource_in_descriptor",
+        fake_sync_package_resource_in_descriptor,
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "sync",
+            "census-package",
+            "--descriptor",
+            str(descriptor),
+            "--dry-run",
+        ],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 0
+    assert captured["descriptor"] == descriptor
+    assert captured["package_name"] == "census-package"
+    assert captured["dry_run"] is True
+    assert captured["log"] is None
+    assert "Would sync 2 resource(s)" in result.stdout
+
+
+def test_sync_command_exits_nonzero_on_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    descriptor.write_text("resources: []\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sharedrive.cli.sync_package_resource_in_descriptor",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("Package resource 'missing' was not found.")),
+    )
+
+    result = RUNNER.invoke(
+        app,
+        ["sync", "missing", "--descriptor", str(descriptor)],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 1
+    assert "was not found" in result.output
 
 
 def test_add_command_exits_nonzero_for_unknown_source(tmp_path: Path) -> None:

@@ -57,6 +57,41 @@ def test_add_resource_to_descriptor_rejects_unsupported_drive_service(tmp_path: 
         )
 
 
+def test_add_resource_to_descriptor_creates_package_resource(tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    descriptor.write_text("resources: []\n", encoding="utf-8")
+
+    resource = add_resource_to_descriptor(
+        descriptor,
+        name="census-package",
+        path="downloads/census",
+        source="https://drive.google.com/drive/folders/folder123",
+        drive_service="googledrive",
+        package=True,
+    )
+
+    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
+
+    assert resource["profile"] == "data-package"
+    assert resource["resources"] == []
+    assert document["resources"][0]["profile"] == "data-package"
+    assert document["resources"][0]["resources"] == []
+
+
+def test_add_resource_to_descriptor_rejects_profile_without_package(tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+
+    with pytest.raises(ValueError, match="profile can only be provided"):
+        add_resource_to_descriptor(
+            descriptor,
+            name="census-package",
+            path="downloads/census",
+            source="https://drive.google.com/drive/folders/folder123",
+            drive_service="googledrive",
+            profile="data-package",
+        )
+
+
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
