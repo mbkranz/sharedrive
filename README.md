@@ -8,9 +8,11 @@ Experimental connectors and workflows for moving files across SharePoint, Google
 
 ## Current scope
 
-- `sharedrive/sharepoint.py`: Microsoft Graph SharePoint client (`SharepointClient`)
+- `sharedrive/clients/sharepoint.py`: Microsoft Graph SharePoint client (`SharepointClient`)
 - `sharedrive/googledrive.py`: Google Drive client (`GoogleDriveClient`)
-- `sharedrive/azure.py`: SharePoint credential/config model (`SpoConfig`)
+- `sharedrive/auth/sharepoint.py`: SharePoint access-token strategies
+- `sharedrive/auth/settings.py`: Google and SharePoint auth settings/factories
+- `sharedrive/azure.py`: compatibility shim for older SharePoint config imports
 - `sharedrive/aws.py`: S3 URL parsing/download helpers (cloudpathlib + boto3 fallback)
 - `sharedrive/actions/fetch.py`: reusable descriptor-based fetch Python API
 - `sharedrive/retrieve.py`: compatibility shim for the older retrieval module path
@@ -82,8 +84,49 @@ Configure `.env` from `.env-sample` and set:
 - `AZURE_TENANT_ID`
 - `AZURE_CLIENT_ID`
 - `AZURE_CLIENT_SECRET`
+- `SHAREPOINT_AUTH_MODE`
 - `GOOGLE_APPLICATION_CREDENTIALS`
 - AWS credentials for S3 access
+
+## Microsoft Auth For SharePoint
+
+`sharedrive` now separates Microsoft token acquisition from `SharepointClient` itself.
+
+The primary Microsoft auth surface is now:
+
+- `sharedrive.auth.microsoft` for delegated and app-only Microsoft Graph token strategies
+- `sharedrive.auth.settings.MicrosoftAuthConfig` for env-validated configuration
+- `sharedrive.auth.settings.make_sharepoint_client_from_microsoft_auth()` for SharePoint client construction
+
+Backward-compatible aliases remain available under `sharedrive.auth.sharepoint`, `SharepointAuthConfig`, and `make_sharepoint_client_from_settings()`.
+
+Supported first-class SharePoint auth patterns:
+
+- App-only Microsoft Graph auth via `AppOnlyStrategy`
+- Delegated interactive auth via `DelegatedStrategy`
+
+For CLI operators:
+
+- `sharedrive auth login microsoft` validates Microsoft auth directly using the configured mode
+- `sharedrive auth login sharepoint` validates SharePoint auth using the configured mode
+- `sharedrive auth check <descriptor>` includes SharePoint in descriptor-aware preflight checks
+- `sharedrive fetch ... --check-auth` validates SharePoint credentials before download when selected
+
+For Python API usage:
+
+```python
+from sharedrive.auth.settings import (
+  MicrosoftAuthConfig,
+  make_sharepoint_client_from_microsoft_auth,
+)
+
+config = MicrosoftAuthConfig()
+client = make_sharepoint_client_from_microsoft_auth(config)
+```
+
+Compatibility note:
+
+- `sharedrive.azure.SpoConfig` remains as a thin shim over the new settings layer.
 
 ## Google Auth
 
@@ -98,6 +141,8 @@ For CLI operators, there are now explicit auth-oriented commands in addition to 
 
 - `sharedrive auth check <descriptor>` validates credentials for the adapters selected by a descriptor before any download starts.
 - `sharedrive auth login gdrive` runs the installed-app Google OAuth flow and can persist an authorized-user token to `GOOGLE_OAUTH_TOKEN_PATH` or an explicit `--oauth-token-path`.
+- `sharedrive auth login microsoft` validates Microsoft auth used by SharePoint workflows.
+- `sharedrive auth login sharepoint` validates SharePoint auth using app-only or delegated mode.
 - `sharedrive fetch ... --check-auth` runs the same descriptor-aware preflight before downloading.
 
 For Python API usage, you can now choose an explicit auth strategy:
@@ -151,6 +196,8 @@ CLI:
 ```bash
 sharedrive auth check resources/descriptor.yaml
 sharedrive auth login gdrive --oauth-client-secrets .google/oauth-credentials.json --oauth-token-path .google/oauth-token.json
+sharedrive auth login microsoft --auth-mode delegated
+sharedrive auth login sharepoint --auth-mode delegated
 sharedrive fetch resources/descriptor.yaml --dry-run
 sharedrive fetch resources/descriptor.yaml --check-auth
 sharedrive fetch resources/descriptor.yaml --include sharepoint

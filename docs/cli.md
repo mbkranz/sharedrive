@@ -24,6 +24,183 @@ Commands:
   s3          S3 commands.
 ```
 
+## `sharedrive auth --help`
+
+```text
+Usage: sharedrive auth [OPTIONS] COMMAND [ARGS]...
+
+  Authentication helpers.
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  check  Validate credentials for the adapters selected by a descriptor.
+  login  Interactive login commands.
+```
+
+## `sharedrive auth check --help`
+
+```text
+Usage: sharedrive auth check [OPTIONS] DESCRIPTOR
+
+  Validate credentials for the adapters selected by a descriptor.
+
+Arguments:
+  DESCRIPTOR  Descriptor file path.  [required]
+
+Options:
+  -i, --include TEXT    Include adapter types and/or resource names. Repeat the
+                        option or pass a comma-separated list.
+  --format [text|json]  Output format.  [default: text]
+  --env-file PATH       Path to .env file for credentials. Defaults to .env in
+                        the current directory.
+  --help                Show this message and exit.
+
+  **Examples**
+
+  ```bash
+
+  sharedrive auth check resources/descriptor.yaml
+
+  ```
+
+  ```bash
+
+  sharedrive auth check resources/descriptor.yaml --include sharepoint
+
+  ```
+
+  ```bash
+
+  sharedrive auth check resources/descriptor.yaml --format json
+
+  ```
+```
+
+## `sharedrive auth login --help`
+
+```text
+Usage: sharedrive auth login [OPTIONS] COMMAND [ARGS]...
+
+  Interactive login commands.
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  gdrive      Run the Google installed-app OAuth flow and optionally...
+  microsoft   Validate Microsoft authentication used by SharePoint workflows.
+  sharepoint  Validate SharePoint authentication using the configured auth...
+```
+
+## `sharedrive auth login gdrive --help`
+
+```text
+Usage: sharedrive auth login gdrive [OPTIONS]
+
+  Run the Google installed-app OAuth flow and optionally persist a token.
+
+Options:
+  --oauth-client-secrets PATH  Path to Google OAuth client secrets JSON.
+  --oauth-token-path PATH      Path to persist the authorized-user token JSON.
+  --scope TEXT                 OAuth scope. Repeat for multiple scopes.
+  --no-local-server            Use the console flow instead of a local callback
+                               server.
+  --env-file PATH              Path to .env file for credentials. Defaults to
+                               .env in the current directory.
+  --help                       Show this message and exit.
+
+  **Examples**
+
+  ```bash
+
+  sharedrive auth login gdrive --oauth-client-secrets .google/oauth-
+  credentials.json --oauth-token-path .google/oauth-token.json
+
+  ```
+
+  ```bash
+
+  sharedrive auth login gdrive --scope
+  https://www.googleapis.com/auth/drive.readonly
+
+  ```
+```
+
+## `sharedrive auth login microsoft --help`
+
+```text
+Usage: sharedrive auth login microsoft [OPTIONS]
+
+  Validate Microsoft authentication used by SharePoint workflows.
+
+Options:
+  --auth-mode TEXT  Microsoft auth mode: app_only or delegated.
+  --host-url TEXT   SharePoint host for validating Graph-backed access, for
+                    example norc.sharepoint.com.
+  --scope TEXT      Microsoft Graph scope. Repeat for multiple scopes.
+  --env-file PATH   Path to .env file for credentials. Defaults to .env in the
+                    current directory.
+  --help            Show this message and exit.
+
+  **Examples**
+
+  ```bash
+
+  sharedrive auth login microsoft
+
+  ```
+
+  ```bash
+
+  sharedrive auth login microsoft --auth-mode delegated
+
+  ```
+
+  ```bash
+
+  sharedrive auth login microsoft --host-url norc.sharepoint.com
+
+  ```
+```
+
+## `sharedrive auth login sharepoint --help`
+
+```text
+Usage: sharedrive auth login sharepoint [OPTIONS]
+
+  Validate SharePoint authentication using the configured auth mode.
+
+Options:
+  --auth-mode TEXT  Microsoft auth mode for SharePoint: app_only or delegated.
+  --host-url TEXT   SharePoint host, for example norc.sharepoint.com.
+  --scope TEXT      Microsoft Graph scope. Repeat for multiple scopes.
+  --env-file PATH   Path to .env file for credentials. Defaults to .env in the
+                    current directory.
+  --help            Show this message and exit.
+
+  **Examples**
+
+  ```bash
+
+  sharedrive auth login sharepoint
+
+  ```
+
+  ```bash
+
+  sharedrive auth login sharepoint --auth-mode delegated
+
+  ```
+
+  ```bash
+
+  sharedrive auth login sharepoint --host-url norc.sharepoint.com
+
+  ```
+```
+
 ## `sharedrive fetch --help`
 
 ```text

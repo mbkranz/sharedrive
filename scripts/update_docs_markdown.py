@@ -19,6 +19,12 @@ RUNNER = CliRunner()
 
 CLI_COMMANDS: list[tuple[str, list[str]]] = [
     ("sharedrive --help", ["--help"]),
+    ("sharedrive auth --help", ["auth", "--help"]),
+    ("sharedrive auth check --help", ["auth", "check", "--help"]),
+    ("sharedrive auth login --help", ["auth", "login", "--help"]),
+    ("sharedrive auth login gdrive --help", ["auth", "login", "gdrive", "--help"]),
+    ("sharedrive auth login microsoft --help", ["auth", "login", "microsoft", "--help"]),
+    ("sharedrive auth login sharepoint --help", ["auth", "login", "sharepoint", "--help"]),
     ("sharedrive fetch --help", ["fetch", "--help"]),
     ("sharedrive gdrive --help", ["gdrive", "--help"]),
     ("sharedrive gdrive list --help", ["gdrive", "list", "--help"]),
@@ -49,12 +55,6 @@ API_SURFACE = [
             "retrieve_resources",
         ],
         "classes": {"FetchSummary": ["ok"]},
-    },
-    {
-        "module": "sharedrive.azure",
-        "path": ROOT / "sharedrive" / "azure.py",
-        "functions": [],
-        "classes": {"SpoConfig": ["to_client"]},
     },
     {
         "module": "sharedrive.aws",
@@ -97,6 +97,24 @@ API_SURFACE = [
         },
     },
     {
+        "module": "sharedrive.auth.microsoft",
+        "path": ROOT / "sharedrive" / "auth" / "microsoft.py",
+        "functions": ["normalize_microsoft_scopes"],
+        "classes": {
+            "DelegatedStrategy": ["build"],
+            "AppOnlyStrategy": ["build"],
+        },
+    },
+    {
+        "module": "sharedrive.auth.sharepoint",
+        "path": ROOT / "sharedrive" / "auth" / "sharepoint.py",
+        "functions": ["normalize_sharepoint_scopes"],
+        "classes": {
+            "DelegatedStrategy": ["build"],
+            "AppOnlyStrategy": ["build"],
+        },
+    },
+    {
         "module": "sharedrive.auth.token_store",
         "path": ROOT / "sharedrive" / "auth" / "token_store.py",
         "functions": [],
@@ -105,15 +123,29 @@ API_SURFACE = [
     {
         "module": "sharedrive.auth.settings",
         "path": ROOT / "sharedrive" / "auth" / "settings.py",
-        "functions": ["make_google_drive_client_from_settings"],
+        "functions": [
+            "make_google_drive_client_from_settings",
+            "make_sharepoint_client_from_microsoft_auth",
+            "make_sharepoint_client_from_settings",
+        ],
         "classes": {
             "GoogleAuthMode": [],
             "GoogleAuthConfig": ["to_strategy"],
+            "MicrosoftAuthMode": [],
+            "MicrosoftAuthConfig": ["to_strategy"],
+            "SharepointAuthMode": [],
+            "SharepointAuthConfig": ["to_strategy"],
         },
     },
     {
-        "module": "sharedrive.sharepoint",
-        "path": ROOT / "sharedrive" / "sharepoint.py",
+        "module": "sharedrive.azure",
+        "path": ROOT / "sharedrive" / "azure.py",
+        "functions": [],
+        "classes": {"SpoConfig": ["to_client"]},
+    },
+    {
+        "module": "sharedrive.clients.sharepoint",
+        "path": ROOT / "sharedrive" / "clients" / "sharepoint.py",
         "functions": [],
         "classes": {
             "SharepointClient": [

@@ -30,22 +30,6 @@ Auto-generated from source signatures and docstrings.
   - `def ok(self) -> bool`
 
 
-## `sharedrive.azure`
-
-### Classes
-
-#### `SpoConfig`
-- Fields:
-  - `tenant_id: str`
-  - `client_id: str`
-  - `client_secret: SecretStr | None`
-  - `scope: list[str]`
-  - `user_delegated_access: bool`
-  - `host_url: str`
-- Methods:
-  - `def to_client(self) -> SharepointClient`
-
-
 ## `sharedrive.aws`
 
 ### Functions
@@ -118,6 +102,33 @@ Auto-generated from source signatures and docstrings.
   - `def build(self) -> Credentials`
 
 
+## `sharedrive.auth.microsoft`
+
+### Functions
+
+- `def normalize_microsoft_scopes(scopes: Sequence[str] | str | None, *, default: Sequence[str] = DEFAULT_MICROSOFT_GRAPH_SCOPES) -> list[str]`
+
+### Classes
+
+#### `DelegatedStrategy`
+- Methods:
+  - `def build(self) -> str`
+
+#### `AppOnlyStrategy`
+- Fields:
+  - `client_secret: str | None`
+- Methods:
+  - `def build(self) -> str`
+
+
+## `sharedrive.auth.sharepoint`
+
+### Functions
+
+
+### Classes
+
+
 ## `sharedrive.auth.token_store`
 
 ### Classes
@@ -134,6 +145,7 @@ Auto-generated from source signatures and docstrings.
 ### Functions
 
 - `def make_google_drive_client_from_settings(config: GoogleAuthConfig | None = None)`
+- `def make_sharepoint_client_from_microsoft_auth(config: MicrosoftAuthConfig | None = None)`
 
 ### Classes
 
@@ -150,8 +162,30 @@ Auto-generated from source signatures and docstrings.
 - Methods:
   - `def to_strategy(self) -> CredentialStrategy`
 
+#### `MicrosoftAuthMode`
 
-## `sharedrive.sharepoint`
+#### `MicrosoftAuthConfig`
+- Fields:
+  - `auth_mode: MicrosoftAuthMode`
+  - `tenant_id: str | None`
+  - `client_id: str | None`
+  - `client_secret: SecretStr | None`
+  - `host_url: str`
+  - `scopes: list[str]`
+- Methods:
+  - `def to_strategy(self) -> AppOnlyStrategy | DelegatedStrategy`
+
+
+## `sharedrive.azure`
+
+### Classes
+
+#### `SpoConfig`
+- Methods:
+  - `def to_client(self)`
+
+
+## `sharedrive.clients.sharepoint`
 
 ### Classes
 
