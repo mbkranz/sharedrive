@@ -7,6 +7,7 @@ Auto-generated from source signatures and docstrings.
 ### Constants
 
 - `DESCRIPTOR_DEFAULTS_FILE = Path('.sharedrive/sharedrive_set.json')`
+- `PACKAGE_PROFILE_MARKERS = ('data-package', 'tabular-data-package', 'json-data-package')`
 
 ### Functions
 
@@ -18,6 +19,10 @@ Auto-generated from source signatures and docstrings.
   - Return merged global and descriptor-scoped saved params.
 - `def get_descriptor_resources(document: dict[str, Any], *, create: bool = False) -> list[dict[str, Any]]`
   - Return the top-level resources list, optionally initializing it.
+- `def get_package_resources(resource: dict[str, Any], *, create: bool = False) -> list[dict[str, Any]]`
+  - Return nested resources for a package resource, optionally initializing them.
+- `def is_package_resource(resource: dict[str, Any]) -> bool`
+  - Return True when a resource should be treated as a package/container.
 - `def load_descriptor(path: Path | str) -> list[dict[str, Any]]`
   - Load a JSON/YAML descriptor and return the top-level resources list.
 - `def load_descriptor_document(path: Path | str) -> dict[str, Any]`
@@ -42,7 +47,7 @@ Auto-generated from source signatures and docstrings.
 
 ### Functions
 
-- `def add_resource_to_descriptor(descriptor: Path | str, *, name: str, path: str, source: str, title: str | None = None, description: str | None = None, drive_service: str | None = None) -> dict[str, Any]`
+- `def add_resource_to_descriptor(descriptor: Path | str, *, name: str, path: str, source: str, title: str | None = None, description: str | None = None, drive_service: str | None = None, package: bool = False, profile: str | None = None) -> dict[str, Any]`
   - Append a resource entry to a descriptor and return the created resource.
 - `def infer_drive_service(source: str) -> str`
   - Infer the implemented drive service from a source URL/URI.
@@ -104,7 +109,24 @@ Auto-generated from source signatures and docstrings.
   - `def ok(self) -> bool`
 
 
-## `sharedrive.aws`
+## `sharedrive.actions.sync`
+
+### Functions
+
+- `def sync_package_resource_in_descriptor(descriptor: Path | str, package_name: str, *, dry_run: bool = False, log: LogFn | None = print, googledrive_client_factory: Callable[[], Any] | None = None) -> SyncSummary`
+  - Sync one top-level package resource into nested descriptor resources.
+
+### Classes
+
+#### `SyncSummary`
+- Fields:
+  - `package_name: str`
+  - `generated_resources: int`
+  - `dry_run: bool`
+  - `changed: bool`
+
+
+## `sharedrive.clients.aws`
 
 ### Functions
 
@@ -122,8 +144,14 @@ Auto-generated from source signatures and docstrings.
 #### `GoogleDriveClient`
 - Minimal Google Drive client (ID-first) with read/write and full export coverage for Google-native files.
 - Methods:
-  - `def list_files(self)`
+  - `def list_files(self, *, query: str | None = None, fields: str = 'id, name, mimeType, parents', page_size: int = 100)`
     - List all files the authenticated user has access to.
+  - `def list_folder_contents(self, folder_id: str, *, recursive: bool = False) -> list[Dict[str, Any]]`
+    - List folder descendants and annotate each entry with a relative_path.
+  - `def list_folder_files(self, folder_id: str, *, recursive: bool = True) -> list[Dict[str, Any]]`
+    - List files contained in a folder, optionally descending into child folders.
+  - `def list_folder_files_from_weburl(self, web_url: str, *, recursive: bool = True) -> list[Dict[str, Any]]`
+    - Resolve a folder URL and list files contained within it.
   - `def get_file(self, file_id: str, **kwargs) -> Dict[str, Any]`
   - `def infer_export_mime_type(self, file_id: str) -> Optional[str]`
   - `def download_file(self, file_id: str, output_path: Optional[str] = None, mime_type: Optional[str] = None, acknowledge_abuse: bool = False, byte_range: Optional[str] = None, supports_all_drives: bool = True, **kwargs) -> Union[bytes, str]`
@@ -280,17 +308,6 @@ Auto-generated from source signatures and docstrings.
   - `def to_strategy(self) -> AppOnlyStrategy | DelegatedStrategy`
 
 #### `SharepointAuthMode`
-
-
-## `sharedrive.azure`
-
-### Classes
-
-#### `SpoConfig`
-- Methods:
-  - `def scope(self) -> list[str]`
-  - `def user_delegated_access(self) -> bool`
-  - `def to_client(self)`
 
 
 ## `sharedrive.clients.sharepoint`

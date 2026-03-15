@@ -18,6 +18,7 @@ Options:
 Commands:
   set         Set reusable key/value parameters for sharedrive descriptor...
   add         Add a resource entry to a descriptor.
+  sync        Sync one package resource into nested descriptor resources.
   fetch       Fetch descriptor resources by adapter type or resource name...
   auth        Authentication helpers.
   gdrive      Google Drive commands.
@@ -257,6 +258,9 @@ Options:
   --title TEXT          Optional resource title.
   --description TEXT    Optional resource description.
   --drive-service TEXT  Drive service override. If omitted, infer from source.
+  --package             Create a package resource with nested resources.
+  --profile TEXT        Package profile override. Defaults to data-package when
+                        --package is used.
   --descriptor PATH     Descriptor file path. Defaults to the saved descriptor
                         or the first standard descriptor path.
   --help                Show this message and exit.
@@ -274,6 +278,14 @@ Options:
 
   sharedrive add source-export --path background/exports/source-export.csv
   --source s3://my-bucket/source-export.csv --drive-service s3
+
+  ```
+
+  ```bash
+
+  sharedrive add census-package --path downloads/census --source
+  https://drive.google.com/drive/folders/<id> --drive-service googledrive
+  --package
 
   ```
 ```
@@ -318,6 +330,41 @@ Options:
 
   sharedrive fetch resources/descriptor.yaml --include spec-workbook --output-
   dir resources
+
+  ```
+```
+
+## `sharedrive sync --help`
+
+```text
+Usage: sharedrive sync [OPTIONS] PACKAGE_NAME
+
+  Sync one package resource into nested descriptor resources.
+
+Arguments:
+  PACKAGE_NAME  Top-level package resource name to sync.  [required]
+
+Options:
+  --descriptor PATH         Descriptor file path. Defaults to the saved
+                            descriptor or the first standard descriptor path.
+  --dry-run / --no-dry-run  Preview descriptor changes without writing them.
+                            [default: no-dry-run]
+  --env-file PATH           Path to .env file for credentials. Defaults to .env
+                            in the current directory.
+  --help                    Show this message and exit.
+
+  **Examples**
+
+  ```bash
+
+  sharedrive sync census-package --descriptor resources/descriptor.yaml --dry-
+  run
+
+  ```
+
+  ```bash
+
+  sharedrive sync census-package --descriptor resources/descriptor.yaml
 
   ```
 ```

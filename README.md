@@ -9,15 +9,13 @@ Experimental connectors and workflows for moving files across SharePoint, Google
 ## Current scope
 
 - `sharedrive/clients/sharepoint.py`: Microsoft Graph SharePoint client (`SharepointClient`)
-- `sharedrive/googledrive.py`: Google Drive client (`GoogleDriveClient`)
-- `sharedrive/auth/sharepoint.py`: SharePoint access-token strategies
+- `sharedrive/clients/googledrive.py`: Google Drive client (`GoogleDriveClient`)
+- `sharedrive/auth/microsoft.py`: SharePoint access-token strategies
 - `sharedrive/auth/settings.py`: Google and SharePoint auth settings/factories
-- `sharedrive/azure.py`: compatibility shim for older SharePoint config imports
-- `sharedrive/aws.py`: S3 URL parsing/download helpers (cloudpathlib + boto3 fallback)
+- `sharedrive/clients/aws.py`: S3 URL parsing/download helpers (cloudpathlib + boto3 fallback)
 - `sharedrive/actions/fetch.py`: reusable descriptor-based fetch Python API
-- `sharedrive/retrieve.py`: compatibility shim for the older retrieval module path
+- `sharedrive/actions/sync.py`: reusable descriptor sync Python API for package resources
 - `sharedrive/cli.py`: Typer CLI (`sharedrive`)
-- `scripts/retrieve_resources.py`: compatibility wrapper for descriptor retrieval
 - `scripts/dev_adapters.py`: manual adapter smoke checks
 
 ## Setup
@@ -145,6 +143,8 @@ For CLI operators, there are now explicit auth-oriented commands in addition to 
 - `sharedrive auth login microsoft` validates Microsoft auth used by SharePoint workflows.
 - `sharedrive auth login sharepoint` validates SharePoint auth using app-only or delegated mode.
 - `sharedrive add ...` can omit `--descriptor` once a default descriptor has been saved.
+- `sharedrive add ... --package` creates a folder-backed package resource for descriptor sync and package-aware fetch.
+- `sharedrive sync <package-name>` refreshes nested resources for a Google Drive package resource inside a descriptor.
 - `sharedrive fetch ... --check-auth` runs the same descriptor-aware preflight before downloading.
 
 For Python API usage, you can now choose an explicit auth strategy:
@@ -204,6 +204,8 @@ sharedrive auth login gdrive --oauth-client-secrets .google/oauth-credentials.js
 sharedrive auth login microsoft --auth-mode delegated
 sharedrive auth login sharepoint --auth-mode delegated
 sharedrive add spec-workbook --path background/specs/spec-workbook.xlsx --source https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx
+sharedrive add census-package --path downloads/census --source https://drive.google.com/drive/folders/<id> --drive-service googledrive --package
+sharedrive sync census-package --descriptor resources/descriptor.yaml --dry-run
 sharedrive fetch --dry-run
 sharedrive retrieve --dry-run
 sharedrive fetch resources/descriptor.yaml --dry-run
@@ -260,7 +262,17 @@ resources:
     driveService: s3
     sources:
       - path: s3://my-bucket/path/to/source-export.csv
+
+  - name: census-package
+    profile: data-package
+    path: downloads/census
+    driveService: googledrive
+    sources:
+      - path: https://drive.google.com/drive/folders/<id>
+    resources: []
 ```
+
+Folder-backed package resources can be authored explicitly with `sharedrive add --package` and then populated with nested resources using `sharedrive sync <package-name>`. The first sync implementation targets Google Drive package resources and writes deterministic nested file resources into the descriptor.
 
 Compatibility behavior preserved:
 

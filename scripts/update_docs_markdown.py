@@ -28,6 +28,7 @@ CLI_COMMANDS: list[tuple[str, list[str]]] = [
     ("sharedrive set --help", ["set", "--help"]),
     ("sharedrive add --help", ["add", "--help"]),
     ("sharedrive fetch --help", ["fetch", "--help"]),
+    ("sharedrive sync --help", ["sync", "--help"]),
     ("sharedrive gdrive --help", ["gdrive", "--help"]),
     ("sharedrive gdrive list --help", ["gdrive", "list", "--help"]),
     ("sharedrive gdrive get --help", ["gdrive", "get", "--help"]),
@@ -59,8 +60,12 @@ API_MODULES = [
         "path": ROOT / "sharedrive" / "actions" / "fetch.py",
     },
     {
-        "module": "sharedrive.aws",
-        "path": ROOT / "sharedrive" / "aws.py",
+        "module": "sharedrive.actions.sync",
+        "path": ROOT / "sharedrive" / "actions" / "sync.py",
+    },
+    {
+        "module": "sharedrive.clients.aws",
+        "path": ROOT / "sharedrive" / "clients" / "aws.py",
     },
     {
         "module": "sharedrive.clients.googledrive",
@@ -81,10 +86,6 @@ API_MODULES = [
     {
         "module": "sharedrive.auth.settings",
         "path": ROOT / "sharedrive" / "auth" / "settings.py",
-    },
-    {
-        "module": "sharedrive.azure",
-        "path": ROOT / "sharedrive" / "azure.py",
     },
     {
         "module": "sharedrive.clients.sharepoint",

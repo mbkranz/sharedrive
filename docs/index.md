@@ -25,8 +25,14 @@ Google Drive auth supports two layers:
 CLI:
 
 ```bash
+sharedrive add census-package --path downloads/census --source https://drive.google.com/drive/folders/<id> --drive-service googledrive --package
+sharedrive sync census-package --descriptor resources/descriptor.yaml --dry-run
 sharedrive fetch resources/descriptor.yaml --dry-run
 ```
+
+## Package resources
+
+`sharedrive` now supports folder-backed package resources in descriptors. A package resource is a top-level descriptor resource with a package profile, a local root `path`, and a remote folder source. `sharedrive sync <package-name>` can populate that package with nested file resources from Google Drive, and `sharedrive fetch` can then retrieve those nested resources normally.
 
 Python:
 
