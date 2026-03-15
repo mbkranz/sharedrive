@@ -9,6 +9,12 @@ import yaml
 
 DESCRIPTOR_DEFAULTS_FILE = Path(".sharedrive/sharedrive_set.json")
 
+PACKAGE_PROFILE_MARKERS = (
+    "data-package",
+    "tabular-data-package",
+    "json-data-package",
+)
+
 
 def load_descriptor_document(path: Path | str) -> dict[str, Any]:
     """Load a JSON/YAML descriptor and return the full top-level document."""
@@ -50,6 +56,36 @@ def get_descriptor_resources(
     if not isinstance(resources, list):
         raise ValueError("Descriptor must contain a top-level 'resources' array")
     return resources
+
+
+def get_package_resources(
+    resource: dict[str, Any], *, create: bool = False
+) -> list[dict[str, Any]]:
+    """Return nested resources for a package resource, optionally initializing them."""
+    resources = resource.get("resources")
+    if resources is None:
+        if create:
+            resource["resources"] = []
+            return resource["resources"]
+        return []
+
+    if not isinstance(resources, list):
+        raise ValueError("Package resource must contain a 'resources' array")
+    return resources
+
+
+def is_package_resource(resource: dict[str, Any]) -> bool:
+    """Return True when a resource should be treated as a package/container."""
+    resources = resource.get("resources")
+    if isinstance(resources, list):
+        return True
+
+    profile = resource.get("profile")
+    if not isinstance(profile, str):
+        return False
+
+    normalized_profile = profile.strip().lower()
+    return any(marker in normalized_profile for marker in PACKAGE_PROFILE_MARKERS)
 
 
 def load_descriptor(path: Path | str) -> list[dict[str, Any]]:
@@ -168,10 +204,13 @@ def resolve_default_descriptor() -> Path:
 
 __all__ = [
     "DESCRIPTOR_DEFAULTS_FILE",
+    "PACKAGE_PROFILE_MARKERS",
     "descriptor_scope_key",
     "load_descriptor_defaults_store",
     "get_saved_params_for_descriptor",
     "get_descriptor_resources",
+    "get_package_resources",
+    "is_package_resource",
     "load_descriptor",
     "load_descriptor_document",
     "resolve_descriptor_path",

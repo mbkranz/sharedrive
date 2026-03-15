@@ -7,8 +7,13 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import urlparse
 
-from sharedrive.aws import check_s3_credentials, download_s3_url
-from sharedrive.descriptor import load_descriptor, resolve_default_descriptor
+from sharedrive.clients.aws import check_s3_credentials, download_s3_url
+from sharedrive.descriptor import (
+    get_package_resources,
+    is_package_resource,
+    load_descriptor,
+    resolve_default_descriptor,
+)
 
 LogFn = Callable[[str], None]
 
@@ -186,27 +191,141 @@ def _selected_adapter_names(
     selected: list[str] = []
     seen: set[str] = set()
 
-    for index, resource in enumerate(resources):
-        if not isinstance(resource, dict):
-            continue
+    def collect(resource: dict[str, Any], parent: dict[str, Any] | None = None) -> None:
+        normalized = _inherit_resource_defaults(resource, parent=parent)
+        children = get_package_resources(normalized)
 
-        resource_name = resource.get("name", f"resource[{index}]")
+        if children:
+            for child in children:
+                if isinstance(child, dict):
+                    collect(child, parent=normalized)
+            return
+
+        resource_name = normalized.get("name", "resource")
         resource_name_key = str(resource_name).strip().lower()
-        source_url = resource_source_url(resource)
-        adapter_name = resource_adapter_name(resource, source_url)
+        source_url = resource_source_url(normalized)
+        adapter_name = resource_adapter_name(normalized, source_url)
 
         if (
             "all" not in include_set
             and adapter_name not in include_set
             and resource_name_key not in include_set
         ):
-            continue
+            return
 
         if adapter_name not in seen:
             seen.add(adapter_name)
             selected.append(adapter_name)
 
+    for index, resource in enumerate(resources):
+        if not isinstance(resource, dict):
+            continue
+        normalized = dict(resource)
+        normalized.setdefault("name", f"resource[{index}]")
+        collect(normalized)
+
     return selected
+
+
+def _inherit_resource_defaults(
+    resource: dict[str, Any],
+    *,
+    parent: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    normalized = dict(resource)
+    if parent is None:
+        return normalized
+
+    parent_path = parent.get("path")
+    resource_path = normalized.get("path")
+    if (
+        isinstance(parent_path, str)
+        and parent_path.strip()
+        and isinstance(resource_path, str)
+        and resource_path.strip()
+    ):
+        child_path = Path(resource_path.strip())
+        if not child_path.is_absolute():
+            normalized["path"] = (Path(parent_path.strip()) / child_path).as_posix()
+
+    for field_name in ("driveService", "x-adapter"):
+        inherited_value = parent.get(field_name)
+        current_value = normalized.get(field_name)
+        if isinstance(inherited_value, str) and inherited_value.strip() and not current_value:
+            normalized[field_name] = inherited_value
+
+    return normalized
+
+
+def _resource_matches_include(
+    resource: dict[str, Any],
+    include_set: set[str],
+) -> bool:
+    if "all" in include_set:
+        return True
+
+    resource_name = str(resource.get("name", "")).strip().lower()
+    source_url = resource_source_url(resource)
+    adapter_name = resource_adapter_name(resource, source_url)
+    return resource_name in include_set or adapter_name in include_set
+
+
+def _resource_or_descendant_matches_include(
+    resource: dict[str, Any],
+    include_set: set[str],
+) -> bool:
+    if _resource_matches_include(resource, include_set):
+        return True
+
+    for child in get_package_resources(resource):
+        if not isinstance(child, dict):
+            continue
+        normalized_child = _inherit_resource_defaults(child, parent=resource)
+        if _resource_or_descendant_matches_include(normalized_child, include_set):
+            return True
+
+    return False
+
+
+def _download_googledrive_package(
+    resource: dict[str, Any],
+    *,
+    output_roots: list[Path],
+    source_url: str,
+    client: Any,
+    dry_run: bool,
+    emit: LogFn,
+) -> tuple[int, int]:
+    package_name = str(resource.get("name", "package")).strip() or "package"
+    discovered_files = client.list_folder_files_from_weburl(source_url, recursive=True)
+
+    downloaded = 0
+    dry_run_actions = 0
+    for entry in discovered_files:
+        relative_path = str(entry.get("relative_path", entry.get("name", entry.get("id", "")))).strip()
+        if not relative_path:
+            relative_path = str(entry.get("id", "item"))
+
+        destinations = [root / Path(relative_path) for root in output_roots]
+        if dry_run:
+            for destination in destinations:
+                emit(
+                    f"Would fetch {package_name}/{relative_path} from {source_url} to {destination}"
+                )
+            dry_run_actions += len(destinations)
+            continue
+
+        primary_destination = destinations[0]
+        primary_destination.parent.mkdir(parents=True, exist_ok=True)
+        client.download_file(str(entry["id"]), output_path=str(primary_destination))
+
+        for destination in destinations[1:]:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(primary_destination, destination)
+
+        downloaded += len(destinations)
+
+    return downloaded, dry_run_actions
 
 
 def check_auth_for_adapters(
@@ -341,38 +460,55 @@ def fetch_from_descriptor(
             summary.failures += len(failed_checks)
             return summary
 
-    for index, resource in enumerate(resources):
-        if not isinstance(resource, dict):
-            emit(f"Warning, resource[{index}] is not an object")
-            summary.failures += 1
-            continue
+    def fetch_resource(resource: dict[str, Any], parent: dict[str, Any] | None = None) -> None:
+        normalized = _inherit_resource_defaults(resource, parent=parent)
+        nested_resources = [
+            child for child in get_package_resources(normalized) if isinstance(child, dict)
+        ]
 
-        resource_name = resource.get("name", f"resource[{index}]")
-        resource_name_key = str(resource_name).strip().lower()
-        source_url = resource_source_url(resource)
-        adapter_name = resource_adapter_name(resource, source_url)
+        if nested_resources:
+            for child in nested_resources:
+                child_resource = _inherit_resource_defaults(child, parent=normalized)
+                if _resource_or_descendant_matches_include(child_resource, include_set):
+                    fetch_resource(child, parent=normalized)
+            return
 
-        if (
-            "all" not in include_set
-            and adapter_name not in include_set
-            and resource_name_key not in include_set
-        ):
-            emit(f"Skipping {resource_name}; adapter '{adapter_name}' not selected.")
-            summary.skipped += 1
-            continue
+        resource_name = normalized.get("name", "resource")
+        source_url = resource_source_url(normalized)
+        adapter_name = resource_adapter_name(normalized, source_url)
+
+        if not _resource_matches_include(normalized, include_set):
+            return
         if not source_url:
             emit(f"Warning, {resource_name} has no source URL")
             summary.failures += 1
-            continue
+            return
 
         try:
-            output_paths = resource_output_paths(resource, output_dir_path)
+            output_paths = resource_output_paths(normalized, output_dir_path)
             output_path = output_paths[0]
+
+            if is_package_resource(normalized) and adapter_name == "googledrive":
+                if "googledrive" not in clients:
+                    factory = googledrive_client_factory or _default_googledrive_client_factory
+                    clients["googledrive"] = factory()
+                downloaded, dry_run_actions = _download_googledrive_package(
+                    normalized,
+                    output_roots=output_paths,
+                    source_url=source_url,
+                    client=clients["googledrive"],
+                    dry_run=dry_run,
+                    emit=emit,
+                )
+                summary.downloaded += downloaded
+                summary.dry_run_actions += dry_run_actions
+                return
+
             if dry_run:
                 for destination in output_paths:
                     emit(f"Would fetch {source_url} to {destination}")
                 summary.dry_run_actions += len(output_paths)
-                continue
+                return
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
             if adapter_name == "sharepoint":
@@ -406,7 +542,7 @@ def fetch_from_descriptor(
                     f"Warning, {resource_name} has unsupported adapter '{adapter_name}'"
                 )
                 summary.failures += 1
-                continue
+                return
 
             for destination in output_paths[1:]:
                 destination.parent.mkdir(parents=True, exist_ok=True)
@@ -416,6 +552,24 @@ def fetch_from_descriptor(
         except Exception as exc:
             emit(f"Warning, {resource_name} failed: {exc}")
             summary.failures += 1
+
+    for index, resource in enumerate(resources):
+        if not isinstance(resource, dict):
+            emit(f"Warning, resource[{index}] is not an object")
+            summary.failures += 1
+            continue
+
+        normalized = dict(resource)
+        normalized.setdefault("name", f"resource[{index}]")
+        if not _resource_or_descendant_matches_include(normalized, include_set):
+            resource_name = normalized.get("name", f"resource[{index}]")
+            source_url = resource_source_url(normalized)
+            adapter_name = resource_adapter_name(normalized, source_url)
+            emit(f"Skipping {resource_name}; adapter '{adapter_name}' not selected.")
+            summary.skipped += 1
+            continue
+
+        fetch_resource(normalized)
 
     return summary
 

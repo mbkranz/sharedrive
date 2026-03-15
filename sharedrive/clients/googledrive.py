@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Literal, Optional, Sequence, Union
 
 import requests
@@ -206,18 +206,26 @@ class GoogleDriveClient(GoogleBaseClient):
     def _is_google_workspace_file(file_mime_type: str) -> bool:
         return file_mime_type in {mime.value for mime in GoogleMimeTypes}
 
-    def list_files(self):
+    def list_files(
+        self,
+        *,
+        query: str | None = None,
+        fields: str = "id, name, mimeType, parents",
+        page_size: int = 100,
+    ):
         """List all files the authenticated user has access to."""
         files = []
         page_token = None
 
         while True:
             params = {
-                "pageSize": 100,
-                "fields": "nextPageToken, files(id, name, mimeType, parents)",
+                "pageSize": page_size,
+                "fields": f"nextPageToken, files({fields})",
                 "supportsAllDrives": "true",
                 "includeItemsFromAllDrives": "true",
             }
+            if query:
+                params["q"] = query
             if page_token:
                 params["pageToken"] = page_token
 
@@ -228,6 +236,62 @@ class GoogleDriveClient(GoogleBaseClient):
                 break
 
         return files
+
+    def list_folder_contents(
+        self,
+        folder_id: str,
+        *,
+        recursive: bool = False,
+    ) -> list[Dict[str, Any]]:
+        """List folder descendants and annotate each entry with a relative_path."""
+        folder_metadata = self.get_file(folder_id, fields="id, name, mimeType")
+        if folder_metadata.get("mimeType") != FOLDER_MIME:
+            raise ValueError(f"Google Drive source is not a folder: {folder_id}")
+
+        results: list[Dict[str, Any]] = []
+
+        def walk(parent_folder_id: str, relative_root: PurePosixPath) -> None:
+            children = self.list_files(
+                query=f"'{parent_folder_id}' in parents and trashed = false",
+                fields="id, name, mimeType, parents",
+            )
+            for child in children:
+                child_name = str(child.get("name", child.get("id", ""))).strip()
+                if not child_name:
+                    child_name = str(child.get("id", "item"))
+                relative_path = relative_root / child_name
+                child_with_path = dict(child)
+                child_with_path["relative_path"] = relative_path.as_posix()
+                results.append(child_with_path)
+
+                if recursive and child.get("mimeType") == FOLDER_MIME:
+                    walk(str(child.get("id", "")), relative_path)
+
+        walk(folder_id, PurePosixPath())
+        return results
+
+    def list_folder_files(
+        self,
+        folder_id: str,
+        *,
+        recursive: bool = True,
+    ) -> list[Dict[str, Any]]:
+        """List files contained in a folder, optionally descending into child folders."""
+        return [
+            entry
+            for entry in self.list_folder_contents(folder_id, recursive=recursive)
+            if entry.get("mimeType") != FOLDER_MIME
+        ]
+
+    def list_folder_files_from_weburl(
+        self,
+        web_url: str,
+        *,
+        recursive: bool = True,
+    ) -> list[Dict[str, Any]]:
+        """Resolve a folder URL and list files contained within it."""
+        folder_id = self._extract_id_from_url(web_url)
+        return self.list_folder_files(folder_id, recursive=recursive)
 
     def get_file(self, file_id: str, **kwargs) -> Dict[str, Any]:
         endpoint = f"{DRIVE_URL}/files/{file_id}"
