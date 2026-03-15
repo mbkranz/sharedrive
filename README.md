@@ -139,10 +139,12 @@ For existing CLI and fetch flows, the compatibility behavior is unchanged:
 
 For CLI operators, there are now explicit auth-oriented commands in addition to the transfer commands:
 
-- `sharedrive auth check <descriptor>` validates credentials for the adapters selected by a descriptor before any download starts.
+- `sharedrive set --global --descriptor resources/descriptor.yaml` saves a reusable default descriptor path for descriptor-based commands.
+- `sharedrive auth check [descriptor]` validates credentials for the adapters selected by a descriptor before any download starts.
 - `sharedrive auth login gdrive` runs the installed-app Google OAuth flow and can persist an authorized-user token to `GOOGLE_OAUTH_TOKEN_PATH` or an explicit `--oauth-token-path`.
 - `sharedrive auth login microsoft` validates Microsoft auth used by SharePoint workflows.
 - `sharedrive auth login sharepoint` validates SharePoint auth using app-only or delegated mode.
+- `sharedrive add ...` can omit `--descriptor` once a default descriptor has been saved.
 - `sharedrive fetch ... --check-auth` runs the same descriptor-aware preflight before downloading.
 
 For Python API usage, you can now choose an explicit auth strategy:
@@ -194,11 +196,16 @@ CLI aliases:
 CLI:
 
 ```bash
+sharedrive set --global --descriptor resources/descriptor.yaml
+sharedrive set --global --output-dir resources
+sharedrive auth check
 sharedrive auth check resources/descriptor.yaml
 sharedrive auth login gdrive --oauth-client-secrets .google/oauth-credentials.json --oauth-token-path .google/oauth-token.json
 sharedrive auth login microsoft --auth-mode delegated
 sharedrive auth login sharepoint --auth-mode delegated
 sharedrive add spec-workbook --path background/specs/spec-workbook.xlsx --source https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx
+sharedrive fetch --dry-run
+sharedrive retrieve --dry-run
 sharedrive fetch resources/descriptor.yaml --dry-run
 sharedrive fetch resources/descriptor.yaml --check-auth
 sharedrive fetch resources/descriptor.yaml --include sharepoint
@@ -209,8 +216,15 @@ sharedrive fetch resources/descriptor.yaml --include spec-workbook
 If you are running from a repo checkout without activating an environment, prefix commands with `uv run`:
 
 ```bash
+uv run sharedrive set --global --descriptor resources/descriptor.yaml
+uv run sharedrive fetch --dry-run
 uv run sharedrive fetch resources/descriptor.yaml --dry-run
 ```
+
+Saved defaults are persisted in `.sharedrive/sharedrive_set.json`.
+Use `sharedrive set --global --descriptor ...` to avoid repeating the descriptor path for `sharedrive auth check`, `sharedrive add`, and `sharedrive fetch`.
+The hidden `sharedrive retrieve` alias follows the same saved descriptor and output-dir defaults as `sharedrive fetch`.
+Use `sharedrive set <descriptor> --output-dir ...` to save descriptor-scoped defaults that apply when you explicitly fetch that descriptor.
 
 Python API:
 
@@ -227,12 +241,6 @@ summary = fetch_from_descriptor(
 
 if not summary.ok:
   raise RuntimeError(f"Fetch failed for {summary.failures} resources")
-```
-
-Compatibility script:
-
-```bash
-uv run python scripts/retrieve_resources.py --dry-run
 ```
 
 ## Descriptor format
@@ -280,7 +288,7 @@ This repository now uses MkDocs for docs-site navigation and static markdown doc
 Install docs dependencies:
 
 ```bash
-uv sync --extra docs
+uv sync --group docs
 ```
 
 Run docs locally:
@@ -319,15 +327,12 @@ sharedrive/
     api.md
   scripts/
     dev_adapters.py
-    retrieve_resources.py
   sharedrive/
     aws.py
     azure.py
     actions/
       fetch.py
-    retrieve.py
-    sharepoint.py
-    googledrive.py
+      add.py
     cli.py
     app.py
   resources/

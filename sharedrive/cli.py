@@ -13,7 +13,13 @@ from dotenv import find_dotenv, load_dotenv
 from sharedrive.aws import download_s3_url
 from sharedrive.actions.add import add_resource_to_descriptor
 from sharedrive.actions.fetch import check_auth_for_descriptor, fetch_from_descriptor
-from sharedrive.descriptor import resolve_default_descriptor
+from sharedrive.descriptor import (
+    DESCRIPTOR_DEFAULTS_FILE,
+    load_descriptor_defaults_store,
+    resolve_descriptor_path,
+    resolve_output_dir,
+    save_descriptor_defaults_store,
+)
 
 try:
     from cloudpathlib import S3Path
@@ -62,6 +68,12 @@ app.add_typer(s3_app, name="s3")
 class OutputFormat(str, Enum):
     TEXT = "text"
     JSON = "json"
+
+
+DESCRIPTOR_DEFAULT_HELP = (
+    "Descriptor file path. Defaults to the saved descriptor or the first "
+    "standard descriptor path."
+)
 
 
 def _examples_epilog(*lines: str) -> str:
@@ -157,6 +169,97 @@ def _parse_include_values(values: list[str] | None) -> str | list[str]:
     return normalized
 
 
+def _coerce_set_value(raw: str) -> Any:
+    value = raw.strip()
+    lower = value.lower()
+    if lower == "true":
+        return True
+    if lower == "false":
+        return False
+    if lower in {"null", "none"}:
+        return None
+    if (value.startswith("{") and value.endswith("}")) or (
+        value.startswith("[") and value.endswith("]")
+    ):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return raw
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        return raw
+
+
+def _parse_set_args(args: list[str]) -> dict[str, Any]:
+    parsed: dict[str, Any] = {}
+    if not args:
+        return parsed
+    idx = 0
+    while idx < len(args):
+        token = args[idx]
+        if not token.startswith("--"):
+            raise typer.BadParameter(
+                f"Invalid token '{token}'. Use --key value or --key=value."
+            )
+
+        key_token = token[2:]
+        if not key_token:
+            raise typer.BadParameter("Invalid empty parameter name.")
+
+        if "=" in key_token:
+            key, raw_value = key_token.split("=", 1)
+            if not key:
+                raise typer.BadParameter("Invalid empty parameter name.")
+            parsed[key] = _coerce_set_value(raw_value)
+            idx += 1
+            continue
+
+        key = key_token
+        idx += 1
+        if idx >= len(args):
+            raise typer.BadParameter(f"Missing value for --{key}.")
+
+        raw_value = args[idx]
+        if raw_value.startswith("--"):
+            raise typer.BadParameter(f"Missing value for --{key}.")
+        parsed[key] = _coerce_set_value(raw_value)
+        idx += 1
+
+    return parsed
+
+
+def _set_saved_scope(parsed: dict[str, Any], descriptor: Optional[Path], global_scope: bool) -> str:
+    if global_scope and descriptor is not None:
+        raise typer.BadParameter("Use either <descriptor> or --global, not both.")
+
+    store = load_descriptor_defaults_store()
+    if global_scope:
+        target = "global"
+        scope = store.setdefault("global", {})
+    else:
+        if descriptor is None:
+            raise typer.BadParameter("Provide <descriptor> or use --global.")
+        target = str(descriptor)
+        descriptors = store.setdefault("descriptors", {})
+        scope = descriptors.setdefault(target, {})
+
+    if not isinstance(scope, dict):
+        scope = {}
+        if global_scope:
+            store["global"] = scope
+        else:
+            store.setdefault("descriptors", {})[target] = scope
+
+    scope.update(parsed)
+    save_descriptor_defaults_store(store)
+    return target
+
+
 def _run_fetch_command(
     descriptor: Path,
     include: str | list[str],
@@ -193,6 +296,52 @@ def _render_auth_results(results: list[Any], output_format: OutputFormat) -> Non
 
 
 @app.command(
+    "set",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    epilog=_examples_epilog(
+        "sharedrive set --global --descriptor resources/descriptor.yaml",
+        "sharedrive set --global --output-dir resources",
+        "sharedrive set resources/descriptor.yaml --output-dir exports",
+    ),
+)
+def set_command(
+    ctx: typer.Context,
+    descriptor_scope: Optional[Path] = typer.Argument(
+        None,
+        help="Descriptor path to save defaults for.",
+    ),
+    global_scope: bool = typer.Option(
+        False,
+        "--global",
+        help="Save params as global defaults for all descriptors.",
+    ),
+    descriptor: Optional[str] = typer.Option(
+        None,
+        "--descriptor",
+        help="Default descriptor path to save.",
+    ),
+    output_dir: Optional[str] = typer.Option(
+        None,
+        "--output-dir",
+        help="Default output directory to save.",
+    ),
+) -> None:
+    """Set reusable key/value parameters for sharedrive descriptor workflows."""
+    parsed = _parse_set_args(list(ctx.args))
+    if descriptor is not None:
+        parsed["descriptor"] = descriptor
+    if output_dir is not None:
+        parsed["output_dir"] = output_dir
+    if not parsed:
+        raise typer.BadParameter("Provide one or more values to save.")
+
+    target = _set_saved_scope(parsed, descriptor_scope, global_scope)
+    typer.echo(
+        f"Saved {len(parsed)} parameter(s) for '{target}' in {DESCRIPTOR_DEFAULTS_FILE}."
+    )
+
+
+@app.command(
     "add",
     epilog=_examples_epilog(
         "sharedrive add spec-workbook --path background/specs/spec-workbook.xlsx --source https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx",
@@ -206,10 +355,10 @@ def add(
     title: Optional[str] = typer.Option(None, "--title", help="Optional resource title."),
     description: Optional[str] = typer.Option(None, "--description", help="Optional resource description."),
     drive_service: Optional[str] = typer.Option(None, "--drive-service", help="Drive service override. If omitted, infer from source."),
-    descriptor: Optional[Path] = typer.Option(None, "--descriptor", help="Descriptor file path. Defaults to the first standard descriptor path."),
+    descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
 ) -> None:
     """Add a resource entry to a descriptor."""
-    descriptor_path = descriptor or resolve_default_descriptor()
+    descriptor_path = resolve_descriptor_path(descriptor)
 
     try:
         resource = add_resource_to_descriptor(
@@ -240,10 +389,10 @@ def add(
     ),
 )
 def fetch(
-    descriptor: Path = typer.Argument(
-        ...,
+    descriptor: Optional[Path] = typer.Argument(
+        None,
         exists=False,
-        help="Descriptor file path.",
+        help=DESCRIPTOR_DEFAULT_HELP,
     ),
     include: Optional[list[str]] = typer.Option(
         None,
@@ -254,7 +403,7 @@ def fetch(
             "Repeat the option or pass a comma-separated list."
         ),
     ),
-    output_dir: Path = typer.Option(Path("resources"), help="Base output directory for relative resource paths."),
+    output_dir: Optional[Path] = typer.Option(None, help="Base output directory for relative resource paths."),
     dry_run: bool = typer.Option(False, help="Print actions without downloading."),
     check_auth: bool = typer.Option(False, "--check-auth", help="Validate service credentials before downloading."),
     env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
@@ -262,10 +411,12 @@ def fetch(
     """Fetch descriptor resources by adapter type or resource name filters."""
     _load_env_file(env_file)
     include_values = _parse_include_values(include)
+    descriptor_path = resolve_descriptor_path(descriptor)
+    output_dir_path = resolve_output_dir(output_dir, descriptor=descriptor_path)
     _run_fetch_command(
-        descriptor=descriptor,
+        descriptor=descriptor_path,
         include=include_values,
-        output_dir=output_dir,
+        output_dir=output_dir_path,
         dry_run=dry_run,
         check_auth=check_auth,
     )
@@ -280,10 +431,10 @@ def fetch(
     ),
 )
 def retrieve(
-    descriptor: Path = typer.Argument(
-        ...,
+    descriptor: Optional[Path] = typer.Argument(
+        None,
         exists=False,
-        help="Descriptor file path.",
+        help=DESCRIPTOR_DEFAULT_HELP,
     ),
     include: Optional[list[str]] = typer.Option(
         None,
@@ -294,7 +445,7 @@ def retrieve(
             "Repeat the option or pass a comma-separated list."
         ),
     ),
-    output_dir: Path = typer.Option(Path("resources"), help="Base output directory for relative resource paths."),
+    output_dir: Optional[Path] = typer.Option(None, help="Base output directory for relative resource paths."),
     dry_run: bool = typer.Option(False, help="Print actions without downloading."),
     check_auth: bool = typer.Option(False, "--check-auth", help="Validate service credentials before downloading."),
     env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
@@ -319,7 +470,11 @@ def retrieve(
     ),
 )
 def auth_check(
-    descriptor: Path = typer.Argument(..., exists=False, help="Descriptor file path."),
+    descriptor: Optional[Path] = typer.Argument(
+        None,
+        exists=False,
+        help=DESCRIPTOR_DEFAULT_HELP,
+    ),
     include: Optional[list[str]] = typer.Option(
         None,
         "--include",
@@ -335,8 +490,9 @@ def auth_check(
     """Validate credentials for the adapters selected by a descriptor."""
     _load_env_file(env_file)
     include_values = _parse_include_values(include)
+    descriptor_path = resolve_descriptor_path(descriptor)
     results = check_auth_for_descriptor(
-        descriptor=descriptor,
+        descriptor=descriptor_path,
         include=include_values,
         sharepoint_client_factory=_make_sharepoint_client,
         googledrive_client_factory=lambda: _make_gdrive_client(None),

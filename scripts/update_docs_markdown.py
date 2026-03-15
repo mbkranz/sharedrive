@@ -25,6 +25,7 @@ CLI_COMMANDS: list[tuple[str, list[str]]] = [
     ("sharedrive auth login gdrive --help", ["auth", "login", "gdrive", "--help"]),
     ("sharedrive auth login microsoft --help", ["auth", "login", "microsoft", "--help"]),
     ("sharedrive auth login sharepoint --help", ["auth", "login", "sharepoint", "--help"]),
+    ("sharedrive set --help", ["set", "--help"]),
     ("sharedrive add --help", ["add", "--help"]),
     ("sharedrive fetch --help", ["fetch", "--help"]),
     ("sharedrive gdrive --help", ["gdrive", "--help"]),

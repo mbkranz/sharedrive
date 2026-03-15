@@ -4,18 +4,34 @@ Auto-generated from source signatures and docstrings.
 
 ## `sharedrive.descriptor`
 
+### Constants
+
+- `DESCRIPTOR_DEFAULTS_FILE = Path('.sharedrive/sharedrive_set.json')`
+
 ### Functions
 
+- `def descriptor_scope_key(descriptor: Path | str) -> str`
+  - Return the stable key used for descriptor-scoped defaults.
+- `def load_descriptor_defaults_store() -> dict[str, Any]`
+  - Load persisted descriptor defaults for global and descriptor scopes.
+- `def get_saved_params_for_descriptor(descriptor: Path | str | None = None) -> dict[str, Any]`
+  - Return merged global and descriptor-scoped saved params.
 - `def get_descriptor_resources(document: dict[str, Any], *, create: bool = False) -> list[dict[str, Any]]`
   - Return the top-level resources list, optionally initializing it.
 - `def load_descriptor(path: Path | str) -> list[dict[str, Any]]`
   - Load a JSON/YAML descriptor and return the top-level resources list.
 - `def load_descriptor_document(path: Path | str) -> dict[str, Any]`
   - Load a JSON/YAML descriptor and return the full top-level document.
+- `def resolve_descriptor_path(descriptor: Path | str | None = None) -> Path`
+  - Resolve descriptor path from explicit input, saved defaults, or standard locations.
 - `def resolve_default_descriptor() -> Path`
   - Return the first existing default descriptor path.
+- `def resolve_output_dir(output_dir: Path | str | None = None, *, descriptor: Path | str | None = None) -> Path`
+  - Resolve output_dir from explicit input, saved defaults, or the standard path.
 - `def save_descriptor_document(path: Path | str, document: dict[str, Any]) -> None`
   - Persist a descriptor document as JSON or YAML based on file suffix.
+- `def save_descriptor_defaults_store(data: dict[str, Any]) -> None`
+  - Persist descriptor defaults store to disk.
 
 
 ## `sharedrive.actions.add`

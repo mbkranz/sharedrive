@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -36,6 +37,40 @@ def test_auth_check_returns_json_and_passes_include(monkeypatch: pytest.MonkeyPa
 
     assert result.exit_code == 0
     assert '"adapter": "googledrive"' in result.stdout
+    assert captured["include"] == ["googledrive"]
+
+
+def test_auth_check_uses_saved_global_descriptor_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    descriptor = tmp_path / "resources" / "descriptor.yaml"
+    descriptor.parent.mkdir(parents=True, exist_ok=True)
+    _write_descriptor(descriptor)
+    captured: dict[str, object] = {}
+
+    def fake_check_auth_for_descriptor(**kwargs):
+        captured.update(kwargs)
+        return [AuthCheckResult("googledrive", True, "Google Drive credentials are ready.")]
+
+    monkeypatch.setattr("sharedrive.cli.check_auth_for_descriptor", fake_check_auth_for_descriptor)
+
+    set_result = RUNNER.invoke(
+        app,
+        ["set", "--global", "--descriptor", "resources/descriptor.yaml"],
+        prog_name="sharedrive",
+    )
+    assert set_result.exit_code == 0
+
+    result = RUNNER.invoke(
+        app,
+        ["auth", "check", "--include", "googledrive", "--format", "json"],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 0
+    assert captured["descriptor"] == Path("resources/descriptor.yaml")
     assert captured["include"] == ["googledrive"]
 
 
@@ -204,6 +239,131 @@ def test_fetch_passes_check_auth_flag(monkeypatch: pytest.MonkeyPatch, tmp_path:
     )
 
     assert result.exit_code == 0
+    assert captured["check_auth"] is True
+
+
+def test_set_command_saves_global_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = RUNNER.invoke(
+        app,
+        ["set", "--global", "--descriptor", "resources/descriptor.yaml", "--output-dir", "exports"],
+        prog_name="sharedrive",
+    )
+
+    store_path = tmp_path / ".sharedrive" / "sharedrive_set.json"
+    store = json.loads(store_path.read_text(encoding="utf-8"))
+
+    assert result.exit_code == 0
+    assert store == {
+        "global": {
+            "descriptor": "resources/descriptor.yaml",
+            "output_dir": "exports",
+        },
+        "descriptors": {},
+    }
+
+
+def test_add_uses_saved_global_descriptor_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    descriptor = tmp_path / "resources" / "descriptor.yaml"
+    descriptor.parent.mkdir(parents=True, exist_ok=True)
+    descriptor.write_text("$schema: example\nresources: []\n", encoding="utf-8")
+
+    set_result = RUNNER.invoke(
+        app,
+        ["set", "--global", "--descriptor", "resources/descriptor.yaml"],
+        prog_name="sharedrive",
+    )
+    assert set_result.exit_code == 0
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "add",
+            "spec-workbook",
+            "--path",
+            "background/specs/spec-workbook.xlsx",
+            "--source",
+            "https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx",
+        ],
+        prog_name="sharedrive",
+    )
+
+    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
+
+    assert result.exit_code == 0
+    assert document["resources"][0]["name"] == "spec-workbook"
+    assert "descriptor.yaml" in result.stdout
+
+
+def test_fetch_uses_saved_defaults_when_descriptor_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    descriptor = tmp_path / "resources" / "descriptor.yaml"
+    descriptor.parent.mkdir(parents=True, exist_ok=True)
+    _write_descriptor(descriptor)
+    captured: dict[str, object] = {}
+
+    def fake_fetch_from_descriptor(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(ok=True)
+
+    monkeypatch.setattr("sharedrive.cli.fetch_from_descriptor", fake_fetch_from_descriptor)
+
+    set_result = RUNNER.invoke(
+        app,
+        ["set", "--global", "--descriptor", "resources/descriptor.yaml", "--output-dir", "exports"],
+        prog_name="sharedrive",
+    )
+    assert set_result.exit_code == 0
+
+    result = RUNNER.invoke(
+        app,
+        ["fetch", "--check-auth", "--dry-run"],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 0
+    assert captured["descriptor"] == Path("resources/descriptor.yaml")
+    assert captured["output_dir"] == Path("exports")
+    assert captured["check_auth"] is True
+
+
+def test_retrieve_uses_saved_defaults_when_descriptor_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    descriptor = tmp_path / "resources" / "descriptor.yaml"
+    descriptor.parent.mkdir(parents=True, exist_ok=True)
+    _write_descriptor(descriptor)
+    captured: dict[str, object] = {}
+
+    def fake_fetch_from_descriptor(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(ok=True)
+
+    monkeypatch.setattr("sharedrive.cli.fetch_from_descriptor", fake_fetch_from_descriptor)
+
+    set_result = RUNNER.invoke(
+        app,
+        ["set", "--global", "--descriptor", "resources/descriptor.yaml", "--output-dir", "exports"],
+        prog_name="sharedrive",
+    )
+    assert set_result.exit_code == 0
+
+    result = RUNNER.invoke(
+        app,
+        ["retrieve", "--check-auth", "--dry-run"],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 0
+    assert captured["descriptor"] == Path("resources/descriptor.yaml")
+    assert captured["output_dir"] == Path("exports")
     assert captured["check_auth"] is True
 
 

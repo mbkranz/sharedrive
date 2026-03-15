@@ -16,6 +16,7 @@ Options:
   --help                Show this message and exit.
 
 Commands:
+  set         Set reusable key/value parameters for sharedrive descriptor...
   add         Add a resource entry to a descriptor.
   fetch       Fetch descriptor resources by adapter type or resource name...
   auth        Authentication helpers.
@@ -43,12 +44,13 @@ Commands:
 ## `sharedrive auth check --help`
 
 ```text
-Usage: sharedrive auth check [OPTIONS] DESCRIPTOR
+Usage: sharedrive auth check [OPTIONS] [DESCRIPTOR]
 
   Validate credentials for the adapters selected by a descriptor.
 
 Arguments:
-  DESCRIPTOR  Descriptor file path.  [required]
+  [DESCRIPTOR]  Descriptor file path. Defaults to the saved descriptor or the
+                first standard descriptor path.
 
 Options:
   -i, --include TEXT    Include adapter types and/or resource names. Repeat the
@@ -202,6 +204,43 @@ Options:
   ```
 ```
 
+## `sharedrive set --help`
+
+```text
+Usage: sharedrive set [OPTIONS] [DESCRIPTOR_SCOPE]
+
+  Set reusable key/value parameters for sharedrive descriptor workflows.
+
+Arguments:
+  [DESCRIPTOR_SCOPE]  Descriptor path to save defaults for.
+
+Options:
+  --global           Save params as global defaults for all descriptors.
+  --descriptor TEXT  Default descriptor path to save.
+  --output-dir TEXT  Default output directory to save.
+  --help             Show this message and exit.
+
+  **Examples**
+
+  ```bash
+
+  sharedrive set --global --descriptor resources/descriptor.yaml
+
+  ```
+
+  ```bash
+
+  sharedrive set --global --output-dir resources
+
+  ```
+
+  ```bash
+
+  sharedrive set resources/descriptor.yaml --output-dir exports
+
+  ```
+```
+
 ## `sharedrive add --help`
 
 ```text
@@ -218,8 +257,8 @@ Options:
   --title TEXT          Optional resource title.
   --description TEXT    Optional resource description.
   --drive-service TEXT  Drive service override. If omitted, infer from source.
-  --descriptor PATH     Descriptor file path. Defaults to the first standard
-                        descriptor path.
+  --descriptor PATH     Descriptor file path. Defaults to the saved descriptor
+                        or the first standard descriptor path.
   --help                Show this message and exit.
 
   **Examples**
@@ -242,18 +281,18 @@ Options:
 ## `sharedrive fetch --help`
 
 ```text
-Usage: sharedrive fetch [OPTIONS] DESCRIPTOR
+Usage: sharedrive fetch [OPTIONS] [DESCRIPTOR]
 
   Fetch descriptor resources by adapter type or resource name filters.
 
 Arguments:
-  DESCRIPTOR  Descriptor file path.  [required]
+  [DESCRIPTOR]  Descriptor file path. Defaults to the saved descriptor or the
+                first standard descriptor path.
 
 Options:
   -i, --include TEXT        Include adapter types and/or resource names. Repeat
                             the option or pass a comma-separated list.
   --output-dir PATH         Base output directory for relative resource paths.
-                            [default: resources]
   --dry-run / --no-dry-run  Print actions without downloading.  [default: no-
                             dry-run]
   --check-auth              Validate service credentials before downloading.
