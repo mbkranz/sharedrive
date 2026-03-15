@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+import yaml
+
+from sharedrive.actions.add import add_resource_to_descriptor, infer_drive_service
+
+
+def test_add_resource_to_descriptor_writes_drive_service(tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    descriptor.write_text("$schema: example\nresources: []\n", encoding="utf-8")
+
+    resource = add_resource_to_descriptor(
+        descriptor,
+        name="source-export",
+        path="background/exports/source-export.csv",
+        source="s3://my-bucket/path/to/source-export.csv",
+        title="Source export",
+        description="Exported source data",
+    )
+
+    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
+
+    assert resource["driveService"] == "s3"
+    assert document["$schema"] == "example"
+    assert document["resources"][0]["driveService"] == "s3"
+
+
+def test_add_resource_to_descriptor_rejects_duplicate_names(tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    descriptor.write_text(
+        "resources:\n  - name: source-export\n    path: existing.csv\n    driveService: s3\n    sources:\n      - path: s3://bucket/existing.csv\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="already exists"):
+        add_resource_to_descriptor(
+            descriptor,
+            name="source-export",
+            path="background/exports/source-export.csv",
+            source="s3://my-bucket/path/to/source-export.csv",
+        )
+
+
+def test_add_resource_to_descriptor_rejects_unsupported_drive_service(tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+
+    with pytest.raises(NotImplementedError, match="not implemented"):
+        add_resource_to_descriptor(
+            descriptor,
+            name="local-file",
+            path="background/local-file.txt",
+            source="https://example.com/files/local-file.txt",
+            drive_service="onedrive",
+        )
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("s3://bucket/raw.csv", "s3"),
+        (
+            "https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx",
+            "sharepoint",
+        ),
+        ("https://docs.google.com/spreadsheets/d/test-sheet/edit", "googledrive"),
+    ],
+)
+def test_infer_drive_service(source: str, expected: str) -> None:
+    assert infer_drive_service(source) == expected
+
+
+def test_infer_drive_service_raises_when_unknown() -> None:
+    with pytest.raises(NotImplementedError, match="Could not infer drive service"):
+        infer_drive_service("C:/tmp/local-file.txt")

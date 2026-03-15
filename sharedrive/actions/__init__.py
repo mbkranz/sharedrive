@@ -1,3 +1,4 @@
+from sharedrive.actions.add import add_resource_to_descriptor
 from sharedrive.actions.fetch import (
     FetchSummary,
     RetrieveSummary,
@@ -14,6 +15,7 @@ from sharedrive.actions.fetch import (
 )
 
 __all__ = [
+    "add_resource_to_descriptor",
     "FetchSummary",
     "RetrieveSummary",
     "fetch_from_descriptor",

@@ -11,7 +11,9 @@ import typer
 from dotenv import find_dotenv, load_dotenv
 
 from sharedrive.aws import download_s3_url
+from sharedrive.actions.add import add_resource_to_descriptor
 from sharedrive.actions.fetch import check_auth_for_descriptor, fetch_from_descriptor
+from sharedrive.descriptor import resolve_default_descriptor
 
 try:
     from cloudpathlib import S3Path
@@ -188,6 +190,45 @@ def _render_auth_results(results: list[Any], output_format: OutputFormat) -> Non
     for result in results:
         status = "ready" if result.ok else "failed"
         typer.echo(f"{result.adapter}: {status} - {result.message}")
+
+
+@app.command(
+    "add",
+    epilog=_examples_epilog(
+        "sharedrive add spec-workbook --path background/specs/spec-workbook.xlsx --source https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx",
+        "sharedrive add source-export --path background/exports/source-export.csv --source s3://my-bucket/source-export.csv --drive-service s3",
+    ),
+)
+def add(
+    name: str = typer.Argument(..., help="Resource name to store in the descriptor."),
+    path: str = typer.Option(..., "--path", help="Resource path stored in the descriptor."),
+    source: str = typer.Option(..., "--source", help="Source URL/URI/path for the resource."),
+    title: Optional[str] = typer.Option(None, "--title", help="Optional resource title."),
+    description: Optional[str] = typer.Option(None, "--description", help="Optional resource description."),
+    drive_service: Optional[str] = typer.Option(None, "--drive-service", help="Drive service override. If omitted, infer from source."),
+    descriptor: Optional[Path] = typer.Option(None, "--descriptor", help="Descriptor file path. Defaults to the first standard descriptor path."),
+) -> None:
+    """Add a resource entry to a descriptor."""
+    descriptor_path = descriptor or resolve_default_descriptor()
+
+    try:
+        resource = add_resource_to_descriptor(
+            descriptor=descriptor_path,
+            name=name,
+            path=path,
+            source=source,
+            title=title,
+            description=description,
+            drive_service=drive_service,
+        )
+    except (NotImplementedError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(
+        f"Added resource '{resource['name']}' to {descriptor_path} "
+        f"with driveService '{resource['driveService']}'."
+    )
 
 
 @app.command(

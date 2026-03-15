@@ -198,6 +198,7 @@ sharedrive auth check resources/descriptor.yaml
 sharedrive auth login gdrive --oauth-client-secrets .google/oauth-credentials.json --oauth-token-path .google/oauth-token.json
 sharedrive auth login microsoft --auth-mode delegated
 sharedrive auth login sharepoint --auth-mode delegated
+sharedrive add spec-workbook --path background/specs/spec-workbook.xlsx --source https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx
 sharedrive fetch resources/descriptor.yaml --dry-run
 sharedrive fetch resources/descriptor.yaml --check-auth
 sharedrive fetch resources/descriptor.yaml --include sharepoint
@@ -242,13 +243,13 @@ uv run python scripts/retrieve_resources.py --dry-run
 resources:
   - name: spec-workbook
     path: background/specs/spec-workbook.xlsx
-    x-adapter: sharepoint
+    driveService: sharepoint
     sources:
       - path: https://norc.sharepoint.com/sites/...
 
   - name: source-export
     path: background/exports/source-export.csv
-    x-adapter: s3
+    driveService: s3
     sources:
       - path: s3://my-bucket/path/to/source-export.csv
 ```
@@ -257,8 +258,20 @@ Compatibility behavior preserved:
 
 - `resources` top-level array
 - `sources[].path` and legacy `source`
-- `x-adapter` override support
+- `driveService` canonical service field
+- legacy `x-adapter` override support for existing descriptors
 - `targets` output paths beside `sources` (string, object, or list entries with `path`)
+
+Add a descriptor resource from the CLI:
+
+```bash
+sharedrive add spec-workbook \
+  --path background/specs/spec-workbook.xlsx \
+  --descriptor resources/descriptor.yaml \
+  --source https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx \
+  --title "Spec workbook" \
+  --description "Source workbook for specs"
+```
 
 ## Documentation site (MkDocs)
 

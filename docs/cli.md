@@ -16,6 +16,7 @@ Options:
   --help                Show this message and exit.
 
 Commands:
+  add         Add a resource entry to a descriptor.
   fetch       Fetch descriptor resources by adapter type or resource name...
   auth        Authentication helpers.
   gdrive      Google Drive commands.
@@ -197,6 +198,43 @@ Options:
   ```bash
 
   sharedrive auth login sharepoint --host-url norc.sharepoint.com
+
+  ```
+```
+
+## `sharedrive add --help`
+
+```text
+Usage: sharedrive add [OPTIONS] NAME
+
+  Add a resource entry to a descriptor.
+
+Arguments:
+  NAME  Resource name to store in the descriptor.  [required]
+
+Options:
+  --path TEXT           Resource path stored in the descriptor.  [required]
+  --source TEXT         Source URL/URI/path for the resource.  [required]
+  --title TEXT          Optional resource title.
+  --description TEXT    Optional resource description.
+  --drive-service TEXT  Drive service override. If omitted, infer from source.
+  --descriptor PATH     Descriptor file path. Defaults to the first standard
+                        descriptor path.
+  --help                Show this message and exit.
+
+  **Examples**
+
+  ```bash
+
+  sharedrive add spec-workbook --path background/specs/spec-workbook.xlsx
+  --source https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx
+
+  ```
+
+  ```bash
+
+  sharedrive add source-export --path background/exports/source-export.csv
+  --source s3://my-bucket/source-export.csv --drive-service s3
 
   ```
 ```

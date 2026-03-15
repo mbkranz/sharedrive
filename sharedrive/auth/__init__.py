@@ -16,11 +16,6 @@ from sharedrive.auth.microsoft import (
     MicrosoftTokenStrategy,
     normalize_microsoft_scopes,
 )
-from sharedrive.auth.sharepoint import (
-    DEFAULT_SHAREPOINT_SCOPES,
-    SharepointTokenStrategy,
-    normalize_sharepoint_scopes,
-)
 from sharedrive.auth.settings import (
     GoogleAuthConfig,
     GoogleAuthMode,
@@ -33,6 +28,10 @@ from sharedrive.auth.settings import (
     make_sharepoint_client_from_settings,
 )
 from sharedrive.auth.token_store import JsonTokenStore
+
+DEFAULT_SHAREPOINT_SCOPES = DEFAULT_MICROSOFT_GRAPH_SCOPES
+SharepointTokenStrategy = MicrosoftTokenStrategy
+normalize_sharepoint_scopes = normalize_microsoft_scopes
 
 __all__ = [
     "AppOnlyStrategy",

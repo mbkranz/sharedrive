@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from sharedrive.actions.fetch import AuthCheckResult
@@ -204,3 +205,69 @@ def test_fetch_passes_check_auth_flag(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
     assert result.exit_code == 0
     assert captured["check_auth"] is True
+
+
+def test_add_command_writes_resource_to_descriptor(tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    descriptor.write_text("$schema: example\nresources: []\n", encoding="utf-8")
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "add",
+            "spec-workbook",
+            "--path",
+            "background/specs/spec-workbook.xlsx",
+            "--descriptor",
+            str(descriptor),
+            "--source",
+            "https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx",
+            "--title",
+            "Spec workbook",
+            "--description",
+            "Source workbook for specs",
+        ],
+        prog_name="sharedrive",
+    )
+
+    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
+
+    assert result.exit_code == 0
+    assert document["$schema"] == "example"
+    assert document["resources"] == [
+        {
+            "name": "spec-workbook",
+            "path": "background/specs/spec-workbook.xlsx",
+            "title": "Spec workbook",
+            "description": "Source workbook for specs",
+            "driveService": "sharepoint",
+            "sources": [
+                {
+                    "path": "https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx"
+                }
+            ],
+        }
+    ]
+
+
+def test_add_command_exits_nonzero_for_unknown_source(tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_descriptor(descriptor)
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "add",
+            "local-file",
+            "--path",
+            "background/local-file.txt",
+            "--descriptor",
+            str(descriptor),
+            "--source",
+            "C:/tmp/local-file.txt",
+        ],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 1
+    assert "Could not infer drive service" in result.output

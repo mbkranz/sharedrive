@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import shutil
 from dataclasses import dataclass
@@ -8,9 +7,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import urlparse
 
-import yaml
-
 from sharedrive.aws import check_s3_credentials, download_s3_url
+from sharedrive.descriptor import load_descriptor, resolve_default_descriptor
 
 LogFn = Callable[[str], None]
 
@@ -43,42 +41,6 @@ class AuthCheckResult:
             "ok": self.ok,
             "message": self.message,
         }
-
-
-def load_descriptor(path: Path) -> list[dict[str, Any]]:
-    """Load a JSON/YAML descriptor and return the top-level resources list."""
-    descriptor_text = path.read_text(encoding="utf-8")
-    suffix = path.suffix.lower()
-
-    if suffix == ".json":
-        data = json.loads(descriptor_text)
-    elif suffix in {".yaml", ".yml"}:
-        data = yaml.safe_load(descriptor_text)
-    else:
-        try:
-            data = json.loads(descriptor_text)
-        except json.JSONDecodeError:
-            data = yaml.safe_load(descriptor_text)
-
-    if not isinstance(data, dict):
-        raise ValueError("Descriptor must be a top-level JSON/YAML object")
-
-    resources = data.get("resources")
-    if not isinstance(resources, list):
-        raise ValueError("Descriptor must contain a top-level 'resources' array")
-    return resources
-
-
-def resolve_default_descriptor() -> Path:
-    """Return the first existing default descriptor path."""
-    for candidate in (
-        Path("resources/descriptor.yaml"),
-        Path("resources/descriptor.yml"),
-        Path("resources/descriptor.json"),
-    ):
-        if candidate.exists():
-            return candidate
-    return Path("resources/descriptor.yaml")
 
 
 def resource_source_url(resource: dict[str, Any]) -> str | None:
@@ -161,10 +123,14 @@ def resource_output_paths(resource: dict[str, Any], output_dir: Path) -> list[Pa
 
 
 def resource_adapter_name(resource: dict[str, Any], source_url: str | None) -> str:
-    """Resolve adapter from x-adapter override or infer from URL."""
-    adapter = resource.get("x-adapter")
+    """Resolve adapter from driveService/x-adapter override or infer from URL."""
+    adapter = resource.get("driveService")
     if isinstance(adapter, str) and adapter.strip():
         return adapter.strip().lower()
+
+    legacy_adapter = resource.get("x-adapter")
+    if isinstance(legacy_adapter, str) and legacy_adapter.strip():
+        return legacy_adapter.strip().lower()
 
     if not source_url:
         return "unknown"

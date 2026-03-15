@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from sharedrive.actions.fetch import check_auth_for_descriptor, fetch_from_descriptor
+from sharedrive.actions.fetch import resource_adapter_name
 
 
 def _write_descriptor(path: Path) -> None:
@@ -122,3 +123,24 @@ def test_fetch_from_descriptor_check_auth_allows_download_when_ready(tmp_path: P
         )
     ]
     assert output_path.read_text(encoding="utf-8") == "ok"
+
+
+def test_resource_adapter_name_prefers_drive_service_over_legacy_adapter() -> None:
+    resource = {
+        "driveService": "sharepoint",
+        "x-adapter": "s3",
+    }
+
+    assert resource_adapter_name(resource, "s3://bucket/raw.csv") == "sharepoint"
+
+
+def test_resource_adapter_name_supports_legacy_x_adapter() -> None:
+    resource = {"x-adapter": "googledrive"}
+
+    assert (
+        resource_adapter_name(
+            resource,
+            "https://example.invalid/path.csv",
+        )
+        == "googledrive"
+    )

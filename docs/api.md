@@ -2,6 +2,38 @@
 
 Auto-generated from source signatures and docstrings.
 
+## `sharedrive.descriptor`
+
+### Functions
+
+- `def get_descriptor_resources(document: dict[str, Any], *, create: bool = False) -> list[dict[str, Any]]`
+  - Return the top-level resources list, optionally initializing it.
+- `def load_descriptor(path: Path | str) -> list[dict[str, Any]]`
+  - Load a JSON/YAML descriptor and return the top-level resources list.
+- `def load_descriptor_document(path: Path | str) -> dict[str, Any]`
+  - Load a JSON/YAML descriptor and return the full top-level document.
+- `def resolve_default_descriptor() -> Path`
+  - Return the first existing default descriptor path.
+- `def save_descriptor_document(path: Path | str, document: dict[str, Any]) -> None`
+  - Persist a descriptor document as JSON or YAML based on file suffix.
+
+
+## `sharedrive.actions.add`
+
+### Constants
+
+- `SUPPORTED_DRIVE_SERVICES = {'sharepoint', 'googledrive', 's3'}`
+
+### Functions
+
+- `def add_resource_to_descriptor(descriptor: Path | str, *, name: str, path: str, source: str, title: str | None = None, description: str | None = None, drive_service: str | None = None) -> dict[str, Any]`
+  - Append a resource entry to a descriptor and return the created resource.
+- `def infer_drive_service(source: str) -> str`
+  - Infer the implemented drive service from a source URL/URI.
+- `def normalize_drive_service(source: str, drive_service: str | None = None) -> str`
+  - Return a supported drive service, inferring it from source if omitted.
+
+
 ## `sharedrive.actions.fetch`
 
 ### Functions
@@ -12,12 +44,8 @@ Auto-generated from source signatures and docstrings.
   - Fetch resources from a descriptor using adapter-specific clients.
 - `def fetch_resources(descriptor: Path | str, include: str | Iterable[str] = 'all', output_dir: Path | str = Path('resources'), dry_run: bool = False, *, check_auth: bool = False, log: LogFn | None = print) -> FetchSummary`
   - Convenience alias for fetch_from_descriptor.
-- `def load_descriptor(path: Path) -> list[dict[str, Any]]`
-  - Load a JSON/YAML descriptor and return the top-level resources list.
-- `def resolve_default_descriptor() -> Path`
-  - Return the first existing default descriptor path.
 - `def resource_adapter_name(resource: dict[str, Any], source_url: str | None) -> str`
-  - Resolve adapter from x-adapter override or infer from URL.
+  - Resolve adapter from driveService/x-adapter override or infer from URL.
 - `def resource_output_path(resource: dict[str, Any], output_dir: Path) -> Path`
   - Resolve resource.path against output_dir unless path is absolute.
 - `def resource_output_paths(resource: dict[str, Any], output_dir: Path) -> list[Path]`
@@ -159,37 +187,6 @@ Auto-generated from source signatures and docstrings.
   - `def build(self) -> str`
 
 #### `MicrosoftTokenStrategy`
-- Fields:
-  - `tenant_id: str`
-  - `client_id: str`
-  - `scopes: Sequence[str] | str | None`
-- Methods:
-  - `def normalized_scopes(self) -> list[str]`
-
-
-## `sharedrive.auth.sharepoint`
-
-### Constants
-
-- `DEFAULT_SHAREPOINT_SCOPES = ('https://graph.microsoft.com/.default',)`
-
-### Functions
-
-- `def normalize_sharepoint_scopes(scopes: Sequence[str] | str | None, *, default: Sequence[str] = DEFAULT_MICROSOFT_GRAPH_SCOPES) -> list[str]`
-
-### Classes
-
-#### `AppOnlyStrategy`
-- Fields:
-  - `client_secret: str | None`
-- Methods:
-  - `def build(self) -> str`
-
-#### `DelegatedStrategy`
-- Methods:
-  - `def build(self) -> str`
-
-#### `SharepointTokenStrategy`
 - Fields:
   - `tenant_id: str`
   - `client_id: str`

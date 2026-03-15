@@ -25,6 +25,7 @@ CLI_COMMANDS: list[tuple[str, list[str]]] = [
     ("sharedrive auth login gdrive --help", ["auth", "login", "gdrive", "--help"]),
     ("sharedrive auth login microsoft --help", ["auth", "login", "microsoft", "--help"]),
     ("sharedrive auth login sharepoint --help", ["auth", "login", "sharepoint", "--help"]),
+    ("sharedrive add --help", ["add", "--help"]),
     ("sharedrive fetch --help", ["fetch", "--help"]),
     ("sharedrive gdrive --help", ["gdrive", "--help"]),
     ("sharedrive gdrive list --help", ["gdrive", "list", "--help"]),
@@ -45,6 +46,14 @@ CLI_COMMANDS: list[tuple[str, list[str]]] = [
 
 API_MODULES = [
     {
+        "module": "sharedrive.descriptor",
+        "path": ROOT / "sharedrive" / "descriptor.py",
+    },
+    {
+        "module": "sharedrive.actions.add",
+        "path": ROOT / "sharedrive" / "actions" / "add.py",
+    },
+    {
         "module": "sharedrive.actions.fetch",
         "path": ROOT / "sharedrive" / "actions" / "fetch.py",
     },
@@ -63,10 +72,6 @@ API_MODULES = [
     {
         "module": "sharedrive.auth.microsoft",
         "path": ROOT / "sharedrive" / "auth" / "microsoft.py",
-    },
-    {
-        "module": "sharedrive.auth.sharepoint",
-        "path": ROOT / "sharedrive" / "auth" / "sharepoint.py",
     },
     {
         "module": "sharedrive.auth.token_store",
