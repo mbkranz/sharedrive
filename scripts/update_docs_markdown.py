@@ -43,121 +43,46 @@ CLI_COMMANDS: list[tuple[str, list[str]]] = [
     ("sharedrive s3 cat --help", ["s3", "cat", "--help"]),
 ]
 
-API_SURFACE = [
+API_MODULES = [
     {
         "module": "sharedrive.actions.fetch",
         "path": ROOT / "sharedrive" / "actions" / "fetch.py",
-        "functions": [
-            "resolve_default_descriptor",
-            "fetch_from_descriptor",
-            "fetch_resources",
-            "retrieve_from_descriptor",
-            "retrieve_resources",
-        ],
-        "classes": {"FetchSummary": ["ok"]},
     },
     {
         "module": "sharedrive.aws",
         "path": ROOT / "sharedrive" / "aws.py",
-        "functions": ["parse_s3_source_url", "download_s3_url"],
-        "classes": {},
     },
     {
         "module": "sharedrive.clients.googledrive",
         "path": ROOT / "sharedrive" / "clients" / "googledrive.py",
-        "functions": [],
-        "classes": {
-            "GoogleBaseClient": [
-                "_ensure_valid_credentials",
-                "_request",
-            ],
-            "GoogleDriveClient": [
-                "list_files",
-                "get_file",
-                "download_file",
-                "download_from_weburl",
-                "export_file",
-                "export_from_weburl",
-                "update_file",
-                "update_from_weburl",
-                "create_file",
-                "create_folder",
-            ],
-        },
     },
     {
         "module": "sharedrive.auth.google",
         "path": ROOT / "sharedrive" / "auth" / "google.py",
-        "functions": ["normalize_google_scopes", "default_drive_strategy"],
-        "classes": {
-            "AdcStrategy": ["build"],
-            "ServiceAccountStrategy": ["build"],
-            "UserOAuthStrategy": ["build"],
-            "ChainedStrategy": ["build"],
-        },
     },
     {
         "module": "sharedrive.auth.microsoft",
         "path": ROOT / "sharedrive" / "auth" / "microsoft.py",
-        "functions": ["normalize_microsoft_scopes"],
-        "classes": {
-            "DelegatedStrategy": ["build"],
-            "AppOnlyStrategy": ["build"],
-        },
     },
     {
         "module": "sharedrive.auth.sharepoint",
         "path": ROOT / "sharedrive" / "auth" / "sharepoint.py",
-        "functions": ["normalize_sharepoint_scopes"],
-        "classes": {
-            "DelegatedStrategy": ["build"],
-            "AppOnlyStrategy": ["build"],
-        },
     },
     {
         "module": "sharedrive.auth.token_store",
         "path": ROOT / "sharedrive" / "auth" / "token_store.py",
-        "functions": [],
-        "classes": {"JsonTokenStore": ["load", "save"]},
     },
     {
         "module": "sharedrive.auth.settings",
         "path": ROOT / "sharedrive" / "auth" / "settings.py",
-        "functions": [
-            "make_google_drive_client_from_settings",
-            "make_sharepoint_client_from_microsoft_auth",
-            "make_sharepoint_client_from_settings",
-        ],
-        "classes": {
-            "GoogleAuthMode": [],
-            "GoogleAuthConfig": ["to_strategy"],
-            "MicrosoftAuthMode": [],
-            "MicrosoftAuthConfig": ["to_strategy"],
-            "SharepointAuthMode": [],
-            "SharepointAuthConfig": ["to_strategy"],
-        },
     },
     {
         "module": "sharedrive.azure",
         "path": ROOT / "sharedrive" / "azure.py",
-        "functions": [],
-        "classes": {"SpoConfig": ["to_client"]},
     },
     {
         "module": "sharedrive.clients.sharepoint",
         "path": ROOT / "sharedrive" / "clients" / "sharepoint.py",
-        "functions": [],
-        "classes": {
-            "SharepointClient": [
-                "get_from_weburl",
-                "download_from_weburl",
-                "get_file",
-                "get_folder",
-                "get_folder_contents",
-                "upload_new_content",
-                "update_content",
-            ]
-        },
     },
 ]
 
@@ -198,6 +123,140 @@ def _parse_module(path: Path) -> ast.Module:
     return ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
 
 
+def _top_level_maps(
+    module_ast: ast.Module,
+) -> tuple[
+    dict[str, ast.FunctionDef],
+    dict[str, ast.ClassDef],
+    dict[str, ast.Assign | ast.AnnAssign],
+    dict[str, ast.expr],
+    dict[str, str],
+]:
+    top_functions = {
+        item.name: item for item in module_ast.body if isinstance(item, ast.FunctionDef)
+    }
+    top_classes = {
+        item.name: item for item in module_ast.body if isinstance(item, ast.ClassDef)
+    }
+    top_assignments: dict[str, ast.Assign | ast.AnnAssign] = {}
+    aliases: dict[str, ast.expr] = {}
+    imported_modules: dict[str, str] = {}
+
+    for item in module_ast.body:
+        if isinstance(item, ast.Import):
+            for import_alias in item.names:
+                bind_name = import_alias.asname or import_alias.name
+                imported_modules[bind_name] = import_alias.name
+        elif isinstance(item, ast.ImportFrom):
+            if item.module is None:
+                continue
+            for import_alias in item.names:
+                bind_name = import_alias.asname or import_alias.name
+                imported_modules[bind_name] = f"{item.module}.{import_alias.name}"
+        elif isinstance(item, ast.Assign):
+            for target in item.targets:
+                if isinstance(target, ast.Name):
+                    top_assignments[target.id] = item
+                    aliases[target.id] = item.value
+        elif isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+            top_assignments[item.target.id] = item
+            if item.value is not None:
+                aliases[item.target.id] = item.value
+
+    return top_functions, top_classes, top_assignments, aliases, imported_modules
+
+
+def _resolve_module_alias_target(
+    expr: ast.expr,
+    imported_modules: dict[str, str],
+) -> tuple[str, str] | None:
+    if isinstance(expr, ast.Name):
+        target_module = imported_modules.get(expr.id)
+        if target_module:
+            return target_module, expr.id
+        return None
+
+    if isinstance(expr, ast.Attribute) and isinstance(expr.value, ast.Name):
+        target_module = imported_modules.get(expr.value.id)
+        if target_module:
+            return target_module, expr.attr
+    return None
+
+
+def _resolve_exported_name(
+    exported_name: str,
+    *,
+    top_functions: dict[str, ast.FunctionDef],
+    top_classes: dict[str, ast.ClassDef],
+    top_assignments: dict[str, ast.Assign | ast.AnnAssign],
+    aliases: dict[str, ast.expr],
+    imported_modules: dict[str, str],
+    module_map: dict[str, Path],
+) -> tuple[str, str, ast.AST] | None:
+    if exported_name in top_functions:
+        return ("function", exported_name, top_functions[exported_name])
+    if exported_name in top_classes:
+        return ("class", exported_name, top_classes[exported_name])
+
+    alias_expr = aliases.get(exported_name)
+    if alias_expr is None:
+        if exported_name in top_assignments:
+            return ("constant", exported_name, top_assignments[exported_name])
+        return None
+
+    if isinstance(alias_expr, ast.Name):
+        target_name = alias_expr.id
+        if target_name in top_functions:
+            return ("function", exported_name, top_functions[target_name])
+        if target_name in top_classes:
+            return ("class", exported_name, top_classes[target_name])
+        if target_name in top_assignments:
+            return ("constant", exported_name, top_assignments[exported_name])
+
+    resolved_module_target = _resolve_module_alias_target(alias_expr, imported_modules)
+    if resolved_module_target is not None:
+        target_module, target_name = resolved_module_target
+        target_path = module_map.get(target_module)
+        if target_path is not None:
+            target_ast = _parse_module(target_path)
+            target_functions, target_classes, target_assignments, target_aliases, target_imports = _top_level_maps(target_ast)
+            resolved = _resolve_exported_name(
+                target_name,
+                top_functions=target_functions,
+                top_classes=target_classes,
+                top_assignments=target_assignments,
+                aliases=target_aliases,
+                imported_modules=target_imports,
+                module_map=module_map,
+            )
+            if resolved is not None:
+                resolved_kind, _resolved_name, resolved_node = resolved
+                return (resolved_kind, exported_name, resolved_node)
+
+    if exported_name in top_assignments:
+        return ("constant", exported_name, top_assignments[exported_name])
+    return None
+
+
+def _parse_dunder_all(module_ast: ast.Module) -> list[str]:
+    for item in module_ast.body:
+        if not isinstance(item, ast.Assign):
+            continue
+        for target in item.targets:
+            if not isinstance(target, ast.Name) or target.id != "__all__":
+                continue
+            try:
+                value = ast.literal_eval(item.value)
+            except Exception as exc:
+                raise ValueError("Could not statically evaluate __all__") from exc
+            if not isinstance(value, (list, tuple)):
+                raise ValueError("__all__ must be a list or tuple of strings")
+            if not all(isinstance(entry, str) for entry in value):
+                raise ValueError("__all__ entries must all be strings")
+            return list(value)
+    raise ValueError("Module is missing __all__")
+
+
 def _doc_first_line(node: ast.AST) -> str:
     doc = ast.get_docstring(node)
     if not doc:
@@ -214,7 +273,7 @@ def _ann_to_str(node: ast.AST | None) -> str:
         return ""
 
 
-def _format_func_signature(node: ast.FunctionDef) -> str:
+def _format_signature(node: ast.FunctionDef, *, name: str | None = None) -> str:
     args = node.args
     parts: list[str] = []
 
@@ -259,11 +318,33 @@ def _format_func_signature(node: ast.FunctionDef) -> str:
             kw_piece += f": {ann}"
         parts.append(kw_piece)
 
-    sig = f"def {node.name}({', '.join(parts)})"
+    sig = f"def {name or node.name}({', '.join(parts)})"
     ret = _ann_to_str(node.returns)
     if ret:
         sig += f" -> {ret}"
     return sig
+
+
+def _format_assignment_signature(
+    name: str,
+    node: ast.Assign | ast.AnnAssign,
+) -> str:
+    annotation = None
+    value = None
+    if isinstance(node, ast.AnnAssign):
+        annotation = _ann_to_str(node.annotation)
+        value = node.value
+    else:
+        value = node.value
+
+    signature = name
+    if annotation:
+        signature += f": {annotation}"
+    if value is not None:
+        rendered_value = _ann_to_str(value)
+        if rendered_value:
+            signature += f" = {rendered_value}"
+    return signature
 
 
 def _class_fields(node: ast.ClassDef) -> list[str]:
@@ -276,46 +357,81 @@ def _class_fields(node: ast.ClassDef) -> list[str]:
     return fields
 
 
+def _public_class_methods(node: ast.ClassDef) -> list[ast.FunctionDef]:
+    methods: list[ast.FunctionDef] = []
+    for item in node.body:
+        if not isinstance(item, ast.FunctionDef):
+            continue
+        if item.name == "__init__":
+            continue
+        if item.name.startswith("__") and item.name.endswith("__"):
+            continue
+        if item.name.startswith("_"):
+            continue
+        methods.append(item)
+    return methods
+
+
 def _render_api_markdown() -> str:
     lines = ["# Python API", ""]
     lines.append("Auto-generated from source signatures and docstrings.")
     lines.append("")
 
-    for module_spec in API_SURFACE:
+    for module_spec in API_MODULES:
         module_name = module_spec["module"]
         module_ast = _parse_module(module_spec["path"])
-        top_functions = {
-            item.name: item for item in module_ast.body if isinstance(item, ast.FunctionDef)
-        }
-        top_classes = {
-            item.name: item for item in module_ast.body if isinstance(item, ast.ClassDef)
-        }
+        top_functions, top_classes, top_assignments, aliases, imported_modules = _top_level_maps(module_ast)
+        exported_names = _parse_dunder_all(module_ast)
+        module_map = {spec["module"]: spec["path"] for spec in API_MODULES}
+
+        constants: list[tuple[str, ast.Assign | ast.AnnAssign]] = []
+        functions: list[tuple[str, ast.FunctionDef]] = []
+        classes: list[tuple[str, ast.ClassDef]] = []
+
+        for exported_name in exported_names:
+            resolved = _resolve_exported_name(
+                exported_name,
+                top_functions=top_functions,
+                top_classes=top_classes,
+                top_assignments=top_assignments,
+                aliases=aliases,
+                imported_modules=imported_modules,
+                module_map=module_map,
+            )
+            if resolved is None:
+                continue
+            resolved_kind, resolved_name, resolved_node = resolved
+            if resolved_kind == "function" and isinstance(resolved_node, ast.FunctionDef):
+                functions.append((resolved_name, resolved_node))
+            elif resolved_kind == "class" and isinstance(resolved_node, ast.ClassDef):
+                classes.append((resolved_name, resolved_node))
+            elif resolved_kind == "constant" and isinstance(resolved_node, (ast.Assign, ast.AnnAssign)):
+                constants.append((resolved_name, resolved_node))
 
         lines.append(f"## `{module_name}`")
         lines.append("")
 
-        function_names: list[str] = module_spec["functions"]
-        if function_names:
+        if constants:
+            lines.append("### Constants")
+            lines.append("")
+            for name, node in constants:
+                lines.append(f"- `{_format_assignment_signature(name, node)}`")
+            lines.append("")
+
+        if functions:
             lines.append("### Functions")
             lines.append("")
-            for name in function_names:
-                node = top_functions.get(name)
-                if node is None:
-                    continue
-                lines.append(f"- `{_format_func_signature(node)}`")
+            for name, node in functions:
+                lines.append(f"- `{_format_signature(node, name=name)}`")
                 doc = _doc_first_line(node)
                 if doc:
                     lines.append(f"  - {doc}")
             lines.append("")
 
-        class_specs: dict[str, list[str]] = module_spec["classes"]
-        if class_specs:
+        if classes:
             lines.append("### Classes")
             lines.append("")
-            for class_name, methods in class_specs.items():
-                class_node = top_classes.get(class_name)
-                if class_node is None:
-                    continue
+            for class_name, class_node in classes:
                 lines.append(f"#### `{class_name}`")
                 class_doc = _doc_first_line(class_node)
                 if class_doc:
@@ -325,18 +441,11 @@ def _render_api_markdown() -> str:
                     lines.append("- Fields:")
                     for field in fields:
                         lines.append(f"  - `{field}`")
-                method_nodes = {
-                    item.name: item
-                    for item in class_node.body
-                    if isinstance(item, ast.FunctionDef)
-                }
-                if methods:
+                method_nodes = _public_class_methods(class_node)
+                if method_nodes:
                     lines.append("- Methods:")
-                    for method_name in methods:
-                        method_node = method_nodes.get(method_name)
-                        if method_node is None:
-                            continue
-                        lines.append(f"  - `{_format_func_signature(method_node)}`")
+                    for method_node in method_nodes:
+                        lines.append(f"  - `{_format_signature(method_node)}`")
                         method_doc = _doc_first_line(method_node)
                         if method_doc:
                             lines.append(f"    - {method_doc}")

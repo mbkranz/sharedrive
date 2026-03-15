@@ -33,3 +33,6 @@ class JsonTokenStore:
 
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(creds.to_json(), encoding="utf-8")
+
+
+__all__ = ["JsonTokenStore"]

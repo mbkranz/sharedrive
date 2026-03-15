@@ -42,7 +42,7 @@ gdrive_app = typer.Typer(
     rich_markup_mode="markdown",
 )
 sharepoint_app = typer.Typer(
-    help="SharePoint commands.",
+    help="SharePoint commands (`spo` is alias for `sharepoint`).",
     rich_markup_mode="markdown",
 )
 s3_app = typer.Typer(

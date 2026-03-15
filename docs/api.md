@@ -6,12 +6,24 @@ Auto-generated from source signatures and docstrings.
 
 ### Functions
 
-- `def resolve_default_descriptor() -> Path`
-  - Return the first existing default descriptor path.
+- `def check_auth_for_adapters(adapters: Iterable[str], *, sharepoint_client_factory: Callable[[], Any] | None = None, googledrive_client_factory: Callable[[], Any] | None = None, s3_auth_checker: Callable[[], None] | None = None) -> list[AuthCheckResult]`
+- `def check_auth_for_descriptor(descriptor: Path | str, include: str | Iterable[str] = 'all', *, sharepoint_client_factory: Callable[[], Any] | None = None, googledrive_client_factory: Callable[[], Any] | None = None, s3_auth_checker: Callable[[], None] | None = None) -> list[AuthCheckResult]`
 - `def fetch_from_descriptor(descriptor: Path | str, include: str | Iterable[str] = 'all', output_dir: Path | str = Path('resources'), dry_run: bool = False, *, check_auth: bool = False, log: LogFn | None = print, sharepoint_client_factory: Callable[[], Any] | None = None, googledrive_client_factory: Callable[[], Any] | None = None, use_cloudpathlib: bool = True) -> FetchSummary`
   - Fetch resources from a descriptor using adapter-specific clients.
 - `def fetch_resources(descriptor: Path | str, include: str | Iterable[str] = 'all', output_dir: Path | str = Path('resources'), dry_run: bool = False, *, check_auth: bool = False, log: LogFn | None = print) -> FetchSummary`
   - Convenience alias for fetch_from_descriptor.
+- `def load_descriptor(path: Path) -> list[dict[str, Any]]`
+  - Load a JSON/YAML descriptor and return the top-level resources list.
+- `def resolve_default_descriptor() -> Path`
+  - Return the first existing default descriptor path.
+- `def resource_adapter_name(resource: dict[str, Any], source_url: str | None) -> str`
+  - Resolve adapter from x-adapter override or infer from URL.
+- `def resource_output_path(resource: dict[str, Any], output_dir: Path) -> Path`
+  - Resolve resource.path against output_dir unless path is absolute.
+- `def resource_output_paths(resource: dict[str, Any], output_dir: Path) -> list[Path]`
+  - Resolve primary resource.path plus optional targets[] into local output paths.
+- `def resource_source_url(resource: dict[str, Any]) -> str | None`
+  - Resolve source URL using sources[].path first, then legacy source.
 - `def retrieve_from_descriptor(descriptor: Path | str, include: str | Iterable[str] = 'all', output_dir: Path | str = Path('resources'), dry_run: bool = False, *, check_auth: bool = False, log: LogFn | None = print, sharepoint_client_factory: Callable[[], Any] | None = None, googledrive_client_factory: Callable[[], Any] | None = None, use_cloudpathlib: bool = True) -> RetrieveSummary`
   - Backward-compatible alias for fetch_from_descriptor.
 - `def retrieve_resources(descriptor: Path | str, include: str | Iterable[str] = 'all', output_dir: Path | str = Path('resources'), dry_run: bool = False, *, check_auth: bool = False, log: LogFn | None = print) -> RetrieveSummary`
@@ -19,7 +31,25 @@ Auto-generated from source signatures and docstrings.
 
 ### Classes
 
+#### `AuthCheckResult`
+- Fields:
+  - `adapter: str`
+  - `ok: bool`
+  - `message: str`
+- Methods:
+  - `def to_dict(self) -> dict[str, str | bool]`
+
 #### `FetchSummary`
+- Fields:
+  - `total_resources: int`
+  - `downloaded: int`
+  - `skipped: int`
+  - `dry_run_actions: int`
+  - `failures: int`
+- Methods:
+  - `def ok(self) -> bool`
+
+#### `RetrieveSummary`
 - Fields:
   - `total_resources: int`
   - `downloaded: int`
@@ -34,8 +64,8 @@ Auto-generated from source signatures and docstrings.
 
 ### Functions
 
-- `def parse_s3_source_url(source_url: str) -> tuple[str, str]`
 - `def download_s3_url(source_url: str, output_path: Path, *, dry_run: bool = False, use_cloudpathlib: bool = True) -> Path | None`
+- `def parse_s3_source_url(source_url: str) -> tuple[str, str]`
 
 
 ## `sharedrive.clients.googledrive`
@@ -44,9 +74,6 @@ Auto-generated from source signatures and docstrings.
 
 #### `GoogleBaseClient`
 - Shared Google client base for auth lifecycle and HTTP transport helpers.
-- Methods:
-  - `def _ensure_valid_credentials(self) -> None`
-  - `def _request(self, method: str, url: str, **kwargs) -> requests.Response`
 
 #### `GoogleDriveClient`
 - Minimal Google Drive client (ID-first) with read/write and full export coverage for Google-native files.
@@ -54,28 +81,41 @@ Auto-generated from source signatures and docstrings.
   - `def list_files(self)`
     - List all files the authenticated user has access to.
   - `def get_file(self, file_id: str, **kwargs) -> Dict[str, Any]`
+  - `def infer_export_mime_type(self, file_id: str) -> Optional[str]`
   - `def download_file(self, file_id: str, output_path: Optional[str] = None, mime_type: Optional[str] = None, acknowledge_abuse: bool = False, byte_range: Optional[str] = None, supports_all_drives: bool = True, **kwargs) -> Union[bytes, str]`
-  - `def download_from_weburl(self, web_url: str, **kwargs) -> Union[bytes, str]`
   - `def export_file(self, file_id: str, mime_type: Optional[str] = None, output_path: Optional[str] = None, supports_all_drives: bool = True, **kwargs) -> Union[bytes, str]`
-  - `def export_from_weburl(self, web_url: str, mime_type: Optional[str] = None, **kwargs) -> Union[bytes, str]`
-  - `def update_file(self, file_id: str, file_in_bytes_or_path: Optional[Union[str, bytes]] = None, mime_type: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]`
-  - `def update_from_weburl(self, web_url: str, **kwargs) -> Dict[str, Any]`
   - `def create_file(self, parent_folder_id: str, file_in_bytes: Optional[bytes] = None, mime_type: Optional[str] = None, name: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None, supports_all_drives: bool = True, **kwargs) -> Dict[str, Any]`
+  - `def update_file(self, file_id: str, file_in_bytes_or_path: Optional[Union[str, bytes]] = None, mime_type: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]`
   - `def create_folder(self, parent_folder_id: str, name: str) -> Dict[str, Any]`
+  - `def get_from_weburl(self, web_url: str, fields: str = '*') -> Dict[str, Any]`
+  - `def download_from_weburl(self, web_url: str, **kwargs) -> Union[bytes, str]`
+  - `def export_from_weburl(self, web_url: str, mime_type: Optional[str] = None, **kwargs) -> Union[bytes, str]`
+  - `def update_from_weburl(self, web_url: str, **kwargs) -> Dict[str, Any]`
 
 
 ## `sharedrive.auth.google`
 
+### Constants
+
+- `DEFAULT_DRIVE_READONLY_SCOPES = ('https://www.googleapis.com/auth/drive.readonly',)`
+- `DEFAULT_DRIVE_SCOPES = ('https://www.googleapis.com/auth/drive',)`
+
 ### Functions
 
-- `def normalize_google_scopes(scopes: Sequence[str] | str | None, *, default: Sequence[str] = DEFAULT_DRIVE_SCOPES) -> list[str]`
 - `def default_drive_strategy(credentials_path: str | Path | None = None, scopes: Sequence[str] | str | None = None) -> CredentialStrategy`
+- `def normalize_google_scopes(scopes: Sequence[str] | str | None, *, default: Sequence[str] = DEFAULT_DRIVE_SCOPES) -> list[str]`
 
 ### Classes
 
 #### `AdcStrategy`
 - Fields:
   - `scopes: Sequence[str] | str | None`
+- Methods:
+  - `def build(self) -> Credentials`
+
+#### `ChainedStrategy`
+- Fields:
+  - `strategies: Sequence[CredentialStrategy]`
 - Methods:
   - `def build(self) -> Credentials`
 
@@ -95,14 +135,12 @@ Auto-generated from source signatures and docstrings.
 - Methods:
   - `def build(self) -> Credentials`
 
-#### `ChainedStrategy`
-- Fields:
-  - `strategies: Sequence[CredentialStrategy]`
-- Methods:
-  - `def build(self) -> Credentials`
-
 
 ## `sharedrive.auth.microsoft`
+
+### Constants
+
+- `DEFAULT_MICROSOFT_GRAPH_SCOPES = ('https://graph.microsoft.com/.default',)`
 
 ### Functions
 
@@ -110,9 +148,36 @@ Auto-generated from source signatures and docstrings.
 
 ### Classes
 
+#### `AppOnlyStrategy`
+- Fields:
+  - `client_secret: str | None`
+- Methods:
+  - `def build(self) -> str`
+
 #### `DelegatedStrategy`
 - Methods:
   - `def build(self) -> str`
+
+#### `MicrosoftTokenStrategy`
+- Fields:
+  - `tenant_id: str`
+  - `client_id: str`
+  - `scopes: Sequence[str] | str | None`
+- Methods:
+  - `def normalized_scopes(self) -> list[str]`
+
+
+## `sharedrive.auth.sharepoint`
+
+### Constants
+
+- `DEFAULT_SHAREPOINT_SCOPES = ('https://graph.microsoft.com/.default',)`
+
+### Functions
+
+- `def normalize_sharepoint_scopes(scopes: Sequence[str] | str | None, *, default: Sequence[str] = DEFAULT_MICROSOFT_GRAPH_SCOPES) -> list[str]`
+
+### Classes
 
 #### `AppOnlyStrategy`
 - Fields:
@@ -120,13 +185,17 @@ Auto-generated from source signatures and docstrings.
 - Methods:
   - `def build(self) -> str`
 
+#### `DelegatedStrategy`
+- Methods:
+  - `def build(self) -> str`
 
-## `sharedrive.auth.sharepoint`
-
-### Functions
-
-
-### Classes
+#### `SharepointTokenStrategy`
+- Fields:
+  - `tenant_id: str`
+  - `client_id: str`
+  - `scopes: Sequence[str] | str | None`
+- Methods:
+  - `def normalized_scopes(self) -> list[str]`
 
 
 ## `sharedrive.auth.token_store`
@@ -146,10 +215,9 @@ Auto-generated from source signatures and docstrings.
 
 - `def make_google_drive_client_from_settings(config: GoogleAuthConfig | None = None)`
 - `def make_sharepoint_client_from_microsoft_auth(config: MicrosoftAuthConfig | None = None)`
+- `def make_sharepoint_client_from_settings(config: MicrosoftAuthConfig | None = None)`
 
 ### Classes
-
-#### `GoogleAuthMode`
 
 #### `GoogleAuthConfig`
 - Fields:
@@ -160,9 +228,11 @@ Auto-generated from source signatures and docstrings.
   - `scopes: list[str]`
   - `use_local_server: bool`
 - Methods:
+  - `def to_scope_list(cls, value: str | list[str] | tuple[str, ...] | None) -> list[str]`
+  - `def validate_for_mode(self) -> GoogleAuthConfig`
   - `def to_strategy(self) -> CredentialStrategy`
 
-#### `MicrosoftAuthMode`
+#### `GoogleAuthMode`
 
 #### `MicrosoftAuthConfig`
 - Fields:
@@ -173,7 +243,30 @@ Auto-generated from source signatures and docstrings.
   - `host_url: str`
   - `scopes: list[str]`
 - Methods:
+  - `def empty_string_to_none(cls, value: str | None) -> str | None`
+  - `def normalize_host_url(cls, value: str | None) -> str`
+  - `def to_scope_list(cls, value: str | list[str] | tuple[str, ...] | None) -> list[str]`
+  - `def validate_for_mode(self) -> MicrosoftAuthConfig`
   - `def to_strategy(self) -> AppOnlyStrategy | DelegatedStrategy`
+
+#### `MicrosoftAuthMode`
+
+#### `SharepointAuthConfig`
+- Fields:
+  - `auth_mode: MicrosoftAuthMode`
+  - `tenant_id: str | None`
+  - `client_id: str | None`
+  - `client_secret: SecretStr | None`
+  - `host_url: str`
+  - `scopes: list[str]`
+- Methods:
+  - `def empty_string_to_none(cls, value: str | None) -> str | None`
+  - `def normalize_host_url(cls, value: str | None) -> str`
+  - `def to_scope_list(cls, value: str | list[str] | tuple[str, ...] | None) -> list[str]`
+  - `def validate_for_mode(self) -> MicrosoftAuthConfig`
+  - `def to_strategy(self) -> AppOnlyStrategy | DelegatedStrategy`
+
+#### `SharepointAuthMode`
 
 
 ## `sharedrive.azure`
@@ -182,6 +275,8 @@ Auto-generated from source signatures and docstrings.
 
 #### `SpoConfig`
 - Methods:
+  - `def scope(self) -> list[str]`
+  - `def user_delegated_access(self) -> bool`
   - `def to_client(self)`
 
 
@@ -192,6 +287,13 @@ Auto-generated from source signatures and docstrings.
 #### `SharepointClient`
 - TODO: look into for local dev: https://learn.microsoft.com/en-us/powershell/microsoftgraph/overview?view=graph-powershell-1.0
 - Methods:
+  - `def get_site_id(self, site_name)`
+  - `def get_drive_id(self, site_id)`
+    - Retrieves the default document drive associated with a SharePoint site.
+  - `def get_item_metadata(self, drive_id, itempath)`
+    - get item metadata based on relative file path within the drive
+  - `def download_content(self, drive_id = None, item_id = None, download_url = None)`
+    - takes in the components needed to download content --
   - `def get_from_weburl(self, url)`
     - Generic method to get a file or folder from a SharePoint URL.
   - `def download_from_weburl(self, url, output_path, dry_run = True)`

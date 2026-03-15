@@ -40,3 +40,4 @@ Goal is to create a quick and efficient system like git and uv both for quick de
 
 - Document any non-obvious behavior in docstrings and `README.md`.
 - Update docs if any changes with: `uv run update_docs_markdown.py`
+- the __all__ variable is used to explicitly declare public API for each module. When adding new functions or classes that are intended to be part of the public API, make sure to include them in the __all__ list at the end of the module. This helps with clarity and maintainability of the codebase.

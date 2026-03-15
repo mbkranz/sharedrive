@@ -71,3 +71,9 @@ def download_s3_url(
     bucket, key = parse_s3_source_url(source_url)
     boto3.client("s3").download_file(bucket, key, str(output_path))
     return output_path
+
+
+__all__ = [
+    "download_s3_url",
+    "parse_s3_source_url",
+]

@@ -235,3 +235,16 @@ def make_sharepoint_client_from_microsoft_auth(
 
 
 make_sharepoint_client_from_settings = make_sharepoint_client_from_microsoft_auth
+
+
+__all__ = [
+    "GoogleAuthConfig",
+    "GoogleAuthMode",
+    "MicrosoftAuthConfig",
+    "MicrosoftAuthMode",
+    "SharepointAuthConfig",
+    "SharepointAuthMode",
+    "make_google_drive_client_from_settings",
+    "make_sharepoint_client_from_microsoft_auth",
+    "make_sharepoint_client_from_settings",
+]

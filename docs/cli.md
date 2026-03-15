@@ -19,8 +19,8 @@ Commands:
   fetch       Fetch descriptor resources by adapter type or resource name...
   auth        Authentication helpers.
   gdrive      Google Drive commands.
-  sharepoint  SharePoint commands.
-  spo         SharePoint commands.
+  sharepoint  SharePoint commands (`spo` is alias for `sharepoint`).
+  spo         SharePoint commands (`spo` is alias for `sharepoint`).
   s3          S3 commands.
 ```
 
@@ -390,7 +390,7 @@ Options:
 ```text
 Usage: sharedrive sharepoint [OPTIONS] COMMAND [ARGS]...
 
-  SharePoint commands.
+  SharePoint commands (`spo` is alias for `sharepoint`).
 
 Options:
   --help  Show this message and exit.
@@ -486,7 +486,7 @@ Options:
 ```text
 Usage: sharedrive spo [OPTIONS] COMMAND [ARGS]...
 
-  SharePoint commands.
+  SharePoint commands (`spo` is alias for `sharepoint`).
 
 Options:
   --help  Show this message and exit.

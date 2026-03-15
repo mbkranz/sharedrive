@@ -452,3 +452,6 @@ class SharepointClient:
             print(f"Failed to {action} file: {response.status_code}")
             print(response.text)
             response.raise_for_status()
+
+
+__all__ = ["SharepointClient"]

@@ -132,3 +132,15 @@ def default_drive_strategy(
             scopes=normalize_google_scopes(scopes),
         )
     return AdcStrategy(scopes=normalize_google_scopes(scopes))
+
+
+__all__ = [
+    "AdcStrategy",
+    "ChainedStrategy",
+    "DEFAULT_DRIVE_READONLY_SCOPES",
+    "DEFAULT_DRIVE_SCOPES",
+    "ServiceAccountStrategy",
+    "UserOAuthStrategy",
+    "default_drive_strategy",
+    "normalize_google_scopes",
+]
