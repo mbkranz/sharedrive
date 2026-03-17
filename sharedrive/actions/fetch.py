@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from sharedrive.clients.aws import check_s3_credentials, download_s3_url
 from sharedrive.descriptor import (
+    ensure_descriptor_exists,
     get_package_resources,
     is_package_resource,
     load_descriptor,
@@ -407,7 +408,8 @@ def check_auth_for_descriptor(
     googledrive_client_factory: Callable[[], Any] | None = None,
     s3_auth_checker: Callable[[], None] | None = None,
 ) -> list[AuthCheckResult]:
-    resources = load_descriptor(Path(descriptor))
+    descriptor_path = ensure_descriptor_exists(descriptor)
+    resources = load_descriptor(descriptor_path)
     adapters = _selected_adapter_names(resources, include)
     return check_auth_for_adapters(
         adapters,
@@ -430,7 +432,7 @@ def fetch_from_descriptor(
     use_cloudpathlib: bool = True,
 ) -> FetchSummary:
     """Fetch resources from a descriptor using adapter-specific clients."""
-    descriptor_path = Path(descriptor)
+    descriptor_path = ensure_descriptor_exists(descriptor)
     include_set = _normalize_include(include)
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)

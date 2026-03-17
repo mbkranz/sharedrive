@@ -5,6 +5,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from sharedrive.descriptor import (
+    ensure_descriptor_exists,
     get_descriptor_resources,
     load_descriptor_document,
     save_descriptor_document,
@@ -64,8 +65,13 @@ def add_resource_to_descriptor(
     drive_service: str | None = None,
     package: bool = False,
     profile: str | None = None,
+    create_if_missing: bool = False,
 ) -> dict[str, Any]:
     """Append a resource entry to a descriptor and return the created resource."""
+    descriptor_path = Path(descriptor)
+    if not create_if_missing:
+        ensure_descriptor_exists(descriptor_path)
+
     resource_name = _require_non_empty(name, "name")
     resource_path = _require_non_empty(path, "path")
     resource_source = _require_non_empty(source, "source")
@@ -76,7 +82,7 @@ def add_resource_to_descriptor(
     if resource_profile is not None and not package:
         raise ValueError("profile can only be provided when package=True")
 
-    document = load_descriptor_document(descriptor)
+    document = load_descriptor_document(descriptor_path)
     resources = get_descriptor_resources(document, create=True)
 
     normalized_names = {
@@ -102,7 +108,7 @@ def add_resource_to_descriptor(
         resource["resources"] = []
 
     resources.append(resource)
-    save_descriptor_document(descriptor, document)
+    save_descriptor_document(descriptor_path, document)
     return resource
 
 

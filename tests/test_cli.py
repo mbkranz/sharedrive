@@ -245,6 +245,9 @@ def test_fetch_passes_check_auth_flag(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
 def test_set_command_saves_global_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
+    descriptor = tmp_path / "resources" / "descriptor.yaml"
+    descriptor.parent.mkdir(parents=True, exist_ok=True)
+    _write_descriptor(descriptor)
 
     result = RUNNER.invoke(
         app,
@@ -263,6 +266,19 @@ def test_set_command_saves_global_defaults(monkeypatch: pytest.MonkeyPatch, tmp_
         },
         "descriptors": {},
     }
+
+
+def test_set_command_rejects_missing_descriptor_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = RUNNER.invoke(
+        app,
+        ["set", "--global", "--descriptor", "resources/missing.yaml"],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code != 0
+    assert "does not exist" in result.output
 
 
 def test_add_uses_saved_global_descriptor_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -298,6 +314,68 @@ def test_add_uses_saved_global_descriptor_default(monkeypatch: pytest.MonkeyPatc
     assert "descriptor.yaml" in result.stdout
 
 
+def test_add_fails_when_saved_global_descriptor_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    descriptor = tmp_path / "resources" / "descriptor.yaml"
+    descriptor.parent.mkdir(parents=True, exist_ok=True)
+    _write_descriptor(descriptor)
+
+    set_result = RUNNER.invoke(
+        app,
+        ["set", "--global", "--descriptor", "resources/descriptor.yaml"],
+        prog_name="sharedrive",
+    )
+    assert set_result.exit_code == 0
+
+    descriptor.unlink()
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "add",
+            "spec-workbook",
+            "--path",
+            "background/specs/spec-workbook.xlsx",
+            "--source",
+            "https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx",
+        ],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 1
+    assert "does not exist" in result.output
+
+
+def test_add_allows_creating_default_descriptor_when_not_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "add",
+            "spec-workbook",
+            "--path",
+            "background/specs/spec-workbook.xlsx",
+            "--source",
+            "https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx",
+        ],
+        prog_name="sharedrive",
+    )
+
+    descriptor = tmp_path / "resources" / "descriptor.yaml"
+    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
+
+    assert result.exit_code == 0
+    assert descriptor.exists()
+    assert document["resources"][0]["name"] == "spec-workbook"
+
+
 def test_fetch_uses_saved_defaults_when_descriptor_omitted(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -331,6 +409,19 @@ def test_fetch_uses_saved_defaults_when_descriptor_omitted(
     assert captured["descriptor"] == Path("resources/descriptor.yaml")
     assert captured["output_dir"] == Path("exports")
     assert captured["check_auth"] is True
+
+
+def test_fetch_exits_nonzero_when_descriptor_is_missing(tmp_path: Path) -> None:
+    descriptor = tmp_path / "missing.yaml"
+
+    result = RUNNER.invoke(
+        app,
+        ["fetch", str(descriptor), "--dry-run"],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 1
+    assert "does not exist" in result.output
 
 
 def test_retrieve_uses_saved_defaults_when_descriptor_omitted(
@@ -409,6 +500,28 @@ def test_add_command_writes_resource_to_descriptor(tmp_path: Path) -> None:
             ],
         }
     ]
+
+
+def test_add_command_rejects_missing_explicit_descriptor(tmp_path: Path) -> None:
+    missing_descriptor = tmp_path / "missing.yaml"
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "add",
+            "spec-workbook",
+            "--path",
+            "background/specs/spec-workbook.xlsx",
+            "--descriptor",
+            str(missing_descriptor),
+            "--source",
+            "https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx",
+        ],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 1
+    assert "does not exist" in result.output
 
 
 def test_add_command_writes_package_resource_to_descriptor(tmp_path: Path) -> None:
@@ -499,6 +612,19 @@ def test_sync_command_exits_nonzero_on_error(monkeypatch: pytest.MonkeyPatch, tm
 
     assert result.exit_code == 1
     assert "was not found" in result.output
+
+
+def test_sync_command_exits_nonzero_when_descriptor_is_missing(tmp_path: Path) -> None:
+    descriptor = tmp_path / "missing.yaml"
+
+    result = RUNNER.invoke(
+        app,
+        ["sync", "missing", "--descriptor", str(descriptor)],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 1
+    assert "does not exist" in result.output
 
 
 def test_add_command_exits_nonzero_for_unknown_source(tmp_path: Path) -> None:

@@ -16,6 +16,7 @@ from sharedrive.actions.fetch import check_auth_for_descriptor, fetch_from_descr
 from sharedrive.actions.sync import sync_package_resource_in_descriptor
 from sharedrive.descriptor import (
     DESCRIPTOR_DEFAULTS_FILE,
+    check_descriptor_exists,
     load_descriptor_defaults_store,
     resolve_descriptor_path,
     resolve_output_dir,
@@ -261,6 +262,24 @@ def _set_saved_scope(parsed: dict[str, Any], descriptor: Optional[Path], global_
     return target
 
 
+def _has_saved_global_descriptor() -> bool:
+    store = load_descriptor_defaults_store()
+    global_scope = store.get("global")
+    if not isinstance(global_scope, dict):
+        return False
+
+    descriptor_value = global_scope.get("descriptor")
+    return isinstance(descriptor_value, str) and bool(descriptor_value.strip())
+
+
+def _exit_if_descriptor_missing(descriptor_path: Path) -> None:
+    if check_descriptor_exists(descriptor_path):
+        return
+
+    typer.echo(f"Descriptor '{descriptor_path}' does not exist.", err=True)
+    raise typer.Exit(code=1)
+
+
 def _run_fetch_command(
     descriptor: Path,
     include: str | list[str],
@@ -329,8 +348,21 @@ def set_command(
 ) -> None:
     """Set reusable key/value parameters for sharedrive descriptor workflows."""
     parsed = _parse_set_args(list(ctx.args))
+
+    if descriptor_scope is not None and not check_descriptor_exists(descriptor_scope):
+        raise typer.BadParameter(
+            f"Descriptor '{descriptor_scope}' does not exist.",
+            param_hint="<descriptor>",
+        )
+
     if descriptor is not None:
-        parsed["descriptor"] = Path(descriptor).as_posix()
+        descriptor_path = Path(descriptor)
+        if not check_descriptor_exists(descriptor_path):
+            raise typer.BadParameter(
+                f"Descriptor '{descriptor_path}' does not exist.",
+                param_hint="--descriptor",
+            )
+        parsed["descriptor"] = descriptor_path.as_posix()
     if output_dir is not None:
         parsed["output_dir"] = output_dir
     if not parsed:
@@ -363,6 +395,9 @@ def add(
 ) -> None:
     """Add a resource entry to a descriptor."""
     descriptor_path = resolve_descriptor_path(descriptor)
+    explicit_descriptor = descriptor is not None or _has_saved_global_descriptor()
+    if explicit_descriptor:
+        _exit_if_descriptor_missing(descriptor_path)
 
     try:
         resource = add_resource_to_descriptor(
@@ -375,8 +410,9 @@ def add(
             drive_service=drive_service,
             package=package,
             profile=profile,
+            create_if_missing=not explicit_descriptor,
         )
-    except (NotImplementedError, ValueError) as exc:
+    except (FileNotFoundError, NotImplementedError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
@@ -406,6 +442,7 @@ def sync(
     # sync-eligible package resource in the descriptor.
     _load_env_file(env_file)
     descriptor_path = resolve_descriptor_path(descriptor)
+    _exit_if_descriptor_missing(descriptor_path)
 
     try:
         summary = sync_package_resource_in_descriptor(
@@ -415,7 +452,7 @@ def sync(
             log=None,
             googledrive_client_factory=lambda: _make_gdrive_client(None),
         )
-    except (NotImplementedError, ValueError) as exc:
+    except (FileNotFoundError, NotImplementedError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
@@ -457,6 +494,7 @@ def fetch(
     _load_env_file(env_file)
     include_values = _parse_include_values(include)
     descriptor_path = resolve_descriptor_path(descriptor)
+    _exit_if_descriptor_missing(descriptor_path)
     output_dir_path = resolve_output_dir(output_dir, descriptor=descriptor_path)
     _run_fetch_command(
         descriptor=descriptor_path,
@@ -536,6 +574,7 @@ def auth_check(
     _load_env_file(env_file)
     include_values = _parse_include_values(include)
     descriptor_path = resolve_descriptor_path(descriptor)
+    _exit_if_descriptor_missing(descriptor_path)
     results = check_auth_for_descriptor(
         descriptor=descriptor_path,
         include=include_values,

@@ -46,6 +46,7 @@ def test_add_resource_to_descriptor_rejects_duplicate_names(tmp_path: Path) -> N
 
 def test_add_resource_to_descriptor_rejects_unsupported_drive_service(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
+    descriptor.write_text("resources: []\n", encoding="utf-8")
 
     with pytest.raises(NotImplementedError, match="not implemented"):
         add_resource_to_descriptor(
@@ -80,6 +81,7 @@ def test_add_resource_to_descriptor_creates_package_resource(tmp_path: Path) -> 
 
 def test_add_resource_to_descriptor_rejects_profile_without_package(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
+    descriptor.write_text("resources: []\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="profile can only be provided"):
         add_resource_to_descriptor(
@@ -90,6 +92,35 @@ def test_add_resource_to_descriptor_rejects_profile_without_package(tmp_path: Pa
             drive_service="googledrive",
             profile="data-package",
         )
+
+
+def test_add_resource_to_descriptor_requires_existing_descriptor_by_default(
+    tmp_path: Path,
+) -> None:
+    descriptor = tmp_path / "missing.yaml"
+
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        add_resource_to_descriptor(
+            descriptor,
+            name="source-export",
+            path="background/exports/source-export.csv",
+            source="s3://my-bucket/path/to/source-export.csv",
+        )
+
+
+def test_add_resource_to_descriptor_allows_create_if_missing(tmp_path: Path) -> None:
+    descriptor = tmp_path / "created.yaml"
+
+    resource = add_resource_to_descriptor(
+        descriptor,
+        name="source-export",
+        path="background/exports/source-export.csv",
+        source="s3://my-bucket/path/to/source-export.csv",
+        create_if_missing=True,
+    )
+
+    assert descriptor.exists()
+    assert resource["name"] == "source-export"
 
 
 @pytest.mark.parametrize(

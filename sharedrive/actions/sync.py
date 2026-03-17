@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 from sharedrive.actions.fetch import resource_adapter_name, resource_source_url
 from sharedrive.descriptor import (
+    ensure_descriptor_exists,
     get_descriptor_resources,
     is_package_resource,
     load_descriptor_document,
@@ -55,7 +56,7 @@ def sync_package_resource_in_descriptor(
     # TODO: Consider an explicit bulk mode such as `sharedrive sync --all`
     # once targeted package sync is stable. Keep it opt-in and limit it to
     # sync-eligible package resources, likely with adapter filtering.
-    descriptor_path = Path(descriptor)
+    descriptor_path = ensure_descriptor_exists(descriptor)
     normalized_name = package_name.strip().lower()
     if not normalized_name:
         raise ValueError("package_name must be a non-empty string")

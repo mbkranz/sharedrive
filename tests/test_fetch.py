@@ -252,3 +252,25 @@ def test_resource_adapter_name_supports_legacy_x_adapter() -> None:
         )
         == "googledrive"
     )
+
+
+def test_fetch_from_descriptor_requires_existing_descriptor(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.yaml"
+
+    try:
+        fetch_from_descriptor(missing, output_dir=tmp_path / "resources")
+    except FileNotFoundError as exc:
+        assert "does not exist" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Expected FileNotFoundError for missing descriptor")
+
+
+def test_check_auth_for_descriptor_requires_existing_descriptor(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.yaml"
+
+    try:
+        check_auth_for_descriptor(missing)
+    except FileNotFoundError as exc:
+        assert "does not exist" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Expected FileNotFoundError for missing descriptor")

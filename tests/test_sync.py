@@ -106,3 +106,17 @@ resources:
             googledrive_client_factory=lambda: object(),
             log=None,
         )
+
+
+def test_sync_package_resource_in_descriptor_requires_existing_descriptor(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "missing.yaml"
+
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        sync_package_resource_in_descriptor(
+            missing,
+            "census-package",
+            googledrive_client_factory=lambda: object(),
+            log=None,
+        )

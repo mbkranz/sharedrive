@@ -16,8 +16,23 @@ PACKAGE_PROFILE_MARKERS = (
 )
 
 
+def check_descriptor_exists(path: Path | str) -> bool:
+    """Return True when a descriptor file exists on disk."""
+    return Path(path).exists()
+
+
+def ensure_descriptor_exists(path: Path | str) -> Path:
+    """Return descriptor path when it exists, else raise FileNotFoundError."""
+    descriptor_path = Path(path)
+    if not check_descriptor_exists(descriptor_path):
+        raise FileNotFoundError(f"Descriptor '{descriptor_path}' does not exist.")
+    return descriptor_path
+
+
 def load_descriptor_document(path: Path | str) -> dict[str, Any]:
     """Load a JSON/YAML descriptor and return the full top-level document."""
+    # TODO: Option #2 - enforce ensure_descriptor_exists() in descriptor utility
+    # load entry points when we decide to make strict existence universal here.
     descriptor_path = Path(path)
     if not descriptor_path.exists():
         return {"resources": []}
@@ -205,6 +220,8 @@ def resolve_default_descriptor() -> Path:
 __all__ = [
     "DESCRIPTOR_DEFAULTS_FILE",
     "PACKAGE_PROFILE_MARKERS",
+    "check_descriptor_exists",
+    "ensure_descriptor_exists",
     "descriptor_scope_key",
     "load_descriptor_defaults_store",
     "get_saved_params_for_descriptor",
