@@ -12,6 +12,21 @@ Goal is to create a quick and efficient system like git and uv both for quick de
 
 - Read the code! The best way to understand the current state and patterns is to read through the existing code, especially the clients, auth strategies, and CLI.
 
+- Also equally important! Study the REST APIs for the clients and authorizations:
+    - Sharepoint: 
+        - /fetch https://learn.microsoft.com/en-us/graph/api/resources/onedrive?view=graph-rest-1.0
+    - Google drive: 
+        - /fetch https://developers.google.com/workspace/drive/api/reference/rest/v3
+        - /fetch https://developers.google.com/workspace/drive/api/reference/rest/v3/files
+        - /fetch https://developers.google.com/workspace/drive/api/reference/rest/v3/drives
+
+
+-  And equally important is to use metadata standards. Study these:
+    - standard data package (/fetch https://github.com/frictionlessdata/datapackage/tree/main/profiles)
+    - and see recipes for using (/fetch https://github.com/frictionlessdata/datapackage/tree/main/content/docs/recipes)
+    - And OpenMetadata for drive services and where else applicable:
+        - data assets and storage: /fetch https://github.com/open-metadata/OpenMetadataStandards/tree/main/docs/data-assets/storage
+        - and see docs overall here: /fetch https://github.com/open-metadata/OpenMetadataStandards/tree/main/docs
 ## Preferred commands
 
 
@@ -26,8 +41,9 @@ Goal is to create a quick and efficient system like git and uv both for quick de
 
 - Do not hard-code secrets or tenant-specific values.
 - Keep `.env-sample` synchronized with variables read in code.
-- Keep changes narrowly scoped; avoid broad refactors unless requested.
-
+- Keep changes narrowly scoped; avoid broad refactors unless requested BUT always notify when there is a better design or solution regardless of scope. 
+- Always check and analyze the current codebase and the associated API documentation (for example, see Sharepoint and Google URLs in "Fast Context") for services when thinking about answers in terms of better solution 
+- Don't be afraid to highlight any concerns with assumptions made in prompts.
 ## When updating adapters
 
 - Give warnings and ask for approval before breaking backward compatibility.
@@ -41,3 +57,4 @@ Goal is to create a quick and efficient system like git and uv both for quick de
 - Document any non-obvious behavior in docstrings and `README.md`.
 - Update docs if any changes with: `uv run update_docs_markdown.py`
 - the __all__ variable is used to explicitly declare public API for each module. When adding new functions or classes that are intended to be part of the public API, make sure to include them in the __all__ list at the end of the module. This helps with clarity and maintainability of the codebase.
+- Document design choices through doc strings. For example, the logic and source (like url and name of standard(s) or existing software like uv/git etc that provided either motivation of why property names were used)
