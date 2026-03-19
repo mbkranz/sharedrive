@@ -8,7 +8,7 @@ import yaml
 from sharedrive.actions.add import add_resource_to_descriptor, infer_drive_service
 
 
-def test_add_resource_to_descriptor_writes_drive_service(tmp_path: Path) -> None:
+def test_add_resource_to_descriptor_writes_source_service_type(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     descriptor.write_text("$schema: example\nresources: []\n", encoding="utf-8")
 
@@ -23,15 +23,16 @@ def test_add_resource_to_descriptor_writes_drive_service(tmp_path: Path) -> None
 
     document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
 
-    assert resource["driveService"] == "s3"
+    assert resource["syncTarget"] == "path"
     assert document["$schema"] == "example"
-    assert document["resources"][0]["driveService"] == "s3"
+    assert document["resources"][0]["sources"][0]["serviceType"] == "S3"
+    assert document["resources"][0]["sources"][0]["entityType"] == "File"
 
 
 def test_add_resource_to_descriptor_rejects_duplicate_names(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     descriptor.write_text(
-        "resources:\n  - name: source-export\n    path: existing.csv\n    driveService: s3\n    sources:\n      - path: s3://bucket/existing.csv\n",
+        "resources:\n  - name: source-export\n    path: existing.csv\n    syncTarget: path\n    sources:\n      - path: s3://bucket/existing.csv\n        serviceType: S3\n        entityType: File\n",
         encoding="utf-8",
     )
 
@@ -44,7 +45,7 @@ def test_add_resource_to_descriptor_rejects_duplicate_names(tmp_path: Path) -> N
         )
 
 
-def test_add_resource_to_descriptor_rejects_unsupported_drive_service(tmp_path: Path) -> None:
+def test_add_resource_to_descriptor_rejects_unsupported_service_type(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     descriptor.write_text("resources: []\n", encoding="utf-8")
 
@@ -54,43 +55,48 @@ def test_add_resource_to_descriptor_rejects_unsupported_drive_service(tmp_path: 
             name="local-file",
             path="background/local-file.txt",
             source="https://example.com/files/local-file.txt",
-            drive_service="onedrive",
+            service_type="OneDrive",
         )
 
 
-def test_add_resource_to_descriptor_creates_package_resource(tmp_path: Path) -> None:
+def test_add_resource_to_descriptor_creates_resources_sync_target(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     descriptor.write_text("resources: []\n", encoding="utf-8")
 
     resource = add_resource_to_descriptor(
         descriptor,
-        name="census-package",
+        name="census-docs",
         path="downloads/census",
         source="https://drive.google.com/drive/folders/folder123",
-        drive_service="googledrive",
-        package=True,
+        service_type="GoogleDrive",
+        entity_type="Directory",
+        sync_target="resources",
+        profile="data-package",
     )
 
     document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
 
     assert resource["profile"] == "data-package"
+    assert resource["syncTarget"] == "resources"
     assert resource["resources"] == []
     assert document["resources"][0]["profile"] == "data-package"
     assert document["resources"][0]["resources"] == []
+    assert document["resources"][0]["sources"][0]["serviceType"] == "GoogleDrive"
+    assert document["resources"][0]["sources"][0]["entityType"] == "Directory"
 
 
-def test_add_resource_to_descriptor_rejects_profile_without_package(tmp_path: Path) -> None:
+def test_add_resource_to_descriptor_requires_sync_target_for_directory_source(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     descriptor.write_text("resources: []\n", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="profile can only be provided"):
+    with pytest.raises(ValueError, match="syncTarget is required"):
         add_resource_to_descriptor(
             descriptor,
-            name="census-package",
+            name="census-docs",
             path="downloads/census",
             source="https://drive.google.com/drive/folders/folder123",
-            drive_service="googledrive",
-            profile="data-package",
+            service_type="GoogleDrive",
+            entity_type="Directory",
         )
 
 
@@ -126,12 +132,12 @@ def test_add_resource_to_descriptor_allows_create_if_missing(tmp_path: Path) -> 
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
-        ("s3://bucket/raw.csv", "s3"),
+        ("s3://bucket/raw.csv", "S3"),
         (
             "https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx",
-            "sharepoint",
+            "SharePoint",
         ),
-        ("https://docs.google.com/spreadsheets/d/test-sheet/edit", "googledrive"),
+        ("https://docs.google.com/spreadsheets/d/test-sheet/edit", "GoogleDrive"),
     ],
 )
 def test_infer_drive_service(source: str, expected: str) -> None:

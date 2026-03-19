@@ -11,9 +11,15 @@ from sharedrive.clients.aws import check_s3_credentials, download_s3_url
 from sharedrive.descriptor import (
     ensure_descriptor_exists,
     get_package_resources,
-    is_package_resource,
+    get_primary_source,
     load_descriptor,
     resolve_default_descriptor,
+    resource_sync_target,
+    resource_syncs_to_resources,
+    service_type_adapter_name,
+    source_entity_type,
+    source_path,
+    source_service_type,
 )
 
 LogFn = Callable[[str], None]
@@ -50,19 +56,8 @@ class AuthCheckResult:
 
 
 def resource_source_url(resource: dict[str, Any]) -> str | None:
-    """Resolve source URL using sources[].path first, then legacy source."""
-    sources = resource.get("sources")
-    if isinstance(sources, list):
-        for source_obj in sources:
-            if isinstance(source_obj, dict):
-                source_path = source_obj.get("path")
-                if isinstance(source_path, str) and source_path.strip():
-                    return source_path.strip()
-
-    legacy_source = resource.get("source")
-    if isinstance(legacy_source, str) and legacy_source.strip():
-        return legacy_source.strip()
-    return None
+    """Resolve the primary source locator for a resource."""
+    return source_path(resource)
 
 
 def resource_output_path(resource: dict[str, Any], output_dir: Path) -> Path:
@@ -129,10 +124,14 @@ def resource_output_paths(resource: dict[str, Any], output_dir: Path) -> list[Pa
 
 
 def resource_adapter_name(resource: dict[str, Any], source_url: str | None) -> str:
-    """Resolve adapter from driveService/x-adapter override or infer from URL."""
+    """Resolve runtime adapter name from source serviceType or fallback inference."""
+    service_type = source_service_type(resource)
+    if service_type is not None:
+        return service_type_adapter_name(service_type)
+
     adapter = resource.get("driveService")
     if isinstance(adapter, str) and adapter.strip():
-        return adapter.strip().lower()
+        return service_type_adapter_name(adapter.strip())
 
     legacy_adapter = resource.get("x-adapter")
     if isinstance(legacy_adapter, str) and legacy_adapter.strip():
@@ -184,6 +183,16 @@ def _default_googledrive_client_factory() -> Any:
     )
 
 
+def _resource_selector_path(
+    resource: dict[str, Any],
+    parent_selector_path: str | None = None,
+) -> str:
+    resource_name = str(resource.get("name", "")).strip() or "resource"
+    if parent_selector_path is None:
+        return resource_name
+    return f"{parent_selector_path}.{resource_name}"
+
+
 def _selected_adapter_names(
     resources: Iterable[dict[str, Any]],
     include: str | Iterable[str] = "all",
@@ -192,25 +201,39 @@ def _selected_adapter_names(
     selected: list[str] = []
     seen: set[str] = set()
 
-    def collect(resource: dict[str, Any], parent: dict[str, Any] | None = None) -> None:
+    def collect(
+        resource: dict[str, Any],
+        parent: dict[str, Any] | None = None,
+        parent_selector_path: str | None = None,
+    ) -> None:
         normalized = _inherit_resource_defaults(resource, parent=parent)
+        selector_path = _resource_selector_path(normalized, parent_selector_path)
         children = get_package_resources(normalized)
 
         if children:
+            parent_selected = _resource_matches_include(
+                normalized,
+                include_set,
+                selector_path=selector_path,
+            )
             for child in children:
                 if isinstance(child, dict):
-                    collect(child, parent=normalized)
+                    child_resource = _inherit_resource_defaults(child, parent=normalized)
+                    if parent_selected or _resource_or_descendant_matches_include(
+                        child_resource,
+                        include_set,
+                        parent_selector_path=selector_path,
+                    ):
+                        collect(child, parent=normalized, parent_selector_path=selector_path)
             return
 
-        resource_name = normalized.get("name", "resource")
-        resource_name_key = str(resource_name).strip().lower()
         source_url = resource_source_url(normalized)
         adapter_name = resource_adapter_name(normalized, source_url)
 
-        if (
-            "all" not in include_set
-            and adapter_name not in include_set
-            and resource_name_key not in include_set
+        if not _resource_matches_include(
+            normalized,
+            include_set,
+            selector_path=selector_path,
         ):
             return
 
@@ -249,7 +272,16 @@ def _inherit_resource_defaults(
         if not child_path.is_absolute():
             normalized["path"] = (Path(parent_path.strip()) / child_path).as_posix()
 
-    for field_name in ("driveService", "x-adapter"):
+    parent_source = get_primary_source(parent)
+    child_source = get_primary_source(normalized, create=parent_source is not None)
+    if parent_source is not None and child_source is not None:
+        for field_name in ("serviceType", "entityType"):
+            inherited_value = parent_source.get(field_name)
+            current_value = child_source.get(field_name)
+            if isinstance(inherited_value, str) and inherited_value.strip() and not current_value:
+                child_source[field_name] = inherited_value
+
+    for field_name in ("driveService", "x-adapter", "syncTarget"):
         inherited_value = parent.get(field_name)
         current_value = normalized.get(field_name)
         if isinstance(inherited_value, str) and inherited_value.strip() and not current_value:
@@ -261,34 +293,48 @@ def _inherit_resource_defaults(
 def _resource_matches_include(
     resource: dict[str, Any],
     include_set: set[str],
+    *,
+    selector_path: str | None = None,
 ) -> bool:
     if "all" in include_set:
         return True
 
     resource_name = str(resource.get("name", "")).strip().lower()
+    selector_key = (selector_path or resource_name).strip().lower()
     source_url = resource_source_url(resource)
     adapter_name = resource_adapter_name(resource, source_url)
-    return resource_name in include_set or adapter_name in include_set
+    return (
+        resource_name in include_set
+        or selector_key in include_set
+        or adapter_name in include_set
+    )
 
 
 def _resource_or_descendant_matches_include(
     resource: dict[str, Any],
     include_set: set[str],
+    *,
+    parent_selector_path: str | None = None,
 ) -> bool:
-    if _resource_matches_include(resource, include_set):
+    selector_path = _resource_selector_path(resource, parent_selector_path)
+    if _resource_matches_include(resource, include_set, selector_path=selector_path):
         return True
 
     for child in get_package_resources(resource):
         if not isinstance(child, dict):
             continue
         normalized_child = _inherit_resource_defaults(child, parent=resource)
-        if _resource_or_descendant_matches_include(normalized_child, include_set):
+        if _resource_or_descendant_matches_include(
+            normalized_child,
+            include_set,
+            parent_selector_path=selector_path,
+        ):
             return True
 
     return False
 
 
-def _download_googledrive_package(
+def _download_googledrive_directory(
     resource: dict[str, Any],
     *,
     output_roots: list[Path],
@@ -297,7 +343,7 @@ def _download_googledrive_package(
     dry_run: bool,
     emit: LogFn,
 ) -> tuple[int, int]:
-    package_name = str(resource.get("name", "package")).strip() or "package"
+    resource_name = str(resource.get("name", "resource")).strip() or "resource"
     discovered_files = client.list_folder_files_from_weburl(source_url, recursive=True)
 
     downloaded = 0
@@ -311,7 +357,7 @@ def _download_googledrive_package(
         if dry_run:
             for destination in destinations:
                 emit(
-                    f"Would fetch {package_name}/{relative_path} from {source_url} to {destination}"
+                    f"Would fetch {resource_name}/{relative_path} from {source_url} to {destination}"
                 )
             dry_run_actions += len(destinations)
             continue
@@ -462,24 +508,48 @@ def fetch_from_descriptor(
             summary.failures += len(failed_checks)
             return summary
 
-    def fetch_resource(resource: dict[str, Any], parent: dict[str, Any] | None = None) -> None:
+    def fetch_resource(
+        resource: dict[str, Any],
+        parent: dict[str, Any] | None = None,
+        parent_selector_path: str | None = None,
+        selected_by_ancestor: bool = False,
+    ) -> None:
         normalized = _inherit_resource_defaults(resource, parent=parent)
+        selector_path = _resource_selector_path(normalized, parent_selector_path)
         nested_resources = [
             child for child in get_package_resources(normalized) if isinstance(child, dict)
         ]
 
         if nested_resources:
+            parent_selected = _resource_matches_include(
+                normalized,
+                include_set,
+                selector_path=selector_path,
+            )
             for child in nested_resources:
                 child_resource = _inherit_resource_defaults(child, parent=normalized)
-                if _resource_or_descendant_matches_include(child_resource, include_set):
-                    fetch_resource(child, parent=normalized)
+                if parent_selected or _resource_or_descendant_matches_include(
+                    child_resource,
+                    include_set,
+                    parent_selector_path=selector_path,
+                ):
+                    fetch_resource(
+                        child,
+                        parent=normalized,
+                        parent_selector_path=selector_path,
+                        selected_by_ancestor=selected_by_ancestor or parent_selected,
+                    )
             return
 
         resource_name = normalized.get("name", "resource")
         source_url = resource_source_url(normalized)
         adapter_name = resource_adapter_name(normalized, source_url)
 
-        if not _resource_matches_include(normalized, include_set):
+        if not selected_by_ancestor and not _resource_matches_include(
+            normalized,
+            include_set,
+            selector_path=selector_path,
+        ):
             return
         if not source_url:
             emit(f"Warning, {resource_name} has no source URL")
@@ -489,14 +559,21 @@ def fetch_from_descriptor(
         try:
             output_paths = resource_output_paths(normalized, output_dir_path)
             output_path = output_paths[0]
+            sync_target = resource_sync_target(normalized)
+            entity_type = source_entity_type(normalized)
 
-            if is_package_resource(normalized) and adapter_name == "googledrive":
+            if (
+                adapter_name == "googledrive"
+                and entity_type in {"Directory", "Container"}
+                and not nested_resources
+            ):
                 if "googledrive" not in clients:
                     factory = googledrive_client_factory or _default_googledrive_client_factory
                     clients["googledrive"] = factory()
-                downloaded, dry_run_actions = _download_googledrive_package(
+                output_roots = output_paths if sync_target == "resources" else [output_path]
+                downloaded, dry_run_actions = _download_googledrive_directory(
                     normalized,
-                    output_roots=output_paths,
+                    output_roots=output_roots,
                     source_url=source_url,
                     client=clients["googledrive"],
                     dry_run=dry_run,

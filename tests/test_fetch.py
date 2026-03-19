@@ -12,19 +12,25 @@ def _write_descriptor(path: Path) -> None:
 resources:
   - name: sharepoint-spec
     path: downloads/spec.xlsx
-    x-adapter: sharepoint
+    syncTarget: path
     sources:
       - path: https://example.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx
+        serviceType: SharePoint
+        entityType: File
   - name: drive-export
     path: downloads/export.csv
-    x-adapter: googledrive
+    syncTarget: path
     sources:
       - path: https://docs.google.com/spreadsheets/d/test-sheet/edit
+        serviceType: GoogleDrive
+        entityType: File
   - name: raw-data
     path: downloads/raw.csv
-    x-adapter: s3
+    syncTarget: path
     sources:
       - path: s3://bucket/raw.csv
+        serviceType: S3
+        entityType: File
 """.strip(),
         encoding="utf-8",
     )
@@ -125,17 +131,18 @@ def test_fetch_from_descriptor_check_auth_allows_download_when_ready(tmp_path: P
     assert output_path.read_text(encoding="utf-8") == "ok"
 
 
-def test_fetch_from_descriptor_expands_google_drive_folder_package(tmp_path: Path) -> None:
+def test_fetch_from_descriptor_materializes_google_drive_directory_resources(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     descriptor.write_text(
         """
 resources:
-  - name: census-package
-    profile: data-package
+  - name: census-docs
     path: downloads/census
-    driveService: googledrive
+    syncTarget: resources
     sources:
       - path: https://drive.google.com/drive/folders/folder123
+        serviceType: GoogleDrive
+        entityType: Directory
 """.strip(),
         encoding="utf-8",
     )
@@ -183,20 +190,82 @@ resources:
     assert detail_path.read_text(encoding="utf-8") == "sheet-2"
 
 
+def test_fetch_from_descriptor_materializes_google_drive_directory_path_target(tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    descriptor.write_text(
+        """
+resources:
+  - name: term-proposal-docs
+    path: downloads/term-proposal-documents
+    syncTarget: path
+    sources:
+      - path: https://drive.google.com/drive/folders/folder123
+        serviceType: GoogleDrive
+        entityType: Directory
+""".strip(),
+        encoding="utf-8",
+    )
+
+    class DummyDriveClient:
+        def __init__(self) -> None:
+            self.download_calls: list[tuple[str, str]] = []
+
+        def list_folder_files_from_weburl(self, _url: str, *, recursive: bool = True):
+            assert recursive is True
+            return [
+                {"id": "file-1", "relative_path": "summary.csv"},
+                {"id": "file-2", "relative_path": "nested/detail.csv"},
+            ]
+
+        def download_file(self, file_id: str, output_path: str) -> None:
+            self.download_calls.append((file_id, output_path))
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_path).write_text(file_id, encoding="utf-8")
+
+    client = DummyDriveClient()
+
+    summary = fetch_from_descriptor(
+        descriptor,
+        include=["googledrive"],
+        output_dir=tmp_path / "resources",
+        dry_run=False,
+        log=lambda _message: None,
+        googledrive_client_factory=lambda: client,
+    )
+
+    assert summary.ok is True
+    assert summary.downloaded == 2
+    assert client.download_calls == [
+        (
+            "file-1",
+            str(tmp_path / "resources" / "downloads" / "term-proposal-documents" / "summary.csv"),
+        ),
+        (
+            "file-2",
+            str(tmp_path / "resources" / "downloads" / "term-proposal-documents" / "nested" / "detail.csv"),
+        ),
+    ]
+
+
 def test_fetch_from_descriptor_fetches_nested_package_resources(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     descriptor.write_text(
         """
 resources:
-  - name: analytics-package
-    profile: data-package
+  - name: analytics-docs
     path: downloads/analytics
-    driveService: googledrive
+    syncTarget: resources
+    sources:
+      - path: https://drive.google.com/drive/folders/folder123
+        serviceType: GoogleDrive
+        entityType: Directory
     resources:
       - name: selected-export
         path: export.csv
         sources:
           - path: https://docs.google.com/spreadsheets/d/test-sheet/edit
+            serviceType: GoogleDrive
+            entityType: File
 """.strip(),
         encoding="utf-8",
     )
@@ -233,9 +302,128 @@ resources:
     assert output_path.read_text(encoding="utf-8") == "nested-ok"
 
 
+def test_fetch_from_descriptor_matches_nested_dot_path_include(tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    descriptor.write_text(
+        """
+resources:
+  - name: analytics-docs
+    path: downloads/analytics
+    syncTarget: resources
+    sources:
+      - path: https://drive.google.com/drive/folders/folder123
+        serviceType: GoogleDrive
+        entityType: Directory
+    resources:
+      - name: selected-export
+        path: export.csv
+        sources:
+          - path: https://docs.google.com/spreadsheets/d/test-sheet/edit
+            serviceType: GoogleDrive
+            entityType: File
+      - name: other-export
+        path: other.csv
+        sources:
+          - path: https://docs.google.com/spreadsheets/d/other-sheet/edit
+            serviceType: GoogleDrive
+            entityType: File
+""".strip(),
+        encoding="utf-8",
+    )
+
+    class DummyDriveClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def download_from_weburl(self, url: str, output_path: str) -> None:
+            self.calls.append((url, output_path))
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_path).write_text("nested-ok", encoding="utf-8")
+
+    client = DummyDriveClient()
+
+    summary = fetch_from_descriptor(
+        descriptor,
+        include=["analytics-docs.selected-export"],
+        output_dir=tmp_path / "resources",
+        dry_run=False,
+        log=lambda _message: None,
+        googledrive_client_factory=lambda: client,
+    )
+
+    output_path = tmp_path / "resources" / "downloads" / "analytics" / "export.csv"
+    assert summary.ok is True
+    assert summary.downloaded == 1
+    assert client.calls == [
+        (
+            "https://docs.google.com/spreadsheets/d/test-sheet/edit",
+            str(output_path),
+        )
+    ]
+
+
+def test_fetch_from_descriptor_matches_top_level_package_name(tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    descriptor.write_text(
+        """
+resources:
+  - name: analytics-docs
+    path: downloads/analytics
+    syncTarget: resources
+    sources:
+      - path: https://drive.google.com/drive/folders/folder123
+        serviceType: GoogleDrive
+        entityType: Directory
+    resources:
+      - name: selected-export
+        path: export.csv
+        sources:
+          - path: https://docs.google.com/spreadsheets/d/test-sheet/edit
+            serviceType: GoogleDrive
+            entityType: File
+""".strip(),
+        encoding="utf-8",
+    )
+
+    class DummyDriveClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def download_from_weburl(self, url: str, output_path: str) -> None:
+            self.calls.append((url, output_path))
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_path).write_text("nested-ok", encoding="utf-8")
+
+    client = DummyDriveClient()
+
+    summary = fetch_from_descriptor(
+        descriptor,
+        include=["analytics-docs"],
+        output_dir=tmp_path / "resources",
+        dry_run=False,
+        log=lambda _message: None,
+        googledrive_client_factory=lambda: client,
+    )
+
+    output_path = tmp_path / "resources" / "downloads" / "analytics" / "export.csv"
+    assert summary.ok is True
+    assert summary.downloaded == 1
+    assert client.calls == [
+        (
+            "https://docs.google.com/spreadsheets/d/test-sheet/edit",
+            str(output_path),
+        )
+    ]
+
+
 def test_resource_adapter_name_prefers_drive_service_over_legacy_adapter() -> None:
     resource = {
-        "driveService": "sharepoint",
+        "sources": [
+            {
+                "serviceType": "SharePoint",
+                "path": "https://example.invalid/file.xlsx",
+            }
+        ],
         "x-adapter": "s3",
     }
 
