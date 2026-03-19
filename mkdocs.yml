@@ -7,6 +7,7 @@ theme:
 
 nav:
   - Home: index.md
+  - Google Auth Credentials: google-auth.md
   - CLI Reference: cli.md
   - Python API: api.md
 

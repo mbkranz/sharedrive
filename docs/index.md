@@ -2,6 +2,15 @@
 
 Shared-drive adapters and retrieval workflows for SharePoint, Google Drive, and S3.
 
+
+## TODO
+
+- finish google drive authentication doc page with info from ppsc-pmd-utils/docs 
+- create the Sharepoint auth documentation page
+- build out the "list" action
+
+
+
 ## Quick start
 
 ```bash
@@ -19,6 +28,8 @@ Google Drive auth supports two layers:
 
 - Compatibility mode for CLI and descriptor retrieval using `GOOGLE_APPLICATION_CREDENTIALS` or ADC.
 - Explicit Python auth strategies via `sharedrive.auth.google` for ADC, service account, user OAuth, and chained fallback.
+
+See also: [Google Auth Credentials](google-auth.md) for manual OAuth setup and non-interactive automation options.
 
 ## Retrieval
 

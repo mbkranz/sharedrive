@@ -73,6 +73,18 @@ def test_default_drive_strategy_selects_expected_strategy_types() -> None:
     )
 
 
+def test_adc_strategy_error_mentions_sharedrive_user_oauth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "sharedrive.auth.google.google.auth.default",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("adc missing")),
+    )
+
+    with pytest.raises(GoogleAuthError, match="sharedrive auth login gdrive"):
+        AdcStrategy().build()
+
+
 def test_json_token_store_round_trip(tmp_path: Path) -> None:
     token_path = tmp_path / "token.json"
     store = JsonTokenStore(token_path)

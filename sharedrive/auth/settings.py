@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
+from typing import Annotated
 
 from dotenv import find_dotenv
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from sharedrive.auth.base import CredentialStrategy
 from sharedrive.auth.google import (
@@ -61,7 +62,7 @@ class GoogleAuthConfig(BaseSettings):
         default=None,
         alias="GOOGLE_OAUTH_TOKEN_PATH",
     )
-    scopes: list[str] = Field(
+    scopes: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: list(DEFAULT_DRIVE_SCOPES),
         alias="GOOGLE_SCOPES",
     )
@@ -146,7 +147,7 @@ class MicrosoftAuthConfig(BaseSettings):
         default="norc.sharepoint.com",
         validation_alias=AliasChoices("SHAREPOINT_HOST_URL", "AZURE_HOST_URL"),
     )
-    scopes: list[str] = Field(
+    scopes: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: list(DEFAULT_MICROSOFT_GRAPH_SCOPES),
         validation_alias=AliasChoices("SHAREPOINT_SCOPES", "AZURE_SCOPES"),
     )

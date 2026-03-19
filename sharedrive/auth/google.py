@@ -47,7 +47,10 @@ class AdcStrategy(CredentialStrategy):
             return creds
         except Exception as exc:
             raise GoogleAuthError(
-                f"Failed to load Application Default Credentials: {exc}"
+                "Failed to load Application Default Credentials: "
+                f"{exc}. To use sharedrive user OAuth instead, set "
+                "GOOGLE_AUTH_MODE=user_oauth with GOOGLE_OAUTH_CREDENTIALS "
+                "and run 'sharedrive auth login gdrive'."
             ) from exc
 
 
