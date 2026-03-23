@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import yaml
@@ -15,6 +14,8 @@ def _write_descriptor(path: Path) -> None:
     path.write_text(
         yaml.safe_dump(
             {
+                "title": "Original title",
+                "description": "Original description",
                 "resources": [
                     {
                         "name": "spec-workbook",
@@ -23,18 +24,6 @@ def _write_descriptor(path: Path) -> None:
                         "sources": [
                             {
                                 "path": "https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx",
-                                "serviceType": "SharePoint",
-                                "entityType": "File",
-                            }
-                        ],
-                    },
-                    {
-                        "name": "spec-catalog",
-                        "path": "background/specs/spec-catalog.xlsx",
-                        "syncTarget": "path",
-                        "sources": [
-                            {
-                                "path": "https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec-catalog.xlsx",
                                 "serviceType": "SharePoint",
                                 "entityType": "File",
                             }
@@ -52,7 +41,7 @@ def _write_descriptor(path: Path) -> None:
                             }
                         ],
                     },
-                ]
+                ],
             },
             sort_keys=False,
         ),
@@ -60,55 +49,7 @@ def _write_descriptor(path: Path) -> None:
     )
 
 
-def _write_checked_out_resource(tmp_path: Path, descriptor: Path, resource_name: str) -> None:
-    store_path = tmp_path / ".sharedrive" / "sharedrive_set.json"
-    store_path.parent.mkdir(parents=True, exist_ok=True)
-    store_path.write_text(
-        json.dumps(
-            {
-                "global": {},
-                "descriptors": {
-                    str(descriptor): {
-                        "checkout": {
-                            "kind": "resource",
-                            "selector": resource_name,
-                            "include": [resource_name],
-                            "resolved": [resource_name],
-                        }
-                    }
-                },
-            },
-            indent=4,
-        ),
-        encoding="utf-8",
-    )
-
-
-def _write_checked_out_resources(tmp_path: Path, descriptor: Path, resource_names: list[str]) -> None:
-    store_path = tmp_path / ".sharedrive" / "sharedrive_set.json"
-    store_path.parent.mkdir(parents=True, exist_ok=True)
-    store_path.write_text(
-        json.dumps(
-            {
-                "global": {},
-                "descriptors": {
-                    str(descriptor): {
-                        "checkout": {
-                            "kind": "resource",
-                            "selector": "bulk",
-                            "include": resource_names,
-                            "resolved": resource_names,
-                        }
-                    }
-                },
-            },
-            indent=4,
-        ),
-        encoding="utf-8",
-    )
-
-
-def test_update_resource_updates_explicit_property(tmp_path: Path) -> None:
+def test_update_descriptor_root_properties(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(descriptor)
 
@@ -116,35 +57,105 @@ def test_update_resource_updates_explicit_property(tmp_path: Path) -> None:
         app,
         [
             "update",
-            "spec-workbook",
-            "path",
-            "background/specs/spec-workbook-renamed.xlsx",
             "--descriptor",
             str(descriptor),
+            "--title",
+            "Hello",
+            "--description",
+            "hello",
         ],
         prog_name="sharedrive",
     )
 
-    assert result.exit_code == 0
     document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
-    assert document["resources"][0]["path"] == "background/specs/spec-workbook-renamed.xlsx"
+    assert result.exit_code == 0
+    assert document["title"] == "Hello"
+    assert document["description"] == "hello"
 
 
-def test_update_resource_uses_checked_out_resource(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.chdir(tmp_path)
+def test_update_resource_properties_exact_match(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(descriptor)
-    _write_checked_out_resource(tmp_path, descriptor, "spec-workbook")
 
     result = RUNNER.invoke(
         app,
-        ["update", "title", "Updated title", "--descriptor", str(descriptor)],
+        [
+            "update",
+            "--descriptor",
+            str(descriptor),
+            "--resource",
+            "spec-workbook",
+            "--title",
+            "Updated title",
+            "--description",
+            "Updated description",
+        ],
         prog_name="sharedrive",
     )
 
-    assert result.exit_code == 0
     document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
+    assert result.exit_code == 0
     assert document["resources"][0]["title"] == "Updated title"
+    assert document["resources"][0]["description"] == "Updated description"
+    assert "title" not in document["resources"][1]
+
+
+def test_update_resource_uses_checked_out_descriptor(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    descriptor = tmp_path / "resources" / "descriptor.yaml"
+    descriptor.parent.mkdir(parents=True, exist_ok=True)
+    _write_descriptor(descriptor)
+
+    checkout_result = RUNNER.invoke(app, ["checkout", "resources/descriptor.yaml"], prog_name="sharedrive")
+    assert checkout_result.exit_code == 0
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "update",
+            "--resource",
+            "spec-workbook",
+            "--title",
+            "Checked out title",
+        ],
+        prog_name="sharedrive",
+    )
+
+    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
+    assert result.exit_code == 0
+    assert document["resources"][0]["title"] == "Checked out title"
+
+
+def test_update_descriptor_override_with_resource(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    checked_out = tmp_path / "resources" / "descriptor.yaml"
+    checked_out.parent.mkdir(parents=True, exist_ok=True)
+    _write_descriptor(checked_out)
+    override = tmp_path / "override.yaml"
+    _write_descriptor(override)
+
+    checkout_result = RUNNER.invoke(app, ["checkout", "resources/descriptor.yaml"], prog_name="sharedrive")
+    assert checkout_result.exit_code == 0
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "update",
+            "--descriptor",
+            str(override),
+            "--resource",
+            "spec-workbook",
+            "--title",
+            "Override title",
+        ],
+        prog_name="sharedrive",
+    )
+
+    checked_out_doc = yaml.safe_load(checked_out.read_text(encoding="utf-8"))
+    override_doc = yaml.safe_load(override.read_text(encoding="utf-8"))
+    assert result.exit_code == 0
+    assert "title" not in checked_out_doc["resources"][0]
+    assert override_doc["resources"][0]["title"] == "Override title"
 
 
 def test_update_resource_normalizes_service_type(tmp_path: Path) -> None:
@@ -155,21 +166,61 @@ def test_update_resource_normalizes_service_type(tmp_path: Path) -> None:
         app,
         [
             "update",
-            "spec-workbook",
-            "serviceType",
-            "sharepoint",
             "--descriptor",
             str(descriptor),
+            "--resource",
+            "spec-workbook",
+            "--service-type",
+            "sharepoint",
+        ],
+        prog_name="sharedrive",
+    )
+
+    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
+    assert result.exit_code == 0
+    assert document["resources"][0]["sources"][0]["serviceType"] == "SharePoint"
+
+
+def test_update_dry_run_does_not_write(tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_descriptor(descriptor)
+    before = descriptor.read_text(encoding="utf-8")
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "update",
+            "--descriptor",
+            str(descriptor),
+            "--resource",
+            "spec-workbook",
+            "--title",
+            "Dry run title",
+            "--dry-run",
         ],
         prog_name="sharedrive",
     )
 
     assert result.exit_code == 0
-    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
-    assert document["resources"][0]["sources"][0]["serviceType"] == "SharePoint"
+    assert "Would update" in result.stdout
+    assert descriptor.read_text(encoding="utf-8") == before
 
 
-def test_update_resource_glob_updates_multiple_resources(tmp_path: Path) -> None:
+def test_update_requires_fields(tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_descriptor(descriptor)
+
+    result = RUNNER.invoke(
+        app,
+        ["update", "--descriptor", str(descriptor)],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code != 0
+    assert "Provide one or more field values to update" in result.output
+
+
+def test_update_missing_resource_errors(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(descriptor)
 
@@ -177,38 +228,15 @@ def test_update_resource_glob_updates_multiple_resources(tmp_path: Path) -> None
         app,
         [
             "update",
-            "spec-*",
-            "title",
-            "Shared title",
             "--descriptor",
             str(descriptor),
+            "--resource",
+            "missing",
+            "--title",
+            "Hello",
         ],
         prog_name="sharedrive",
     )
 
-    assert result.exit_code == 0
-    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
-    titles = {resource["name"]: resource.get("title") for resource in document["resources"]}
-    assert titles["spec-workbook"] == "Shared title"
-    assert titles["spec-catalog"] == "Shared title"
-    assert titles.get("other-resource") is None
-
-
-def test_update_resource_uses_multiple_checked_out_resources(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.chdir(tmp_path)
-    descriptor = tmp_path / "descriptor.yaml"
-    _write_descriptor(descriptor)
-    _write_checked_out_resources(tmp_path, descriptor, ["spec-workbook", "spec-catalog"])
-
-    result = RUNNER.invoke(
-        app,
-        ["update", "title", "Checked out title", "--descriptor", str(descriptor)],
-        prog_name="sharedrive",
-    )
-
-    assert result.exit_code == 0
-    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
-    titles = {resource["name"]: resource.get("title") for resource in document["resources"]}
-    assert titles["spec-workbook"] == "Checked out title"
-    assert titles["spec-catalog"] == "Checked out title"
-    assert titles.get("other-resource") is None
+    assert result.exit_code != 0
+    assert "was not found" in result.output

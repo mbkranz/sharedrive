@@ -130,9 +130,9 @@ Compatibility note:
 
 `sharedrive` now separates Google credential acquisition from `GoogleDriveClient` itself.
 
-For existing CLI and fetch flows, the compatibility behavior is unchanged:
+For existing CLI download flows, the compatibility behavior is unchanged:
 
-- `sharedrive gdrive ...` and `sharedrive fetch ...` still use `GOOGLE_APPLICATION_CREDENTIALS` when set.
+- `sharedrive gdrive ...` and `sharedrive download ...` still use `GOOGLE_APPLICATION_CREDENTIALS` when set.
 - If `GOOGLE_APPLICATION_CREDENTIALS` is not set, the Google Drive client falls back to Application Default Credentials.
 
 For CLI operators, there are now explicit auth-oriented commands in addition to the transfer commands:
@@ -143,9 +143,10 @@ For CLI operators, there are now explicit auth-oriented commands in addition to 
 - `sharedrive auth login microsoft` validates Microsoft auth used by SharePoint workflows.
 - `sharedrive auth login sharepoint` validates SharePoint auth using app-only or delegated mode.
 - `sharedrive add ...` can omit `--descriptor` once a default descriptor has been saved.
-- `sharedrive add ... --package` creates a folder-backed package resource for descriptor sync and package-aware fetch.
-- `sharedrive sync <package-name>` refreshes nested resources for a Google Drive package resource inside a descriptor.
-- `sharedrive fetch ... --check-auth` runs the same descriptor-aware preflight before downloading.
+- `sharedrive checkout <descriptor>` saves the active descriptor for later commands.
+- `sharedrive add ... --package` creates a folder-backed package resource for descriptor metadata fetch and package-aware download.
+- `sharedrive fetch <package-name>` refreshes nested resources for a Google Drive package resource inside a descriptor.
+- `sharedrive download ... --check-auth` runs the same descriptor-aware preflight before downloading.
 
 For Python API usage, you can now choose an explicit auth strategy:
 
@@ -187,7 +188,7 @@ client = make_google_drive_client_from_settings(config)
 
 The settings layer is additive. Existing `GOOGLE_APPLICATION_CREDENTIALS` behavior in the CLI and retrieval flows still works.
 
-## Fetch
+## Fetch And Download
 
 CLI aliases:
 
@@ -196,7 +197,7 @@ CLI aliases:
 CLI:
 
 ```bash
-sharedrive set --global --descriptor resources/descriptor.yaml
+sharedrive checkout resources/descriptor.yaml
 sharedrive set --global --output-dir resources
 sharedrive auth check
 sharedrive auth check resources/descriptor.yaml
@@ -205,36 +206,37 @@ sharedrive auth login microsoft --auth-mode delegated
 sharedrive auth login sharepoint --auth-mode delegated
 sharedrive add spec-workbook --path background/specs/spec-workbook.xlsx --source https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx
 sharedrive add census-package --path downloads/census --source https://drive.google.com/drive/folders/<id> --drive-service googledrive --package
-sharedrive sync census-package --descriptor resources/descriptor.yaml --dry-run
-sharedrive fetch --dry-run
-sharedrive retrieve --dry-run
-sharedrive fetch resources/descriptor.yaml --dry-run
-sharedrive fetch resources/descriptor.yaml --check-auth
-sharedrive fetch resources/descriptor.yaml --include sharepoint
-sharedrive fetch resources/descriptor.yaml --include s3,googledrive
-sharedrive fetch resources/descriptor.yaml --include spec-workbook
+sharedrive fetch census-package --dry-run
+sharedrive download --dry-run
+sharedrive download resources/descriptor.yaml --dry-run
+sharedrive download resources/descriptor.yaml --check-auth
+sharedrive download resources/descriptor.yaml --include sharepoint
+sharedrive download resources/descriptor.yaml --include s3,googledrive
+sharedrive download resources/descriptor.yaml --include spec-workbook
+sharedrive update --title "Hello" --description "hello"
+sharedrive update --resource spec-workbook --title "Hello"
 ```
 
 If you are running from a repo checkout without activating an environment, prefix commands with `uv run`:
 
 ```bash
-uv run sharedrive set --global --descriptor resources/descriptor.yaml
-uv run sharedrive fetch --dry-run
-uv run sharedrive fetch resources/descriptor.yaml --dry-run
+uv run sharedrive checkout resources/descriptor.yaml
+uv run sharedrive download --dry-run
+uv run sharedrive download resources/descriptor.yaml --dry-run
 ```
 
 Saved defaults are persisted in `.sharedrive/sharedrive_set.json`.
-Use `sharedrive set --global --descriptor ...` to avoid repeating the descriptor path for `sharedrive auth check`, `sharedrive add`, and `sharedrive fetch`.
-The hidden `sharedrive retrieve` alias follows the same saved descriptor and output-dir defaults as `sharedrive fetch`.
-Use `sharedrive set <descriptor> --output-dir ...` to save descriptor-scoped defaults that apply when you explicitly fetch that descriptor.
+Use `sharedrive checkout ...` to avoid repeating the descriptor path for `sharedrive auth check`, `sharedrive add`, `sharedrive fetch`, `sharedrive download`, and `sharedrive update`.
+Use `sharedrive set --global --output-dir ...` to save a reusable output directory for `sharedrive download`.
+Use `sharedrive set <descriptor> --output-dir ...` to save descriptor-scoped defaults that apply when you explicitly download that descriptor.
 
 Python API:
 
 ```python
 from pathlib import Path
-from sharedrive.actions.fetch import fetch_from_descriptor
+from sharedrive.actions.download import download_from_descriptor
 
-summary = fetch_from_descriptor(
+summary = download_from_descriptor(
     descriptor=Path("resources/descriptor.yaml"),
     include="all",  # or: "sharepoint", "s3", "googledrive", ["s3", "sharepoint"]
     output_dir=Path("resources"),
@@ -242,7 +244,7 @@ summary = fetch_from_descriptor(
 )
 
 if not summary.ok:
-  raise RuntimeError(f"Fetch failed for {summary.failures} resources")
+  raise RuntimeError(f"Download failed for {summary.failures} resources")
 ```
 
 ## Descriptor format
@@ -272,7 +274,7 @@ resources:
     resources: []
 ```
 
-Folder-backed package resources can be authored explicitly with `sharedrive add --package` and then populated with nested resources using `sharedrive sync <package-name>`. The first sync implementation targets Google Drive package resources and writes deterministic nested file resources into the descriptor.
+Folder-backed package resources can be authored explicitly with `sharedrive add --package` and then populated with nested resources using `sharedrive fetch <package-name>`. The first metadata fetch implementation targets Google Drive package resources and writes deterministic nested file resources into the descriptor.
 
 Compatibility behavior preserved:
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 from enum import Enum
-from fnmatch import fnmatch
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -13,24 +12,19 @@ from dotenv import find_dotenv, load_dotenv
 
 from sharedrive.clients.aws import download_s3_url
 from sharedrive.actions.add import add_resource_to_descriptor
-from sharedrive.actions.fetch import check_auth_for_descriptor, fetch_from_descriptor
-from sharedrive.actions.sync import sync_resource_in_descriptor
+from sharedrive.actions.download import check_auth_for_descriptor, download_from_descriptor
+from sharedrive.actions.fetch import fetch_resource_metadata_in_descriptor
 from sharedrive.descriptor import (
     DESCRIPTOR_DEFAULTS_FILE,
     check_descriptor_exists,
-    descriptor_scope_key,
     get_descriptor_resources,
     get_package_resources,
-    get_primary_source,
-    get_saved_params_for_descriptor,
     load_descriptor_defaults_store,
     load_descriptor_document,
     normalize_service_type,
     resolve_descriptor_path,
     resolve_output_dir,
     save_descriptor_defaults_store,
-    service_type_adapter_name,
-    source_service_type,
 )
 
 try:
@@ -61,10 +55,6 @@ auth_login_app = typer.Typer(
     help="Interactive login commands.",
     rich_markup_mode="markdown",
 )
-checkout_app = typer.Typer(
-    help="Record active checkout selections for later commands.",
-    rich_markup_mode="markdown",
-)
 gdrive_app = typer.Typer(
     help="Google Drive commands.",
     rich_markup_mode="markdown",
@@ -80,7 +70,6 @@ s3_app = typer.Typer(
 app.add_typer(auth_app, name="auth")
 app.add_typer(clone_app, name="clone")
 auth_app.add_typer(auth_login_app, name="login")
-app.add_typer(checkout_app, name="checkout")
 app.add_typer(gdrive_app, name="gdrive")
 app.add_typer(sharepoint_app, name="sharepoint")
 app.add_typer(sharepoint_app, name="spo")
@@ -292,226 +281,19 @@ def _has_saved_global_descriptor() -> bool:
     return isinstance(descriptor_value, str) and bool(descriptor_value.strip())
 
 
-def _inherit_resource_selector_defaults(
-    resource: dict[str, Any],
-    *,
-    parent: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    normalized = dict(resource)
-    if parent is None:
-        return normalized
+def _set_active_descriptor(descriptor_path: Path) -> Path:
+    if not check_descriptor_exists(descriptor_path):
+        raise typer.BadParameter(f"Descriptor '{descriptor_path}' does not exist.")
 
-    parent_source = get_primary_source(parent)
-    child_source = get_primary_source(normalized, create=parent_source is not None)
-    if parent_source is not None and child_source is not None:
-        for field_name in ("serviceType", "entityType"):
-            inherited_value = parent_source.get(field_name)
-            current_value = child_source.get(field_name)
-            if isinstance(inherited_value, str) and inherited_value.strip() and not current_value:
-                child_source[field_name] = inherited_value
-
-    for field_name in ("driveService", "x-adapter", "syncTarget"):
-        inherited_value = parent.get(field_name)
-        current_value = normalized.get(field_name)
-        if isinstance(inherited_value, str) and inherited_value.strip() and not current_value:
-            normalized[field_name] = inherited_value
-
-    return normalized
-
-
-def _iter_descriptor_resource_paths(
-    resources: list[dict[str, Any]],
-    *,
-    parent_path: str | None = None,
-    parent_resource: dict[str, Any] | None = None,
-):
-    for resource in resources:
-        if not isinstance(resource, dict):
-            continue
-
-        normalized = _inherit_resource_selector_defaults(resource, parent=parent_resource)
-        name = str(normalized.get("name", "")).strip()
-        if not name:
-            continue
-
-        selector_path = name if parent_path is None else f"{parent_path}.{name}"
-        yield selector_path, normalized
-
-        children = [child for child in get_package_resources(normalized) if isinstance(child, dict)]
-        if not children:
-            continue
-
-        yield from _iter_descriptor_resource_paths(
-            children,
-            parent_path=selector_path,
-            parent_resource=normalized,
-        )
-
-
-def _save_checked_out_selection(
-    descriptor_path: Path,
-    *,
-    kind: str,
-    include_tokens: list[str],
-    resolved_paths: list[str],
-    selector: str,
-) -> None:
     store = load_descriptor_defaults_store()
-    descriptors = store.setdefault("descriptors", {})
-    scope_key = descriptor_scope_key(descriptor_path)
-    scope = descriptors.setdefault(scope_key, {})
-    if not isinstance(scope, dict):
-        scope = {}
-        descriptors[scope_key] = scope
+    global_scope = store.setdefault("global", {})
+    if not isinstance(global_scope, dict):
+        global_scope = {}
+        store["global"] = global_scope
 
-    scope["checkout"] = {
-        "kind": kind,
-        "selector": selector,
-        "include": list(include_tokens),
-        "resolved": list(resolved_paths),
-    }
+    global_scope["descriptor"] = descriptor_path.as_posix()
     save_descriptor_defaults_store(store)
-
-
-def _clear_checked_out_selection(descriptor_path: Path) -> bool:
-    store = load_descriptor_defaults_store()
-    descriptors = store.get("descriptors", {})
-    if not isinstance(descriptors, dict):
-        return False
-
-    scope = descriptors.get(descriptor_scope_key(descriptor_path))
-    if not isinstance(scope, dict) or "checkout" not in scope:
-        return False
-
-    scope.pop("checkout", None)
-    save_descriptor_defaults_store(store)
-    return True
-
-
-def _get_checked_out_selection(descriptor_path: Path) -> dict[str, Any] | None:
-    selection = get_saved_params_for_descriptor(descriptor_path).get("checkout")
-    if not isinstance(selection, dict):
-        return None
-
-    include_tokens = selection.get("include")
-    resolved_paths = selection.get("resolved")
-    if not isinstance(include_tokens, list) or not isinstance(resolved_paths, list):
-        return None
-
-    normalized_include = [token for token in include_tokens if isinstance(token, str) and token.strip()]
-    normalized_resolved = [token for token in resolved_paths if isinstance(token, str) and token.strip()]
-    if not normalized_include or not normalized_resolved:
-        return None
-
-    kind = selection.get("kind")
-    if not isinstance(kind, str) or not kind.strip():
-        return None
-
-    return {
-        "kind": kind.strip(),
-        "selector": str(selection.get("selector", "")).strip(),
-        "include": normalized_include,
-        "resolved": normalized_resolved,
-    }
-
-
-def _resolve_checkout_scope_descriptor(descriptor: Path | None) -> Path:
-    if descriptor is not None:
-        return Path(descriptor)
-
-    saved_descriptor = get_saved_params_for_descriptor().get("descriptor")
-    if isinstance(saved_descriptor, str) and saved_descriptor.strip():
-        return Path(saved_descriptor.strip())
-
-    return resolve_descriptor_path(descriptor)
-
-
-def _resolve_checked_out_include(
-    include: list[str] | None,
-    descriptor_path: Path,
-) -> str | list[str]:
-    if include is not None:
-        return _parse_include_values(include)
-
-    selection = _get_checked_out_selection(descriptor_path)
-    if selection is not None:
-        return list(selection["include"])
-
-    return "all"
-
-
-def _resolve_sync_resource_name(
-    resource_name: str | None,
-    descriptor_path: Path,
-) -> str:
-    if resource_name is not None:
-        return resource_name
-
-    selection = _get_checked_out_selection(descriptor_path)
-    if selection is None:
-        raise typer.BadParameter(
-            "Provide <resource-name> or run 'sharedrive checkout resource <selector>'."
-        )
-    if selection["kind"] != "resource":
-        raise typer.BadParameter(
-            "sharedrive sync requires a checked-out resource selection, not a driveservice selection."
-        )
-    if len(selection["resolved"]) != 1:
-        raise typer.BadParameter(
-            f"sharedrive sync requires exactly one checked-out resource; found {len(selection['resolved'])}."
-        )
-
-    resolved_name = selection["resolved"][0]
-    if "." in resolved_name:
-        raise typer.BadParameter(
-            "sharedrive sync requires a top-level checked-out resource; nested dot-path selections are not supported."
-        )
-    return resolved_name
-
-
-def _resolve_resource_checkout(
-    descriptor_path: Path,
-    selector: str,
-) -> tuple[list[str], list[str]]:
-    resources = get_descriptor_resources(load_descriptor_document(descriptor_path))
-    normalized_selector = selector.strip().lower()
-    if not normalized_selector:
-        raise typer.BadParameter("Selector must be a non-empty string.")
-
-    resolved_paths: list[str] = []
-    include_tokens: list[str] = []
-    for resource_path, _resource in _iter_descriptor_resource_paths(resources):
-        path_key = resource_path.lower()
-        leaf_key = resource_path.split(".")[-1].lower()
-        if fnmatch(path_key, normalized_selector) or fnmatch(leaf_key, normalized_selector):
-            resolved_paths.append(resource_path)
-            include_tokens.append(path_key)
-
-    if not resolved_paths:
-        raise typer.BadParameter(f'No resources matched "{selector}".')
-
-    return include_tokens, resolved_paths
-
-
-def _resolve_driveservice_checkout(
-    descriptor_path: Path,
-    service_value: str,
-) -> tuple[list[str], list[str], str]:
-    resources = get_descriptor_resources(load_descriptor_document(descriptor_path))
-    canonical_service_type = normalize_service_type(service_value)
-    adapter_name = service_type_adapter_name(canonical_service_type)
-
-    resolved_paths = [
-        resource_path
-        for resource_path, resource in _iter_descriptor_resource_paths(resources)
-        if source_service_type(resource) == canonical_service_type
-    ]
-    if not resolved_paths:
-        raise typer.BadParameter(
-            f"No resources matched drive service '{canonical_service_type}'."
-        )
-
-    return [adapter_name], resolved_paths, canonical_service_type
+    return descriptor_path
 
 
 def _iter_resource_references(
@@ -542,38 +324,11 @@ def _iter_resource_references(
     return references
 
 
-def _selector_uses_glob(selector: str) -> bool:
-    return any(token in selector for token in "*?[")
-
-
-def _resolve_update_resource_references(
-    resource_selector: str | None,
-    descriptor_path: Path,
+def _resolve_exact_resource_reference(
+    resource_selector: str,
     resources: list[dict[str, Any]],
-) -> list[tuple[str, dict[str, Any]]]:
+) -> tuple[str, dict[str, Any]]:
     references = _iter_resource_references(resources)
-
-    if resource_selector is None:
-        selection = _get_checked_out_selection(descriptor_path)
-        if selection is None:
-            raise typer.BadParameter(
-                "Provide <resource-selector> or run 'sharedrive checkout resource <selector>'."
-            )
-        if selection["kind"] != "resource":
-            raise typer.BadParameter(
-                "sharedrive update requires a checked-out resource selection, not a driveservice selection."
-            )
-
-        resolved_set = {value.lower() for value in selection["resolved"]}
-        matches = [
-            (path, resource)
-            for path, resource in references
-            if path.lower() in resolved_set
-        ]
-        if not matches:
-            raise typer.BadParameter("Checked-out resource selection did not match any descriptor resources.")
-        return matches
-
     normalized_selector = resource_selector.strip().lower()
     if not normalized_selector:
         raise typer.BadParameter("Resource selector must be a non-empty string.")
@@ -587,30 +342,29 @@ def _resolve_update_resource_references(
     if matches:
         unique_matches = {(path, id(resource)): (path, resource) for path, resource in matches}
         resolved_matches = list(unique_matches.values())
-        if len(resolved_matches) > 1 and not "." in resource_selector:
+        if len(resolved_matches) > 1 and "." not in resource_selector:
             raise typer.BadParameter(
                 f'Resource selector "{resource_selector}" is ambiguous. Use the full dot-path selector.'
             )
-        return resolved_matches
-
-    if _selector_uses_glob(resource_selector):
-        glob_matches = [
-            (path, resource)
-            for path, resource in references
-            if fnmatch(path.lower(), normalized_selector)
-            or fnmatch(path.split(".")[-1].lower(), normalized_selector)
-        ]
-        if glob_matches:
-            unique_matches = {(path, id(resource)): (path, resource) for path, resource in glob_matches}
-            return list(unique_matches.values())
+        return resolved_matches[0]
 
     raise typer.BadParameter(f'Resource selector "{resource_selector}" was not found.')
 
 
-def _normalize_resource_update_property(property_name: str) -> str:
+def _normalize_update_property(property_name: str, *, resource_target: bool) -> str:
     normalized = property_name.strip()
     if not normalized:
         raise typer.BadParameter("Property name must be a non-empty string.")
+
+    normalized = {
+        "service-type": "serviceType",
+        "entity-type": "entityType",
+        "sync-target": "syncTarget",
+        "drive-service": "driveService",
+    }.get(normalized, normalized)
+
+    if not resource_target:
+        return normalized
 
     aliases = {
         "source": "sources.0.path",
@@ -621,7 +375,7 @@ def _normalize_resource_update_property(property_name: str) -> str:
     return aliases.get(normalized, normalized)
 
 
-def _normalize_resource_update_value(property_path: str, value: Any) -> Any:
+def _normalize_update_value(property_path: str, value: Any) -> Any:
     if property_path == "syncTarget" and isinstance(value, str):
         from sharedrive.descriptor import normalize_sync_target
 
@@ -734,179 +488,84 @@ def clone_descriptor(
 
 @app.command(
     "update",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
     epilog=_examples_epilog(
-        "sharedrive update spec-workbook path background/specs/spec-workbook-renamed.xlsx --descriptor resources/descriptor.yaml",
-        'sharedrive update "spec-*" title "Shared title" --descriptor resources/descriptor.yaml',
-        "sharedrive update spec-workbook serviceType SharePoint --descriptor resources/descriptor.yaml",
-        "sharedrive update title 'Updated title' --descriptor resources/descriptor.yaml",
+        'sharedrive update --title "Hello" --description "hello"',
+        'sharedrive update --resource file1 --title "Hello" --description "hello"',
+        'sharedrive update --descriptor resources/descriptor.yaml --resource file1 --title "Hello"',
     ),
 )
 def update_command(
-    args: list[str] = typer.Argument(
-        ...,
-        help="Either <resource-selector> <property> <value> or, with checked-out resource selections, just <property> <value>.",
-    ),
+    ctx: typer.Context,
     descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
+    resource: Optional[str] = typer.Option(None, "--resource", help="Exact resource name or dot-path to update."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be updated without writing files."),
 ) -> None:
-    """Update one property on one or more descriptor resources."""
-    if len(args) == 3:
-        resource_selector, property_name, raw_value = args
-    elif len(args) == 2:
-        resource_selector = None
-        property_name, raw_value = args
-    else:
-        raise typer.BadParameter(
-            "Use 'sharedrive update <resource-selector> <property> <value>' or, with one checked-out resource, 'sharedrive update <property> <value>'."
-        )
+    """Update descriptor-root or resource properties using flag-style field edits."""
+    parsed = _parse_set_args(list(ctx.args))
+    if not parsed:
+        raise typer.BadParameter("Provide one or more field values to update.")
 
     descriptor_path = resolve_descriptor_path(descriptor)
     _exit_if_descriptor_missing(descriptor_path)
 
     document = load_descriptor_document(descriptor_path)
-    resources = get_descriptor_resources(document)
-    resolved_references = _resolve_update_resource_references(
-        resource_selector,
-        descriptor_path,
-        resources,
-    )
+    target_label = str(descriptor_path)
+    target: dict[str, Any] = document
+    if resource is not None:
+        resolved_path, target = _resolve_exact_resource_reference(
+            resource,
+            get_descriptor_resources(document),
+        )
+        target_label = f"{resolved_path} in {descriptor_path}"
 
-    property_path = _normalize_resource_update_property(property_name)
-    value = _normalize_resource_update_value(property_path, _coerce_set_value(raw_value))
-    changed_paths: list[str] = []
-    for resolved_path, resource in resolved_references:
-        if _set_nested_property(resource, property_path, value):
-            changed_paths.append(resolved_path)
+    changed_properties: list[str] = []
+    for property_name, raw_value in parsed.items():
+        property_path = _normalize_update_property(property_name, resource_target=resource is not None)
+        value = _normalize_update_value(property_path, raw_value)
+        if _set_nested_property(target, property_path, value):
+            changed_properties.append(
+                f"{property_path} -> {json.dumps(value, default=str)}"
+            )
 
-    if not changed_paths:
+    if not changed_properties:
         typer.echo("No changes needed.")
         return
 
     if dry_run:
-        for resolved_path in changed_paths:
-            typer.echo(
-                f"Would update {resolved_path} in {descriptor_path}: {property_path} -> {json.dumps(value, default=str)}"
-            )
+        for change in changed_properties:
+            typer.echo(f"Would update {target_label}: {change}")
         return
 
     from sharedrive.descriptor import save_descriptor_document
 
     save_descriptor_document(descriptor_path, document)
-    for resolved_path in changed_paths:
-        typer.echo(
-            f"Updated {resolved_path} in {descriptor_path}: {property_path} -> {json.dumps(value, default=str)}"
-        )
+    for change in changed_properties:
+        typer.echo(f"Updated {target_label}: {change}")
 
 
-@checkout_app.command(
-    "resource",
+@app.command(
+    "checkout",
     epilog=_examples_epilog(
-        "sharedrive checkout resource spec-workbook --descriptor resources/descriptor.yaml",
-        "sharedrive checkout resource census-package.selected-export --descriptor resources/descriptor.yaml",
-        'sharedrive checkout resource "spec-*" --descriptor resources/descriptor.yaml',
+        "sharedrive checkout resources/descriptor.yaml",
     ),
 )
-def checkout_resource(
-    selector: str = typer.Argument(..., help="Resource name, glob, or dot-path selector."),
-    descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
+def checkout_command(
+    descriptor: Path = typer.Argument(..., help="Descriptor path to activate for later commands."),
 ) -> None:
-    """Replace the active checked-out resource selection for a descriptor."""
-    descriptor_path = resolve_descriptor_path(descriptor)
-    _exit_if_descriptor_missing(descriptor_path)
-    include_tokens, resolved_paths = _resolve_resource_checkout(descriptor_path, selector)
-    _save_checked_out_selection(
-        descriptor_path,
-        kind="resource",
-        include_tokens=include_tokens,
-        resolved_paths=resolved_paths,
-        selector=selector,
-    )
-    typer.echo(f"Checked out {len(resolved_paths)} resource(s) for {descriptor_path}:")
-    for resource_path in resolved_paths:
-        typer.echo(f"- {resource_path}")
+    """Activate a descriptor for later commands."""
+    descriptor_path = _set_active_descriptor(descriptor)
+    typer.echo(f"Checked out descriptor: {descriptor_path}")
 
 
-@checkout_app.command(
-    "driveservice",
-    epilog=_examples_epilog(
-        "sharedrive checkout driveservice googledrive --descriptor resources/descriptor.yaml",
-        "sharedrive checkout driveservice SharePoint --descriptor resources/descriptor.yaml",
-    ),
-)
-def checkout_driveservice(
-    service_value: str = typer.Argument(..., help="Drive service to select, such as googledrive, sharepoint, or s3."),
-    descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
-) -> None:
-    """Replace the active checked-out drive-service selection for a descriptor."""
-    descriptor_path = resolve_descriptor_path(descriptor)
-    _exit_if_descriptor_missing(descriptor_path)
-    include_tokens, resolved_paths, canonical_service_type = _resolve_driveservice_checkout(
-        descriptor_path,
-        service_value,
-    )
-    _save_checked_out_selection(
-        descriptor_path,
-        kind="driveservice",
-        include_tokens=include_tokens,
-        resolved_paths=resolved_paths,
-        selector=canonical_service_type,
-    )
-    typer.echo(
-        f"Checked out {len(resolved_paths)} resource(s) for drive service '{canonical_service_type}' in {descriptor_path}:"
-    )
-    for resource_path in resolved_paths:
-        typer.echo(f"- {resource_path}")
-
-
-@checkout_app.command(
-    "show",
-    epilog=_examples_epilog(
-        "sharedrive checkout show --descriptor resources/descriptor.yaml",
-    ),
-)
-def checkout_show(
-    descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
-) -> None:
-    """Show the active checked-out selection for a descriptor scope."""
-    descriptor_path = _resolve_checkout_scope_descriptor(descriptor)
-    selection = _get_checked_out_selection(descriptor_path)
-    if selection is None:
-        typer.echo(f"No active checked out selection for {descriptor_path}.")
-        return
-
-    typer.echo(f"Active checkout kind: {selection['kind']}")
-    typer.echo(f"Active checkout selector: {selection['selector'] or '<unknown>'}")
-    typer.echo(f"Active checked out selection for {descriptor_path}:")
-    for resource_path in selection["resolved"]:
-        typer.echo(f"- {resource_path}")
-
-
-@checkout_app.command(
-    "clear",
-    epilog=_examples_epilog(
-        "sharedrive checkout clear --descriptor resources/descriptor.yaml",
-    ),
-)
-def checkout_clear(
-    descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
-) -> None:
-    """Clear the active checked-out selection for a descriptor scope."""
-    descriptor_path = _resolve_checkout_scope_descriptor(descriptor)
-    cleared = _clear_checked_out_selection(descriptor_path)
-    if cleared:
-        typer.echo(f"Cleared checked out selection for {descriptor_path}.")
-    else:
-        typer.echo(f"No active checked out selection for {descriptor_path}.")
-
-
-def _run_fetch_command(
+def _run_download_command(
     descriptor: Path,
     include: str | list[str],
     output_dir: Path,
     dry_run: bool,
     check_auth: bool,
 ) -> None:
-    summary = fetch_from_descriptor(
+    summary = download_from_descriptor(
         descriptor=descriptor,
         include=include,
         output_dir=output_dir,
@@ -1046,32 +705,24 @@ def add(
 
 
 @app.command(
-    "sync",
+    "fetch",
     epilog=_examples_epilog(
-        "sharedrive sync census-package --descriptor resources/descriptor.yaml --dry-run",
-        "sharedrive sync census-package --descriptor resources/descriptor.yaml",
+        "sharedrive fetch census-package --descriptor resources/descriptor.yaml --dry-run",
+        "sharedrive fetch census-package --descriptor resources/descriptor.yaml",
     ),
 )
-def sync(
-    resource_name: Optional[str] = typer.Argument(
-        None,
-        help="Top-level resource name to sync. Defaults to the checked-out resource when exactly one top-level resource is selected.",
-    ),
+def fetch(
+    resource_name: str = typer.Argument(..., help="Top-level resource name whose metadata should be refreshed."),
     descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
     dry_run: bool = typer.Option(False, help="Preview descriptor changes without writing them."),
     env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
 ) -> None:
-    """Sync one resource into nested descriptor resources."""
-    # TODO: If a bulk sync mode is added later, expose it as an explicit flag
-    # such as `--all` rather than making bare `sharedrive sync` mutate every
-    # sync-eligible package resource in the descriptor.
+    """Fetch remote metadata for one resource into the descriptor."""
     _load_env_file(env_file)
     descriptor_path = resolve_descriptor_path(descriptor)
     _exit_if_descriptor_missing(descriptor_path)
-    resource_name = _resolve_sync_resource_name(resource_name, descriptor_path)
-
     try:
-        summary = sync_resource_in_descriptor(
+        summary = fetch_resource_metadata_in_descriptor(
             descriptor=descriptor_path,
             resource_name=resource_name,
             dry_run=dry_run,
@@ -1082,21 +733,21 @@ def sync(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
-    action = "Would sync" if summary.dry_run else "Synced"
+    action = "Would fetch" if summary.dry_run else "Fetched"
     typer.echo(
-        f"{action} {summary.generated_resources} resource(s) for resource '{summary.resource_name}' in {descriptor_path}."
+        f"{action} metadata for {summary.generated_resources} resource(s) into resource '{summary.resource_name}' in {descriptor_path}."
     )
 
 
 @app.command(
-    "fetch",
+    "download",
     epilog=_examples_epilog(
-        "sharedrive fetch resources/descriptor.yaml --dry-run",
-        "sharedrive fetch resources/descriptor.yaml --include s3 --include sharepoint",
-        "sharedrive fetch resources/descriptor.yaml --include spec-workbook --output-dir resources",
+        "sharedrive download resources/descriptor.yaml --dry-run",
+        "sharedrive download resources/descriptor.yaml --include s3 --include sharepoint",
+        "sharedrive download resources/descriptor.yaml --include spec-workbook --output-dir resources",
     ),
 )
-def fetch(
+def download(
     descriptor: Optional[Path] = typer.Argument(
         None,
         exists=False,
@@ -1116,61 +767,18 @@ def fetch(
     check_auth: bool = typer.Option(False, "--check-auth", help="Validate service credentials before downloading."),
     env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
 ) -> None:
-    """Fetch descriptor resources by adapter type or resource name filters.
-
-    For Google Drive resources using user OAuth, see ``sharedrive auth login
-    gdrive`` for the recommended .env configuration and login flow.
-    """
+    """Download descriptor resources by adapter type or resource name filters."""
     _load_env_file(env_file)
     descriptor_path = resolve_descriptor_path(descriptor)
     _exit_if_descriptor_missing(descriptor_path)
-    include_values = _resolve_checked_out_include(include, descriptor_path)
+    include_values = _parse_include_values(include)
     output_dir_path = resolve_output_dir(output_dir, descriptor=descriptor_path)
-    _run_fetch_command(
+    _run_download_command(
         descriptor=descriptor_path,
         include=include_values,
         output_dir=output_dir_path,
         dry_run=dry_run,
         check_auth=check_auth,
-    )
-
-
-@app.command(
-    "retrieve",
-    hidden=True,
-    epilog=_examples_epilog(
-        "sharedrive retrieve resources/descriptor.yaml --dry-run",
-        "sharedrive retrieve resources/descriptor.yaml --include s3 --include sharepoint",
-    ),
-)
-def retrieve(
-    descriptor: Optional[Path] = typer.Argument(
-        None,
-        exists=False,
-        help=DESCRIPTOR_DEFAULT_HELP,
-    ),
-    include: Optional[list[str]] = typer.Option(
-        None,
-        "--include",
-        "-i",
-        help=(
-            "Include adapter types and/or resource names. "
-            "Repeat the option or pass a comma-separated list."
-        ),
-    ),
-    output_dir: Optional[Path] = typer.Option(None, help="Base output directory for relative resource paths."),
-    dry_run: bool = typer.Option(False, help="Print actions without downloading."),
-    check_auth: bool = typer.Option(False, "--check-auth", help="Validate service credentials before downloading."),
-    env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
-) -> None:
-    """Backward-compatible alias for fetch."""
-    fetch(
-        descriptor=descriptor,
-        include=include,
-        output_dir=output_dir,
-        dry_run=dry_run,
-        check_auth=check_auth,
-        env_file=env_file,
     )
 
 
@@ -1204,7 +812,7 @@ def auth_check(
     _load_env_file(env_file)
     descriptor_path = resolve_descriptor_path(descriptor)
     _exit_if_descriptor_missing(descriptor_path)
-    include_values = _resolve_checked_out_include(include, descriptor_path)
+    include_values = _parse_include_values(include)
     results = check_auth_for_descriptor(
         descriptor=descriptor_path,
         include=include_values,
@@ -1233,7 +841,7 @@ def auth_login_gdrive(
     """Run the Google installed-app OAuth flow and optionally persist a token.
 
     Sample .env for using Google user OAuth with descriptor-based commands such
-    as ``sharedrive fetch``:
+    as ``sharedrive fetch`` and ``sharedrive download``:
 
     ```env
     GOOGLE_AUTH_MODE=user_oauth

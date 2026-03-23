@@ -16,11 +16,14 @@ Options:
   --help                Show this message and exit.
 
 Commands:
+  update      Update descriptor-root or resource properties using...
+  checkout    Activate a descriptor for later commands.
   set         Set reusable key/value parameters for sharedrive descriptor...
   add         Add a resource entry to a descriptor.
-  sync        Sync one package resource into nested descriptor resources.
-  fetch       Fetch descriptor resources by adapter type or resource name...
+  fetch       Fetch remote metadata for one resource into the descriptor.
+  download    Download descriptor resources by adapter type or resource...
   auth        Authentication helpers.
+  clone       Clone descriptor state for new local variants.
   gdrive      Google Drive commands.
   sharepoint  SharePoint commands (`spo` is alias for `sharepoint`).
   spo         SharePoint commands (`spo` is alias for `sharepoint`).
@@ -104,6 +107,17 @@ Commands:
 Usage: sharedrive auth login gdrive [OPTIONS]
 
   Run the Google installed-app OAuth flow and optionally persist a token.
+
+  Sample .env for using Google user OAuth with descriptor-based commands such as
+  ``sharedrive fetch`` and ``sharedrive download``:
+
+  ```env GOOGLE_AUTH_MODE=user_oauth #
+  GOOGLE_APPLICATION_CREDENTIALS=.google/service-account.json #
+  GOOGLE_SERVICE_ACCOUNT_CREDENTIALS=.google/service-account.json
+  GOOGLE_OAUTH_CREDENTIALS=.google/oauth-credentials.json
+  GOOGLE_SCOPES=https://www.googleapis.com/auth/drive
+  GOOGLE_OAUTH_USE_LOCAL_SERVER=true GOOGLE_OAUTH_TOKEN_PATH=.google/oauth-
+  token.json ```
 
 Options:
   --oauth-client-secrets PATH  Path to Google OAuth client secrets JSON.
@@ -205,6 +219,28 @@ Options:
   ```
 ```
 
+## `sharedrive checkout --help`
+
+```text
+Usage: sharedrive checkout [OPTIONS] DESCRIPTOR
+
+  Activate a descriptor for later commands.
+
+Arguments:
+  DESCRIPTOR  Descriptor path to activate for later commands.  [required]
+
+Options:
+  --help  Show this message and exit.
+
+  **Examples**
+
+  ```bash
+
+  sharedrive checkout resources/descriptor.yaml
+
+  ```
+```
+
 ## `sharedrive set --help`
 
 ```text
@@ -253,17 +289,17 @@ Arguments:
   NAME  Resource name to store in the descriptor.  [required]
 
 Options:
-  --path TEXT           Resource path stored in the descriptor.  [required]
-  --source TEXT         Source URL/URI/path for the resource.  [required]
-  --title TEXT          Optional resource title.
-  --description TEXT    Optional resource description.
-  --drive-service TEXT  Drive service override. If omitted, infer from source.
-  --package             Create a package resource with nested resources.
-  --profile TEXT        Package profile override. Defaults to data-package when
-                        --package is used.
-  --descriptor PATH     Descriptor file path. Defaults to the saved descriptor
-                        or the first standard descriptor path.
-  --help                Show this message and exit.
+  --path TEXT          Resource path stored in the descriptor.  [required]
+  --source TEXT        Source URL/URI/path for the resource.  [required]
+  --title TEXT         Optional resource title.
+  --description TEXT   Optional resource description.
+  --service-type TEXT  Source serviceType. If omitted, infer from source.
+  --entity-type TEXT   Source entityType such as File, Directory, or Container.
+  --sync-target TEXT   Descriptor syncTarget: 'path' or 'resources'.
+  --profile TEXT       Optional metadata profile for the resource.
+  --descriptor PATH    Descriptor file path. Defaults to the saved descriptor or
+                       the first standard descriptor path.
+  --help               Show this message and exit.
 
   **Examples**
 
@@ -277,15 +313,15 @@ Options:
   ```bash
 
   sharedrive add source-export --path background/exports/source-export.csv
-  --source s3://my-bucket/source-export.csv --drive-service s3
+  --source s3://my-bucket/source-export.csv --service-type S3
 
   ```
 
   ```bash
 
-  sharedrive add census-package --path downloads/census --source
-  https://drive.google.com/drive/folders/<id> --drive-service googledrive
-  --package
+  sharedrive add census-docs --path downloads/census --source
+  https://drive.google.com/drive/folders/<id> --service-type GoogleDrive
+  --entity-type Directory --sync-target resources
 
   ```
 ```
@@ -293,9 +329,45 @@ Options:
 ## `sharedrive fetch --help`
 
 ```text
-Usage: sharedrive fetch [OPTIONS] [DESCRIPTOR]
+Usage: sharedrive fetch [OPTIONS] RESOURCE_NAME
 
-  Fetch descriptor resources by adapter type or resource name filters.
+  Fetch remote metadata for one resource into the descriptor.
+
+Arguments:
+  RESOURCE_NAME  Top-level resource name whose metadata should be refreshed.
+                 [required]
+
+Options:
+  --descriptor PATH         Descriptor file path. Defaults to the saved
+                            descriptor or the first standard descriptor path.
+  --dry-run / --no-dry-run  Preview descriptor changes without writing them.
+                            [default: no-dry-run]
+  --env-file PATH           Path to .env file for credentials. Defaults to .env
+                            in the current directory.
+  --help                    Show this message and exit.
+
+  **Examples**
+
+  ```bash
+
+  sharedrive fetch census-package --descriptor resources/descriptor.yaml --dry-
+  run
+
+  ```
+
+  ```bash
+
+  sharedrive fetch census-package --descriptor resources/descriptor.yaml
+
+  ```
+```
+
+## `sharedrive download --help`
+
+```text
+Usage: sharedrive download [OPTIONS] [DESCRIPTOR]
+
+  Download descriptor resources by adapter type or resource name filters.
 
 Arguments:
   [DESCRIPTOR]  Descriptor file path. Defaults to the saved descriptor or the
@@ -316,55 +388,57 @@ Options:
 
   ```bash
 
-  sharedrive fetch resources/descriptor.yaml --dry-run
+  sharedrive download resources/descriptor.yaml --dry-run
 
   ```
 
   ```bash
 
-  sharedrive fetch resources/descriptor.yaml --include s3 --include sharepoint
+  sharedrive download resources/descriptor.yaml --include s3 --include
+  sharepoint
 
   ```
 
   ```bash
 
-  sharedrive fetch resources/descriptor.yaml --include spec-workbook --output-
-  dir resources
+  sharedrive download resources/descriptor.yaml --include spec-workbook
+  --output-dir resources
 
   ```
 ```
 
-## `sharedrive sync --help`
+## `sharedrive update --help`
 
 ```text
-Usage: sharedrive sync [OPTIONS] PACKAGE_NAME
+Usage: sharedrive update [OPTIONS]
 
-  Sync one package resource into nested descriptor resources.
-
-Arguments:
-  PACKAGE_NAME  Top-level package resource name to sync.  [required]
+  Update descriptor-root or resource properties using flag-style field edits.
 
 Options:
-  --descriptor PATH         Descriptor file path. Defaults to the saved
-                            descriptor or the first standard descriptor path.
-  --dry-run / --no-dry-run  Preview descriptor changes without writing them.
-                            [default: no-dry-run]
-  --env-file PATH           Path to .env file for credentials. Defaults to .env
-                            in the current directory.
-  --help                    Show this message and exit.
+  --descriptor PATH  Descriptor file path. Defaults to the saved descriptor or
+                     the first standard descriptor path.
+  --resource TEXT    Exact resource name or dot-path to update.
+  --dry-run          Show what would be updated without writing files.
+  --help             Show this message and exit.
 
   **Examples**
 
   ```bash
 
-  sharedrive sync census-package --descriptor resources/descriptor.yaml --dry-
-  run
+  sharedrive update --title "Hello" --description "hello"
 
   ```
 
   ```bash
 
-  sharedrive sync census-package --descriptor resources/descriptor.yaml
+  sharedrive update --resource file1 --title "Hello" --description "hello"
+
+  ```
+
+  ```bash
+
+  sharedrive update --descriptor resources/descriptor.yaml --resource file1
+  --title "Hello"
 
   ```
 ```
