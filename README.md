@@ -132,7 +132,7 @@ Compatibility note:
 
 For existing CLI download flows, the compatibility behavior is unchanged:
 
-- `sharedrive gdrive ...` and `sharedrive download ...` still use `GOOGLE_APPLICATION_CREDENTIALS` when set.
+- `sharedrive download ...` still uses `GOOGLE_APPLICATION_CREDENTIALS` when set.
 - If `GOOGLE_APPLICATION_CREDENTIALS` is not set, the Google Drive client falls back to Application Default Credentials.
 
 For CLI operators, there are now explicit auth-oriented commands in addition to the transfer commands:
@@ -145,7 +145,9 @@ For CLI operators, there are now explicit auth-oriented commands in addition to 
 - `sharedrive add ...` can omit `--descriptor` once a default descriptor has been saved.
 - `sharedrive checkout <descriptor>` saves the active descriptor for later commands.
 - `sharedrive add ... --package` creates a folder-backed package resource for descriptor metadata fetch and package-aware download.
-- `sharedrive fetch <package-name>` refreshes nested resources for a Google Drive package resource inside a descriptor.
+- `sharedrive fetch <package-name>` refreshes nested resources for Google Drive or SharePoint package resources inside a descriptor.
+- `sharedrive fetch --source-path <uri> --resource <name>` adds or updates a package resource and immediately fetches nested metadata.
+- `sharedrive download --source-path <uri> --resource <name>` adds or updates a file or directory resource and immediately downloads it.
 - `sharedrive download ... --check-auth` runs the same descriptor-aware preflight before downloading.
 
 For Python API usage, you can now choose an explicit auth strategy:
@@ -190,10 +192,6 @@ The settings layer is additive. Existing `GOOGLE_APPLICATION_CREDENTIALS` behavi
 
 ## Fetch And Download
 
-CLI aliases:
-
-- `sharepoint` and `spo` are equivalent subcommands for SharePoint operations.
-
 CLI:
 
 ```bash
@@ -206,7 +204,9 @@ sharedrive auth login microsoft --auth-mode delegated
 sharedrive auth login sharepoint --auth-mode delegated
 sharedrive add spec-workbook --path background/specs/spec-workbook.xlsx --source https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx
 sharedrive add census-package --path downloads/census --source https://drive.google.com/drive/folders/<id> --drive-service googledrive --package
+sharedrive fetch --source-path https://tenant.sharepoint.com/sites/Test/Shared%20Documents/specs/ --resource shared-specs
 sharedrive fetch census-package --dry-run
+sharedrive download --source-path https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx --resource spec-workbook
 sharedrive download --dry-run
 sharedrive download resources/descriptor.yaml --dry-run
 sharedrive download resources/descriptor.yaml --check-auth
@@ -274,7 +274,8 @@ resources:
     resources: []
 ```
 
-Folder-backed package resources can be authored explicitly with `sharedrive add --package` and then populated with nested resources using `sharedrive fetch <package-name>`. The first metadata fetch implementation targets Google Drive package resources and writes deterministic nested file resources into the descriptor.
+Folder-backed package resources can be authored explicitly with `sharedrive add --package` and then populated with nested resources using `sharedrive fetch <package-name>`. Fetch now supports Google Drive and SharePoint package resources and writes deterministic nested file resources into the descriptor.
+Folder-backed package resources can also be created inline with `sharedrive fetch --source-path ... --resource ...`.
 
 Compatibility behavior preserved:
 

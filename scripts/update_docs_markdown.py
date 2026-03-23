@@ -31,21 +31,6 @@ CLI_COMMANDS: list[tuple[str, list[str]]] = [
     ("sharedrive fetch --help", ["fetch", "--help"]),
     ("sharedrive download --help", ["download", "--help"]),
     ("sharedrive update --help", ["update", "--help"]),
-    ("sharedrive gdrive --help", ["gdrive", "--help"]),
-    ("sharedrive gdrive list --help", ["gdrive", "list", "--help"]),
-    ("sharedrive gdrive get --help", ["gdrive", "get", "--help"]),
-    ("sharedrive gdrive download --help", ["gdrive", "download", "--help"]),
-    ("sharedrive gdrive export --help", ["gdrive", "export", "--help"]),
-    ("sharedrive sharepoint --help", ["sharepoint", "--help"]),
-    ("sharedrive sharepoint get --help", ["sharepoint", "get", "--help"]),
-    ("sharedrive sharepoint download --help", ["sharepoint", "download", "--help"]),
-    ("sharedrive spo --help", ["spo", "--help"]),
-    ("sharedrive spo get --help", ["spo", "get", "--help"]),
-    ("sharedrive spo download --help", ["spo", "download", "--help"]),
-    ("sharedrive s3 --help", ["s3", "--help"]),
-    ("sharedrive s3 cp --help", ["s3", "cp", "--help"]),
-    ("sharedrive s3 ls --help", ["s3", "ls", "--help"]),
-    ("sharedrive s3 cat --help", ["s3", "cat", "--help"]),
 ]
 
 API_MODULES = [

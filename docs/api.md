@@ -133,9 +133,9 @@ Auto-generated from source signatures and docstrings.
 
 ### Functions
 
-- `def fetch_resource_metadata_in_descriptor(descriptor: Path | str, resource_name: str, *, dry_run: bool = False, log: LogFn | None = print, googledrive_client_factory: Callable[[], Any] | None = None) -> FetchSummary`
+- `def fetch_resource_metadata_in_descriptor(descriptor: Path | str, resource_name: str, *, dry_run: bool = False, log: LogFn | None = print, googledrive_client_factory: Callable[[], Any] | None = None, sharepoint_client_factory: Callable[[], Any] | None = None) -> FetchSummary`
   - Fetch metadata for one top-level resource into nested descriptor resources.
-- `def fetch_package_metadata_in_descriptor(descriptor: Path | str, package_name: str, *, dry_run: bool = False, log: LogFn | None = print, googledrive_client_factory: Callable[[], Any] | None = None) -> FetchSummary`
+- `def fetch_package_metadata_in_descriptor(descriptor: Path | str, package_name: str, *, dry_run: bool = False, log: LogFn | None = print, googledrive_client_factory: Callable[[], Any] | None = None, sharepoint_client_factory: Callable[[], Any] | None = None) -> FetchSummary`
   - Fetch metadata for one package resource into nested descriptor resources.
 
 ### Classes
@@ -340,14 +340,20 @@ Auto-generated from source signatures and docstrings.
 - TODO: look into for local dev: https://learn.microsoft.com/en-us/powershell/microsoftgraph/overview?view=graph-powershell-1.0
 - Methods:
   - `def get_site_id(self, site_name)`
-  - `def get_drive_id(self, site_id)`
+  - `def list_site_drives(self, site_id: str) -> list[dict[str, Any]]`
+  - `def get_drive_id(self, site_id, drive_name: str | None = None)`
     - Retrieves the default document drive associated with a SharePoint site.
   - `def get_item_metadata(self, drive_id, itempath)`
     - get item metadata based on relative file path within the drive
+  - `def get_item_by_id(self, drive_id: str, item_id: str) -> dict[str, Any]`
+  - `def list_item_children(self, drive_id: str, item_id: str) -> list[dict[str, Any]]`
+  - `def resolve_weburl(self, url: str) -> dict[str, str]`
   - `def download_content(self, drive_id = None, item_id = None, download_url = None)`
     - takes in the components needed to download content --
   - `def get_from_weburl(self, url)`
     - Generic method to get a file or folder from a SharePoint URL.
+  - `def list_folder_files(self, drive_id: str, folder_id: str, *, recursive: bool = True) -> list[dict[str, Any]]`
+  - `def list_folder_files_from_weburl(self, url: str, *, recursive: bool = True) -> list[dict[str, Any]]`
   - `def download_from_weburl(self, url, output_path, dry_run = True)`
   - `def get_file(self, site_name, file_path, metadata_only = False)`
     - gets file item metadata and file
