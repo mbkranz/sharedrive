@@ -1,39 +1,39 @@
 from sharedrive.actions.add import add_resource_to_descriptor
 from sharedrive.actions.fetch import (
     FetchSummary,
-    RetrieveSummary,
-    fetch_from_descriptor,
-    fetch_resources,
+    fetch_package_metadata_in_descriptor,
+    fetch_resource_metadata_in_descriptor,
+)
+from sharedrive.actions.download import (
+    AuthCheckResult,
+    DownloadSummary,
+    check_auth_for_adapters,
+    check_auth_for_descriptor,
+    download_from_descriptor,
+    download_resources,
     load_descriptor,
     resolve_default_descriptor,
     resource_adapter_name,
     resource_output_path,
     resource_output_paths,
     resource_source_url,
-    retrieve_from_descriptor,
-    retrieve_resources,
-)
-from sharedrive.actions.sync import (
-    SyncSummary,
-    sync_package_resource_in_descriptor,
-    sync_resource_in_descriptor,
 )
 
 __all__ = [
     "add_resource_to_descriptor",
+    "AuthCheckResult",
+    "DownloadSummary",
     "FetchSummary",
-    "RetrieveSummary",
-    "fetch_from_descriptor",
-    "fetch_resources",
+    "check_auth_for_adapters",
+    "check_auth_for_descriptor",
+    "download_from_descriptor",
+    "download_resources",
+    "fetch_package_metadata_in_descriptor",
+    "fetch_resource_metadata_in_descriptor",
     "load_descriptor",
     "resolve_default_descriptor",
     "resource_adapter_name",
     "resource_output_path",
     "resource_output_paths",
     "resource_source_url",
-    "retrieve_from_descriptor",
-    "retrieve_resources",
-    "SyncSummary",
-    "sync_package_resource_in_descriptor",
-    "sync_resource_in_descriptor",
 ]

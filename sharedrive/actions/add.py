@@ -7,7 +7,6 @@ from urllib.parse import urlparse
 from sharedrive.descriptor import (
     ensure_descriptor_exists,
     get_descriptor_resources,
-    get_primary_source,
     load_descriptor_document,
     normalize_entity_type,
     normalize_service_type,

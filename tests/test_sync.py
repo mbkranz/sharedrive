@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from sharedrive.actions.sync import sync_resource_in_descriptor
+from sharedrive.actions.fetch import fetch_resource_metadata_in_descriptor
 
 
 def _write_syncable_descriptor(path: Path) -> None:
@@ -24,7 +24,7 @@ resources:
     )
 
 
-def test_sync_resource_in_descriptor_writes_nested_resources(tmp_path: Path) -> None:
+def test_fetch_resource_metadata_in_descriptor_writes_nested_resources(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_syncable_descriptor(descriptor)
 
@@ -37,7 +37,7 @@ def test_sync_resource_in_descriptor_writes_nested_resources(tmp_path: Path) -> 
                 {"id": "file-1", "relative_path": "summary.csv"},
             ]
 
-    summary = sync_resource_in_descriptor(
+    summary = fetch_resource_metadata_in_descriptor(
         descriptor,
         "census-docs",
         googledrive_client_factory=lambda: DummyDriveClient(),
@@ -75,7 +75,7 @@ def test_sync_resource_in_descriptor_writes_nested_resources(tmp_path: Path) -> 
     ]
 
 
-def test_sync_resource_in_descriptor_dry_run_does_not_write(tmp_path: Path) -> None:
+def test_fetch_resource_metadata_in_descriptor_dry_run_does_not_write(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_syncable_descriptor(descriptor)
     before = descriptor.read_text(encoding="utf-8")
@@ -85,7 +85,7 @@ def test_sync_resource_in_descriptor_dry_run_does_not_write(tmp_path: Path) -> N
             assert recursive is True
             return [{"id": "file-1", "relative_path": "summary.csv"}]
 
-    summary = sync_resource_in_descriptor(
+    summary = fetch_resource_metadata_in_descriptor(
         descriptor,
         "census-docs",
         dry_run=True,
@@ -98,7 +98,7 @@ def test_sync_resource_in_descriptor_dry_run_does_not_write(tmp_path: Path) -> N
     assert descriptor.read_text(encoding="utf-8") == before
 
 
-def test_sync_resource_in_descriptor_rejects_path_sync_target(tmp_path: Path) -> None:
+def test_fetch_resource_metadata_in_descriptor_rejects_path_sync_target(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     descriptor.write_text(
         """
@@ -115,7 +115,7 @@ resources:
     )
 
     with pytest.raises(ValueError, match="syncTarget 'resources'"):
-        sync_resource_in_descriptor(
+        fetch_resource_metadata_in_descriptor(
             descriptor,
             "drive-export",
             googledrive_client_factory=lambda: object(),
@@ -123,13 +123,13 @@ resources:
         )
 
 
-def test_sync_resource_in_descriptor_requires_existing_descriptor(
+def test_fetch_resource_metadata_in_descriptor_requires_existing_descriptor(
     tmp_path: Path,
 ) -> None:
     missing = tmp_path / "missing.yaml"
 
     with pytest.raises(FileNotFoundError, match="does not exist"):
-        sync_resource_in_descriptor(
+        fetch_resource_metadata_in_descriptor(
             missing,
             "census-docs",
             googledrive_client_factory=lambda: object(),

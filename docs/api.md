@@ -7,26 +7,40 @@ Auto-generated from source signatures and docstrings.
 ### Constants
 
 - `DESCRIPTOR_DEFAULTS_FILE = Path('.sharedrive/sharedrive_set.json')`
-- `PACKAGE_PROFILE_MARKERS = ('data-package', 'tabular-data-package', 'json-data-package')`
+- `ENTITY_TYPE_ALIASES = {'file': 'File', 'directory': 'Directory', 'folder': 'Directory', 'container': 'Container'}`
+- `SERVICE_TYPE_ALIASES = {'googledrive': 'GoogleDrive', 'google-drive': 'GoogleDrive', 'google drive': 'GoogleDrive', 'sharepoint': 'SharePoint', 'share-point': 'SharePoint', 's3': 'S3'}`
+- `SYNC_TARGET_ALIASES = {'path': 'path', 'resource': 'resources', 'resources': 'resources'}`
 
 ### Functions
 
+- `def check_descriptor_exists(path: Path | str) -> bool`
+  - Return True when a descriptor file exists on disk.
+- `def get_primary_source(resource: dict[str, Any], *, create: bool = False) -> dict[str, Any] | None`
+  - Return the first source entry for a resource.
+- `def ensure_descriptor_exists(path: Path | str) -> Path`
+  - Return descriptor path when it exists, else raise FileNotFoundError.
 - `def descriptor_scope_key(descriptor: Path | str) -> str`
   - Return the stable key used for descriptor-scoped defaults.
-- `def load_descriptor_defaults_store() -> dict[str, Any]`
-  - Load persisted descriptor defaults for global and descriptor scopes.
-- `def get_saved_params_for_descriptor(descriptor: Path | str | None = None) -> dict[str, Any]`
-  - Return merged global and descriptor-scoped saved params.
 - `def get_descriptor_resources(document: dict[str, Any], *, create: bool = False) -> list[dict[str, Any]]`
   - Return the top-level resources list, optionally initializing it.
+- `def get_resource_sources(resource: dict[str, Any], *, create: bool = False) -> list[dict[str, Any]]`
+  - Return normalized source entries for a resource.
 - `def get_package_resources(resource: dict[str, Any], *, create: bool = False) -> list[dict[str, Any]]`
-  - Return nested resources for a package resource, optionally initializing them.
-- `def is_package_resource(resource: dict[str, Any]) -> bool`
-  - Return True when a resource should be treated as a package/container.
+  - Return nested resources for a resource, optionally initializing them.
+- `def get_saved_params_for_descriptor(descriptor: Path | str | None = None) -> dict[str, Any]`
+  - Return merged global and descriptor-scoped saved params.
 - `def load_descriptor(path: Path | str) -> list[dict[str, Any]]`
   - Load a JSON/YAML descriptor and return the top-level resources list.
+- `def load_descriptor_defaults_store() -> dict[str, Any]`
+  - Load persisted descriptor defaults for global and descriptor scopes.
 - `def load_descriptor_document(path: Path | str) -> dict[str, Any]`
   - Load a JSON/YAML descriptor and return the full top-level document.
+- `def normalize_entity_type(entity_type: str) -> str`
+  - Normalize source entity type to OpenMetadata-style class naming.
+- `def normalize_service_type(service_type: str) -> str`
+  - Normalize source service type to OpenMetadata enum spelling.
+- `def normalize_sync_target(sync_target: str) -> str`
+  - Normalize syncTarget to the sharedrive descriptor contract.
 - `def resolve_descriptor_path(descriptor: Path | str | None = None) -> Path`
   - Resolve descriptor path from explicit input, saved defaults, or standard locations.
 - `def resolve_default_descriptor() -> Path`
@@ -37,46 +51,62 @@ Auto-generated from source signatures and docstrings.
   - Persist a descriptor document as JSON or YAML based on file suffix.
 - `def save_descriptor_defaults_store(data: dict[str, Any]) -> None`
   - Persist descriptor defaults store to disk.
+- `def resource_profile(resource: dict[str, Any]) -> str | None`
+  - Return the metadata profile declared for a resource, if any.
+- `def resource_sync_target(resource: dict[str, Any]) -> str`
+  - Return the declared sync target for a resource.
+- `def resource_syncs_to_resources(resource: dict[str, Any]) -> bool`
+  - Return whether a resource syncs into nested resources.
+- `def service_type_adapter_name(service_type: str) -> str`
+  - Return the runtime adapter name for a canonical service type.
+- `def source_entity_type(resource: dict[str, Any]) -> str | None`
+  - Return the canonical entity type for a resource source, if declared.
+- `def source_path(resource: dict[str, Any]) -> str | None`
+  - Return the primary source locator path for a resource.
+- `def source_service_type(resource: dict[str, Any]) -> str | None`
+  - Return the canonical service type for a resource source.
 
 
 ## `sharedrive.actions.add`
 
 ### Constants
 
-- `SUPPORTED_DRIVE_SERVICES = {'sharepoint', 'googledrive', 's3'}`
+- `SUPPORTED_SERVICE_TYPES = {'GoogleDrive', 'SharePoint', 'S3'}`
 
 ### Functions
 
-- `def add_resource_to_descriptor(descriptor: Path | str, *, name: str, path: str, source: str, title: str | None = None, description: str | None = None, drive_service: str | None = None, package: bool = False, profile: str | None = None) -> dict[str, Any]`
+- `def add_resource_to_descriptor(descriptor: Path | str, *, name: str, path: str, source: str, title: str | None = None, description: str | None = None, service_type: str | None = None, entity_type: str | None = None, sync_target: str | None = None, drive_service: str | None = None, package: bool = False, profile: str | None = None, create_if_missing: bool = False) -> dict[str, Any]`
   - Append a resource entry to a descriptor and return the created resource.
+- `def infer_entity_type(source: str, *, service_type: str) -> str`
+  - Infer OpenMetadata-style entityType from the source locator.
 - `def infer_drive_service(source: str) -> str`
-  - Infer the implemented drive service from a source URL/URI.
-- `def normalize_drive_service(source: str, drive_service: str | None = None) -> str`
-  - Return a supported drive service, inferring it from source if omitted.
+  - Backward-compatible alias for inferring canonical serviceType.
+- `def infer_service_type(source: str) -> str`
+  - Infer canonical serviceType from a source URL/URI.
+- `def resolve_entity_type(source: str, *, service_type: str, entity_type: str | None = None) -> str`
+  - Return the declared or inferred source entity type.
+- `def resolve_service_type(source: str, service_type: str | None = None) -> str`
+  - Return a supported canonical serviceType, inferring it when omitted.
 
 
-## `sharedrive.actions.fetch`
+## `sharedrive.actions.download`
 
 ### Functions
 
 - `def check_auth_for_adapters(adapters: Iterable[str], *, sharepoint_client_factory: Callable[[], Any] | None = None, googledrive_client_factory: Callable[[], Any] | None = None, s3_auth_checker: Callable[[], None] | None = None) -> list[AuthCheckResult]`
 - `def check_auth_for_descriptor(descriptor: Path | str, include: str | Iterable[str] = 'all', *, sharepoint_client_factory: Callable[[], Any] | None = None, googledrive_client_factory: Callable[[], Any] | None = None, s3_auth_checker: Callable[[], None] | None = None) -> list[AuthCheckResult]`
-- `def fetch_from_descriptor(descriptor: Path | str, include: str | Iterable[str] = 'all', output_dir: Path | str = Path('resources'), dry_run: bool = False, *, check_auth: bool = False, log: LogFn | None = print, sharepoint_client_factory: Callable[[], Any] | None = None, googledrive_client_factory: Callable[[], Any] | None = None, use_cloudpathlib: bool = True) -> FetchSummary`
-  - Fetch resources from a descriptor using adapter-specific clients.
-- `def fetch_resources(descriptor: Path | str, include: str | Iterable[str] = 'all', output_dir: Path | str = Path('resources'), dry_run: bool = False, *, check_auth: bool = False, log: LogFn | None = print) -> FetchSummary`
-  - Convenience alias for fetch_from_descriptor.
+- `def download_from_descriptor(descriptor: Path | str, include: str | Iterable[str] = 'all', output_dir: Path | str = Path('resources'), dry_run: bool = False, *, check_auth: bool = False, log: LogFn | None = print, sharepoint_client_factory: Callable[[], Any] | None = None, googledrive_client_factory: Callable[[], Any] | None = None, use_cloudpathlib: bool = True) -> DownloadSummary`
+  - Download resources from a descriptor using adapter-specific clients.
+- `def download_resources(descriptor: Path | str, include: str | Iterable[str] = 'all', output_dir: Path | str = Path('resources'), dry_run: bool = False, *, check_auth: bool = False, log: LogFn | None = print) -> DownloadSummary`
+  - Convenience alias for download_from_descriptor.
 - `def resource_adapter_name(resource: dict[str, Any], source_url: str | None) -> str`
-  - Resolve adapter from driveService/x-adapter override or infer from URL.
+  - Resolve runtime adapter name from source serviceType or fallback inference.
 - `def resource_output_path(resource: dict[str, Any], output_dir: Path) -> Path`
   - Resolve resource.path against output_dir unless path is absolute.
 - `def resource_output_paths(resource: dict[str, Any], output_dir: Path) -> list[Path]`
   - Resolve primary resource.path plus optional targets[] into local output paths.
 - `def resource_source_url(resource: dict[str, Any]) -> str | None`
-  - Resolve source URL using sources[].path first, then legacy source.
-- `def retrieve_from_descriptor(descriptor: Path | str, include: str | Iterable[str] = 'all', output_dir: Path | str = Path('resources'), dry_run: bool = False, *, check_auth: bool = False, log: LogFn | None = print, sharepoint_client_factory: Callable[[], Any] | None = None, googledrive_client_factory: Callable[[], Any] | None = None, use_cloudpathlib: bool = True) -> RetrieveSummary`
-  - Backward-compatible alias for fetch_from_descriptor.
-- `def retrieve_resources(descriptor: Path | str, include: str | Iterable[str] = 'all', output_dir: Path | str = Path('resources'), dry_run: bool = False, *, check_auth: bool = False, log: LogFn | None = print) -> RetrieveSummary`
-  - Backward-compatible alias for fetch_resources.
+  - Resolve the primary source locator for a resource.
 
 ### Classes
 
@@ -88,17 +118,7 @@ Auto-generated from source signatures and docstrings.
 - Methods:
   - `def to_dict(self) -> dict[str, str | bool]`
 
-#### `FetchSummary`
-- Fields:
-  - `total_resources: int`
-  - `downloaded: int`
-  - `skipped: int`
-  - `dry_run_actions: int`
-  - `failures: int`
-- Methods:
-  - `def ok(self) -> bool`
-
-#### `RetrieveSummary`
+#### `DownloadSummary`
 - Fields:
   - `total_resources: int`
   - `downloaded: int`
@@ -109,18 +129,20 @@ Auto-generated from source signatures and docstrings.
   - `def ok(self) -> bool`
 
 
-## `sharedrive.actions.sync`
+## `sharedrive.actions.fetch`
 
 ### Functions
 
-- `def sync_package_resource_in_descriptor(descriptor: Path | str, package_name: str, *, dry_run: bool = False, log: LogFn | None = print, googledrive_client_factory: Callable[[], Any] | None = None) -> SyncSummary`
-  - Sync one top-level package resource into nested descriptor resources.
+- `def fetch_resource_metadata_in_descriptor(descriptor: Path | str, resource_name: str, *, dry_run: bool = False, log: LogFn | None = print, googledrive_client_factory: Callable[[], Any] | None = None) -> FetchSummary`
+  - Fetch metadata for one top-level resource into nested descriptor resources.
+- `def fetch_package_metadata_in_descriptor(descriptor: Path | str, package_name: str, *, dry_run: bool = False, log: LogFn | None = print, googledrive_client_factory: Callable[[], Any] | None = None) -> FetchSummary`
+  - Fetch metadata for one package resource into nested descriptor resources.
 
 ### Classes
 
-#### `SyncSummary`
+#### `FetchSummary`
 - Fields:
-  - `package_name: str`
+  - `resource_name: str`
   - `generated_resources: int`
   - `dry_run: bool`
   - `changed: bool`
@@ -266,7 +288,7 @@ Auto-generated from source signatures and docstrings.
   - `service_account_credentials: Path | None`
   - `oauth_client_secrets: Path | None`
   - `oauth_token_path: Path | None`
-  - `scopes: list[str]`
+  - `scopes: Annotated[list[str], NoDecode]`
   - `use_local_server: bool`
 - Methods:
   - `def to_scope_list(cls, value: str | list[str] | tuple[str, ...] | None) -> list[str]`
@@ -282,7 +304,7 @@ Auto-generated from source signatures and docstrings.
   - `client_id: str | None`
   - `client_secret: SecretStr | None`
   - `host_url: str`
-  - `scopes: list[str]`
+  - `scopes: Annotated[list[str], NoDecode]`
 - Methods:
   - `def empty_string_to_none(cls, value: str | None) -> str | None`
   - `def normalize_host_url(cls, value: str | None) -> str`
@@ -299,7 +321,7 @@ Auto-generated from source signatures and docstrings.
   - `client_id: str | None`
   - `client_secret: SecretStr | None`
   - `host_url: str`
-  - `scopes: list[str]`
+  - `scopes: Annotated[list[str], NoDecode]`
 - Methods:
   - `def empty_string_to_none(cls, value: str | None) -> str | None`
   - `def normalize_host_url(cls, value: str | None) -> str`

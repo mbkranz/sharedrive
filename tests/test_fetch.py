@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sharedrive.actions.fetch import check_auth_for_descriptor, fetch_from_descriptor
-from sharedrive.actions.fetch import resource_adapter_name
+from sharedrive.actions.download import check_auth_for_descriptor, download_from_descriptor
+from sharedrive.actions.download import resource_adapter_name
 
 
 def _write_descriptor(path: Path) -> None:
@@ -74,7 +74,7 @@ def test_fetch_from_descriptor_check_auth_stops_before_download_on_failure(
     def failing_sharepoint_factory():
         raise RuntimeError("missing Azure tenant")
 
-    summary = fetch_from_descriptor(
+    summary = download_from_descriptor(
         descriptor,
         include=["sharepoint"],
         output_dir=tmp_path / "resources",
@@ -109,7 +109,7 @@ def test_fetch_from_descriptor_check_auth_allows_download_when_ready(tmp_path: P
 
     client = DummyDriveClient()
 
-    summary = fetch_from_descriptor(
+    summary = download_from_descriptor(
         descriptor,
         include=["googledrive"],
         output_dir=tmp_path / "resources",
@@ -166,7 +166,7 @@ resources:
 
     client = DummyDriveClient()
 
-    summary = fetch_from_descriptor(
+    summary = download_from_descriptor(
         descriptor,
         include=["googledrive"],
         output_dir=tmp_path / "resources",
@@ -224,7 +224,7 @@ resources:
 
     client = DummyDriveClient()
 
-    summary = fetch_from_descriptor(
+    summary = download_from_descriptor(
         descriptor,
         include=["googledrive"],
         output_dir=tmp_path / "resources",
@@ -281,7 +281,7 @@ resources:
 
     client = DummyDriveClient()
 
-    summary = fetch_from_descriptor(
+    summary = download_from_descriptor(
         descriptor,
         include=["selected-export"],
         output_dir=tmp_path / "resources",
@@ -342,7 +342,7 @@ resources:
 
     client = DummyDriveClient()
 
-    summary = fetch_from_descriptor(
+    summary = download_from_descriptor(
         descriptor,
         include=["analytics-docs.selected-export"],
         output_dir=tmp_path / "resources",
@@ -396,7 +396,7 @@ resources:
 
     client = DummyDriveClient()
 
-    summary = fetch_from_descriptor(
+    summary = download_from_descriptor(
         descriptor,
         include=["analytics-docs"],
         output_dir=tmp_path / "resources",
@@ -442,11 +442,11 @@ def test_resource_adapter_name_supports_legacy_x_adapter() -> None:
     )
 
 
-def test_fetch_from_descriptor_requires_existing_descriptor(tmp_path: Path) -> None:
+def test_download_from_descriptor_requires_existing_descriptor(tmp_path: Path) -> None:
     missing = tmp_path / "missing.yaml"
 
     try:
-        fetch_from_descriptor(missing, output_dir=tmp_path / "resources")
+        download_from_descriptor(missing, output_dir=tmp_path / "resources")
     except FileNotFoundError as exc:
         assert "does not exist" in str(exc)
     else:  # pragma: no cover
