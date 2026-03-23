@@ -7,7 +7,7 @@ module path remains part of the public surface for callers importing
 ``sharedrive.auth.sharepoint`` directly.
 """
 
-from sharedrive.auth.microsoft import (
+from sharedrive.auth.microsoft import (  # noqa: E402
     DEFAULT_MICROSOFT_GRAPH_SCOPES,
     AppOnlyStrategy,
     DelegatedStrategy,

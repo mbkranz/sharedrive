@@ -370,6 +370,47 @@ def _download_googledrive_directory(
     return downloaded, dry_run_actions
 
 
+def _download_sharepoint_directory(
+    resource: dict[str, Any],
+    *,
+    output_roots: list[Path],
+    source_url: str,
+    client: Any,
+    dry_run: bool,
+    emit: LogFn,
+) -> tuple[int, int]:
+    resource_name = str(resource.get("name", "resource")).strip() or "resource"
+    discovered_files = client.list_folder_files_from_weburl(source_url, recursive=True)
+
+    downloaded = 0
+    dry_run_actions = 0
+    for entry in discovered_files:
+        relative_path = str(entry.get("relative_path", entry.get("name", entry.get("id", "")))).strip()
+        if not relative_path:
+            relative_path = str(entry.get("id", "item"))
+
+        destinations = [root / Path(relative_path) for root in output_roots]
+        if dry_run:
+            for destination in destinations:
+                emit(
+                    f"Would fetch {resource_name}/{relative_path} from {source_url} to {destination}"
+                )
+            dry_run_actions += len(destinations)
+            continue
+
+        primary_destination = destinations[0]
+        primary_destination.parent.mkdir(parents=True, exist_ok=True)
+        client.download_from_weburl(str(entry["webUrl"]), output_path=primary_destination, dry_run=False)
+
+        for destination in destinations[1:]:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(primary_destination, destination)
+
+        downloaded += len(destinations)
+
+    return downloaded, dry_run_actions
+
+
 def check_auth_for_adapters(
     adapters: Iterable[str],
     *,
@@ -571,6 +612,27 @@ def download_from_descriptor(
                     output_roots=output_roots,
                     source_url=source_url,
                     client=clients["googledrive"],
+                    dry_run=dry_run,
+                    emit=emit,
+                )
+                summary.downloaded += downloaded
+                summary.dry_run_actions += dry_run_actions
+                return
+
+            if (
+                adapter_name == "sharepoint"
+                and entity_type in {"Directory", "Container"}
+                and not nested_resources
+            ):
+                if "sharepoint" not in clients:
+                    factory = sharepoint_client_factory or _default_sharepoint_client_factory
+                    clients["sharepoint"] = factory()
+                output_roots = output_paths if sync_target == "resources" else [output_path]
+                downloaded, dry_run_actions = _download_sharepoint_directory(
+                    normalized,
+                    output_roots=output_roots,
+                    source_url=source_url,
+                    client=clients["sharepoint"],
                     dry_run=dry_run,
                     emit=emit,
                 )

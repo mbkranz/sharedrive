@@ -51,6 +51,29 @@ def _build_gdrive_child_resource(entry: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _build_sharepoint_child_resource(entry: dict[str, Any]) -> dict[str, Any]:
+    relative_path = str(entry.get("relative_path", "")).strip()
+    if not relative_path:
+        raise ValueError("SharePoint sync entry is missing relative_path")
+
+    web_url = str(entry.get("webUrl", "")).strip()
+    if not web_url:
+        raise ValueError("SharePoint sync entry is missing webUrl")
+
+    normalized_path = PurePosixPath(relative_path).as_posix()
+    return {
+        "name": normalized_path,
+        "path": normalized_path,
+        "sources": [
+            {
+                "path": web_url,
+                "serviceType": "SharePoint",
+                "entityType": "File",
+            }
+        ],
+    }
+
+
 def fetch_resource_metadata_in_descriptor(
     descriptor: Path | str,
     resource_name: str,
@@ -58,6 +81,7 @@ def fetch_resource_metadata_in_descriptor(
     dry_run: bool = False,
     log: LogFn | None = print,
     googledrive_client_factory: Callable[[], Any] | None = None,
+    sharepoint_client_factory: Callable[[], Any] | None = None,
 ) -> FetchSummary:
     """Fetch metadata for one top-level resource into nested descriptor resources."""
     # TODO: Consider an explicit bulk mode such as `sharedrive fetch --all`
@@ -94,39 +118,67 @@ def fetch_resource_metadata_in_descriptor(
         raise ValueError(f"Resource '{resolved_name}' has no source URL.")
 
     adapter_name = resource_adapter_name(resource, source_url)
-    if adapter_name != "googledrive":
-        raise NotImplementedError(
-            "fetch is currently implemented only for Google Drive resources."
-        )
-
-    if googledrive_client_factory is None:
-        from sharedrive.auth.google import default_drive_strategy
-        from sharedrive.clients.googledrive import GoogleDriveClient
-
-        client = GoogleDriveClient(credential_strategy=default_drive_strategy())
-    else:
-        client = googledrive_client_factory()
-
     entity_type = source_entity_type(resource)
-    if entity_type == "Directory":
-        entries = client.list_folder_files_from_weburl(source_url, recursive=True)
-    elif entity_type == "File":
-        metadata = client.get_from_weburl(source_url, fields="id, name")
-        entries = [
-            {
-                "id": metadata["id"],
-                "relative_path": str(metadata.get("name", metadata["id"])).strip() or metadata["id"],
-            }
+    if adapter_name == "googledrive":
+        if googledrive_client_factory is None:
+            from sharedrive.auth.google import default_drive_strategy
+            from sharedrive.clients.googledrive import GoogleDriveClient
+
+            client = GoogleDriveClient(credential_strategy=default_drive_strategy())
+        else:
+            client = googledrive_client_factory()
+
+        if entity_type == "Directory":
+            entries = client.list_folder_files_from_weburl(source_url, recursive=True)
+        elif entity_type == "File":
+            metadata = client.get_from_weburl(source_url, fields="id, name")
+            entries = [
+                {
+                    "id": metadata["id"],
+                    "relative_path": str(metadata.get("name", metadata["id"])).strip() or metadata["id"],
+                }
+            ]
+        else:
+            raise NotImplementedError(
+                f"fetch is not implemented for entityType '{entity_type or 'unknown'}'."
+            )
+
+        child_resources = [
+            _build_gdrive_child_resource(entry)
+            for entry in sorted(entries, key=lambda item: str(item.get("relative_path", "")))
+        ]
+    elif adapter_name == "sharepoint":
+        if sharepoint_client_factory is None:
+            from sharedrive.auth.settings import make_sharepoint_client_from_microsoft_auth
+
+            client = make_sharepoint_client_from_microsoft_auth()
+        else:
+            client = sharepoint_client_factory()
+
+        if entity_type == "Directory":
+            entries = client.list_folder_files_from_weburl(source_url, recursive=True)
+        elif entity_type == "File":
+            metadata = client.get_from_weburl(source_url)
+            entries = [
+                {
+                    "webUrl": str(metadata.get("webUrl", source_url)).strip() or source_url,
+                    "relative_path": str(metadata.get("name", metadata.get("id", "item"))).strip()
+                    or str(metadata.get("id", "item")),
+                }
+            ]
+        else:
+            raise NotImplementedError(
+                f"fetch is not implemented for entityType '{entity_type or 'unknown'}'."
+            )
+
+        child_resources = [
+            _build_sharepoint_child_resource(entry)
+            for entry in sorted(entries, key=lambda item: str(item.get("relative_path", "")))
         ]
     else:
         raise NotImplementedError(
-            f"fetch is not implemented for entityType '{entity_type or 'unknown'}'."
+            f"fetch is not implemented for adapter '{adapter_name}'."
         )
-
-    child_resources = [
-        _build_gdrive_child_resource(entry)
-        for entry in sorted(entries, key=lambda item: str(item.get("relative_path", "")))
-    ]
 
     if log is not None:
         verb = "Would fetch" if dry_run else "Fetched"
@@ -159,6 +211,7 @@ def fetch_package_metadata_in_descriptor(
     dry_run: bool = False,
     log: LogFn | None = print,
     googledrive_client_factory: Callable[[], Any] | None = None,
+    sharepoint_client_factory: Callable[[], Any] | None = None,
 ) -> FetchSummary:
     """Fetch metadata for one package resource into nested descriptor resources."""
     return fetch_resource_metadata_in_descriptor(
@@ -167,6 +220,7 @@ def fetch_package_metadata_in_descriptor(
         dry_run=dry_run,
         log=log,
         googledrive_client_factory=googledrive_client_factory,
+        sharepoint_client_factory=sharepoint_client_factory,
     )
 
 
