@@ -6,12 +6,12 @@ import os
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
+from urllib.parse import unquote, urlparse
 
 import typer
 from dotenv import find_dotenv, load_dotenv
 
-from sharedrive.clients.aws import download_s3_url
-from sharedrive.actions.add import add_resource_to_descriptor
+from sharedrive.actions.add import add_resource_to_descriptor, resolve_entity_type, resolve_service_type
 from sharedrive.actions.download import check_auth_for_descriptor, download_from_descriptor
 from sharedrive.actions.fetch import fetch_resource_metadata_in_descriptor
 from sharedrive.descriptor import (
@@ -24,13 +24,9 @@ from sharedrive.descriptor import (
     normalize_service_type,
     resolve_descriptor_path,
     resolve_output_dir,
+    save_descriptor_document,
     save_descriptor_defaults_store,
 )
-
-try:
-    from cloudpathlib import S3Path
-except ImportError:  # pragma: no cover
-    S3Path = None
 
 if TYPE_CHECKING:  # pragma: no cover
     from sharedrive.clients.googledrive import GoogleDriveClient
@@ -55,25 +51,9 @@ auth_login_app = typer.Typer(
     help="Interactive login commands.",
     rich_markup_mode="markdown",
 )
-gdrive_app = typer.Typer(
-    help="Google Drive commands.",
-    rich_markup_mode="markdown",
-)
-sharepoint_app = typer.Typer(
-    help="SharePoint commands (`spo` is alias for `sharepoint`).",
-    rich_markup_mode="markdown",
-)
-s3_app = typer.Typer(
-    help="S3 commands.",
-    rich_markup_mode="markdown",
-)
 app.add_typer(auth_app, name="auth")
 app.add_typer(clone_app, name="clone")
 auth_app.add_typer(auth_login_app, name="login")
-app.add_typer(gdrive_app, name="gdrive")
-app.add_typer(sharepoint_app, name="sharepoint")
-app.add_typer(sharepoint_app, name="spo")
-app.add_typer(s3_app, name="s3")
 
 
 class OutputFormat(str, Enum):
@@ -579,6 +559,176 @@ def _run_download_command(
         raise typer.Exit(code=1)
 
 
+def _source_locator_parts(source_path: str) -> list[str]:
+    parsed = urlparse(source_path)
+    path_parts = [part for part in Path(unquote(parsed.path)).parts if part not in {"/", ""}]
+    return path_parts
+
+
+def _derive_source_resource_name(source_path: str, requested_name: str | None) -> str:
+    if requested_name is not None and requested_name.strip():
+        return requested_name.strip()
+
+    parts = _source_locator_parts(source_path)
+    if not parts:
+        parsed = urlparse(source_path)
+        if parsed.scheme == "s3" and parsed.netloc:
+            return parsed.netloc
+        raise typer.BadParameter("Could not derive a resource name from --source-path. Use --resource.")
+
+    leaf = parts[-1]
+    if leaf.lower() in {"edit", "view"} and len(parts) > 1:
+        leaf = parts[-2]
+    return leaf.strip() or "resource"
+
+
+def _derive_descriptor_resource_path(
+    source_path: str,
+    *,
+    resource_name: str,
+    entity_type: str,
+    sync_target: str,
+) -> str:
+    parts = _source_locator_parts(source_path)
+    leaf = parts[-1] if parts else resource_name
+    if leaf.lower() in {"edit", "view"} and len(parts) > 1:
+        leaf = parts[-2]
+
+    if sync_target == "resources":
+        return (Path("downloads") / resource_name).as_posix()
+    if entity_type in {"Directory", "Container"}:
+        return (Path("downloads") / resource_name).as_posix()
+    return (Path("downloads") / leaf).as_posix()
+
+
+def _upsert_source_resource(
+    descriptor_path: Path,
+    *,
+    source_path: str,
+    resource_name: str,
+    sync_target: str,
+    dry_run: bool,
+) -> tuple[dict[str, Any], str]:
+    service_type = resolve_service_type(source_path)
+    entity_type = resolve_entity_type(source_path, service_type=service_type)
+    resource_path = _derive_descriptor_resource_path(
+        source_path,
+        resource_name=resource_name,
+        entity_type=entity_type,
+        sync_target=sync_target,
+    )
+
+    document = load_descriptor_document(descriptor_path)
+    resources = get_descriptor_resources(document, create=True)
+    normalized_name = resource_name.strip().lower()
+    existing = next(
+        (
+            resource
+            for resource in resources
+            if isinstance(resource, dict)
+            and str(resource.get("name", "")).strip().lower() == normalized_name
+        ),
+        None,
+    )
+
+    resource_payload = {
+        "name": resource_name,
+        "path": resource_path,
+        "syncTarget": sync_target,
+        "sources": [
+            {
+                "path": source_path,
+                "serviceType": service_type,
+                "entityType": entity_type,
+            }
+        ],
+    }
+    if sync_target == "resources":
+        resource_payload["resources"] = []
+
+    action = "updated" if existing is not None else "added"
+    if existing is not None:
+        existing.clear()
+        existing.update(resource_payload)
+        resource_ref = existing
+    else:
+        resources.append(resource_payload)
+        resource_ref = resource_payload
+
+    if not dry_run:
+        save_descriptor_document(descriptor_path, document)
+
+    return resource_ref, action
+
+
+def _run_direct_source_download(
+    *,
+    descriptor_path: Path,
+    source_path: str,
+    resource_name: str | None,
+    output_dir: Path,
+    dry_run: bool,
+    check_auth: bool,
+) -> None:
+    resolved_name = _derive_source_resource_name(source_path, resource_name)
+    resource, action = _upsert_source_resource(
+        descriptor_path,
+        source_path=source_path,
+        resource_name=resolved_name,
+        sync_target="path",
+        dry_run=dry_run,
+    )
+    if dry_run:
+        typer.echo(
+            f"Would {action} resource '{resolved_name}' in {descriptor_path} and download {source_path} to {output_dir / Path(str(resource['path']))}."
+        )
+        return
+
+    typer.echo(f"{action.capitalize()} resource '{resolved_name}' in {descriptor_path}.")
+    _run_download_command(
+        descriptor=descriptor_path,
+        include=[resolved_name],
+        output_dir=output_dir,
+        dry_run=False,
+        check_auth=check_auth,
+    )
+
+
+def _run_direct_source_fetch(
+    *,
+    descriptor_path: Path,
+    source_path: str,
+    resource_name: str | None,
+    dry_run: bool,
+) -> None:
+    resolved_name = _derive_source_resource_name(source_path, resource_name)
+    _, action = _upsert_source_resource(
+        descriptor_path,
+        source_path=source_path,
+        resource_name=resolved_name,
+        sync_target="resources",
+        dry_run=dry_run,
+    )
+    if dry_run:
+        typer.echo(
+            f"Would {action} resource '{resolved_name}' in {descriptor_path} and fetch remote metadata from {source_path}."
+        )
+        return
+
+    typer.echo(f"{action.capitalize()} resource '{resolved_name}' in {descriptor_path}.")
+    summary = fetch_resource_metadata_in_descriptor(
+        descriptor=descriptor_path,
+        resource_name=resolved_name,
+        dry_run=False,
+        log=None,
+        googledrive_client_factory=lambda: _make_gdrive_client(None),
+        sharepoint_client_factory=_make_sharepoint_client,
+    )
+    typer.echo(
+        f"Fetched metadata for {summary.generated_resources} resource(s) into resource '{summary.resource_name}' in {descriptor_path}."
+    )
+
+
 def _render_auth_results(results: list[Any], output_format: OutputFormat) -> None:
     if output_format == OutputFormat.JSON:
         _echo_json([result.to_dict() for result in results])
@@ -712,14 +862,30 @@ def add(
     ),
 )
 def fetch(
-    resource_name: str = typer.Argument(..., help="Top-level resource name whose metadata should be refreshed."),
+    resource_name: Optional[str] = typer.Argument(None, help="Top-level resource name whose metadata should be refreshed."),
     descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
+    source_path: Optional[str] = typer.Option(None, "--source-path", help="Direct source URL/URI to add or update before fetching metadata."),
+    resource: Optional[str] = typer.Option(None, "--resource", help="Resource name to use with --source-path."),
     dry_run: bool = typer.Option(False, help="Preview descriptor changes without writing them."),
     env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
 ) -> None:
     """Fetch remote metadata for one resource into the descriptor."""
     _load_env_file(env_file)
     descriptor_path = resolve_descriptor_path(descriptor)
+    if source_path is not None:
+        if resource_name is not None:
+            raise typer.BadParameter("Use either <resource-name> or --source-path, not both.")
+        _run_direct_source_fetch(
+            descriptor_path=descriptor_path,
+            source_path=source_path,
+            resource_name=resource,
+            dry_run=dry_run,
+        )
+        return
+
+    if resource_name is None:
+        raise typer.BadParameter("Provide <resource-name> or use --source-path.")
+
     _exit_if_descriptor_missing(descriptor_path)
     try:
         summary = fetch_resource_metadata_in_descriptor(
@@ -728,6 +894,7 @@ def fetch(
             dry_run=dry_run,
             log=None,
             googledrive_client_factory=lambda: _make_gdrive_client(None),
+            sharepoint_client_factory=_make_sharepoint_client,
         )
     except (FileNotFoundError, NotImplementedError, ValueError) as exc:
         typer.echo(str(exc), err=True)
@@ -748,11 +915,12 @@ def fetch(
     ),
 )
 def download(
-    descriptor: Optional[Path] = typer.Argument(
+    descriptor_arg: Optional[Path] = typer.Argument(
         None,
         exists=False,
         help=DESCRIPTOR_DEFAULT_HELP,
     ),
+    descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
     include: Optional[list[str]] = typer.Option(
         None,
         "--include",
@@ -762,6 +930,8 @@ def download(
             "Repeat the option or pass a comma-separated list."
         ),
     ),
+    source_path: Optional[str] = typer.Option(None, "--source-path", help="Direct source URL/URI to add or update before downloading."),
+    resource: Optional[str] = typer.Option(None, "--resource", help="Resource name to use with --source-path."),
     output_dir: Optional[Path] = typer.Option(None, help="Base output directory for relative resource paths."),
     dry_run: bool = typer.Option(False, help="Print actions without downloading."),
     check_auth: bool = typer.Option(False, "--check-auth", help="Validate service credentials before downloading."),
@@ -769,10 +939,27 @@ def download(
 ) -> None:
     """Download descriptor resources by adapter type or resource name filters."""
     _load_env_file(env_file)
-    descriptor_path = resolve_descriptor_path(descriptor)
-    _exit_if_descriptor_missing(descriptor_path)
+    if descriptor is not None and descriptor_arg is not None:
+        raise typer.BadParameter("Use either [descriptor] or --descriptor, not both.")
+
+    descriptor_path = resolve_descriptor_path(descriptor or descriptor_arg)
     include_values = _parse_include_values(include)
     output_dir_path = resolve_output_dir(output_dir, descriptor=descriptor_path)
+
+    if source_path is not None:
+        if include is not None:
+            raise typer.BadParameter("--include cannot be combined with --source-path.")
+        _run_direct_source_download(
+            descriptor_path=descriptor_path,
+            source_path=source_path,
+            resource_name=resource,
+            output_dir=output_dir_path,
+            dry_run=dry_run,
+            check_auth=check_auth,
+        )
+        return
+
+    _exit_if_descriptor_missing(descriptor_path)
     _run_download_command(
         descriptor=descriptor_path,
         include=include_values,
@@ -911,175 +1098,6 @@ def auth_login_sharepoint(
 ) -> None:
     """Validate SharePoint authentication using the configured auth mode."""
     _run_microsoft_login(auth_mode, host_url, scope, env_file)
-
-
-@gdrive_app.command(
-    "list",
-    epilog=_examples_epilog(
-        "sharedrive gdrive list",
-        "sharedrive gdrive list --credentials-path ./secrets/google-service-account.json",
-    ),
-)
-def gdrive_list(
-    credentials_path: Optional[str] = typer.Option(None, help="Path to service account JSON; defaults to GOOGLE_APPLICATION_CREDENTIALS."),
-) -> None:
-    """Print JSON metadata for all files visible to the authenticated Google Drive client."""
-    client = _make_gdrive_client(credentials_path)
-    _echo_json(client.list_files())
-
-
-@gdrive_app.command(
-    "get",
-    epilog=_examples_epilog(
-        "sharedrive gdrive get 1lvWns43FFPerUjFpHPFfFnPLr-B-ERAqG83AVC4bpME",
-        "sharedrive gdrive get https://docs.google.com/document/d/<id>/edit",
-    ),
-)
-def gdrive_get(
-    file_id_or_url: str = typer.Argument(..., help="Google file ID or web URL."),
-    credentials_path: Optional[str] = typer.Option(None, help="Path to credentials JSON."),
-) -> None:
-    """Print JSON metadata for one Google Drive file resolved from an ID or web URL."""
-    client = _make_gdrive_client(credentials_path)
-    if file_id_or_url.startswith("http"):
-        _echo_json(client.get_from_weburl(file_id_or_url))
-    else:
-        _echo_json(client.get_file(file_id_or_url))
-
-
-@gdrive_app.command(
-    "download",
-    epilog=_examples_epilog(
-        "sharedrive gdrive download 1lvWns43FFPerUjFpHPFfFnPLr-B-ERAqG83AVC4bpME resources/test.docx",
-        "sharedrive gdrive download https://docs.google.com/document/d/<id>/edit resources/test.docx",
-    ),
-)
-def gdrive_download(
-    file_id_or_url: str = typer.Argument(..., help="Google file ID or web URL."),
-    output_path: Path = typer.Argument(..., help="Local output path."),
-    credentials_path: Optional[str] = typer.Option(None, help="Path to credentials JSON."),
-) -> None:
-    """Download one Google Drive file and print the written local output path."""
-    client = _make_gdrive_client(credentials_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    if file_id_or_url.startswith("http"):
-        client.download_from_weburl(file_id_or_url, output_path=str(output_path))
-    else:
-        client.download_file(file_id_or_url, output_path=str(output_path))
-    typer.echo(str(output_path))
-
-
-@gdrive_app.command(
-    "export",
-    epilog=_examples_epilog(
-        "sharedrive gdrive export 1lvWns43FFPerUjFpHPFfFnPLr-B-ERAqG83AVC4bpME --mime-type application/pdf --output-path resources/test.pdf",
-        "sharedrive gdrive export https://docs.google.com/spreadsheets/d/<id>/edit --mime-type text/csv",
-    ),
-)
-def gdrive_export(
-    file_id_or_url: str = typer.Argument(..., help="Google file ID or web URL."),
-    mime_type: Optional[str] = typer.Option(None, help="Target export MIME type."),
-    output_path: Optional[Path] = typer.Option(None, help="Optional output path."),
-    credentials_path: Optional[str] = typer.Option(None, help="Path to credentials JSON."),
-) -> None:
-    """Export a Google Workspace file and print output path or exported byte count."""
-    client = _make_gdrive_client(credentials_path)
-    kwargs: dict[str, Any] = {"mime_type": mime_type}
-    if output_path is not None:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        kwargs["output_path"] = str(output_path)
-    if file_id_or_url.startswith("http"):
-        result = client.export_from_weburl(file_id_or_url, **kwargs)
-    else:
-        result = client.export_file(file_id_or_url, **kwargs)
-    if isinstance(result, bytes):
-        typer.echo(f"Exported {len(result)} bytes")
-    else:
-        typer.echo(str(result))
-
-
-@sharepoint_app.command(
-    "get",
-    epilog=_examples_epilog(
-        "sharedrive sharepoint get https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx",
-        "sharedrive spo get https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx",
-    ),
-)
-def sharepoint_get(url: str = typer.Argument(..., help="SharePoint URL.")) -> None:
-    """Print JSON metadata for a SharePoint file or folder URL."""
-    client = _make_sharepoint_client()
-    _echo_json(client.get_from_weburl(url))
-
-
-@sharepoint_app.command(
-    "download",
-    epilog=_examples_epilog(
-        "sharedrive sharepoint download https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx resources/file.xlsx",
-        "sharedrive sharepoint download https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx resources/file.xlsx --dry-run",
-        "sharedrive spo download https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx resources/file.xlsx",
-        "sharedrive spo download https://norc.sharepoint.com/sites/MySite/Shared%20Documents/path/file.xlsx resources/file.xlsx --dry-run",
-    ),
-)
-def sharepoint_download(
-    url: str = typer.Argument(..., help="SharePoint URL."),
-    output_path: Path = typer.Argument(..., help="Local output path."),
-    dry_run: bool = typer.Option(False, help="Print action only."),
-) -> None:
-    """Download one SharePoint file to disk and print the local path when not dry-run."""
-    client = _make_sharepoint_client()
-    client.download_from_weburl(url=url, output_path=output_path, dry_run=dry_run)
-    if not dry_run:
-        typer.echo(str(output_path))
-
-
-@s3_app.command(
-    "cp",
-    epilog=_examples_epilog(
-        "sharedrive s3 cp s3://my-bucket/path/file.csv resources/file.csv",
-        "sharedrive s3 cp https://s3.amazonaws.com/my-bucket/path/file.csv resources/file.csv --no-cloudpathlib",
-    ),
-)
-def s3_cp(
-    source_url: str = typer.Argument(..., help="S3 URL (s3://bucket/key or compatible HTTPS)."),
-    output_path: Path = typer.Argument(..., help="Local output path."),
-    dry_run: bool = typer.Option(False, help="Print action only."),
-    no_cloudpathlib: bool = typer.Option(False, help="Disable cloudpathlib and use boto3 download fallback."),
-) -> None:
-    """Copy one S3 object to a local path and print the local file path when written."""
-    result = download_s3_url(source_url, output_path, dry_run=dry_run, use_cloudpathlib=not no_cloudpathlib)
-    if result:
-        typer.echo(str(result))
-
-
-@s3_app.command(
-    "ls",
-    epilog=_examples_epilog(
-        "sharedrive s3 ls s3://my-bucket/path/",
-    ),
-)
-def s3_ls(source_url: str = typer.Argument(..., help="S3 URL prefix.")) -> None:
-    """List entries under an S3 prefix and print one path per line."""
-    if S3Path is None:
-        raise typer.BadParameter("cloudpathlib is required for ls command")
-    for item in S3Path(source_url).iterdir():
-        typer.echo(str(item))
-
-
-@s3_app.command(
-    "cat",
-    epilog=_examples_epilog(
-        "sharedrive s3 cat s3://my-bucket/path/file.txt",
-        "sharedrive s3 cat s3://my-bucket/path/file.json --encoding utf-8",
-    ),
-)
-def s3_cat(
-    source_url: str = typer.Argument(..., help="S3 object URL."),
-    encoding: str = typer.Option("utf-8", help="Text encoding for output."),
-) -> None:
-    """Print text contents of an S3 object decoded with the selected encoding."""
-    if S3Path is None:
-        raise typer.BadParameter("cloudpathlib is required for cat command")
-    typer.echo(S3Path(source_url).read_text(encoding=encoding))
 
 
 def main() -> None:
