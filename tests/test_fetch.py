@@ -4,6 +4,7 @@ from pathlib import Path
 
 from sharedrive.actions.download import check_auth_for_descriptor, download_from_descriptor
 from sharedrive.actions.download import resource_adapter_name
+from sharedrive.actions.fetch import fetch_resource_metadata_in_descriptor
 
 
 def _write_descriptor(path: Path) -> None:
@@ -414,6 +415,53 @@ resources:
             str(output_path),
         )
     ]
+
+
+def test_fetch_resource_metadata_supports_sharepoint_directory(tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    descriptor.write_text(
+        """
+resources:
+  - name: shared-specs
+    path: downloads/shared-specs
+    syncTarget: resources
+    sources:
+      - path: https://example.sharepoint.com/sites/Test/Shared%20Documents/specs
+        serviceType: SharePoint
+        entityType: Directory
+""".strip(),
+        encoding="utf-8",
+    )
+
+    class DummySharepointClient:
+        def list_folder_files_from_weburl(self, url: str, *, recursive: bool = True):
+            assert url == "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs"
+            assert recursive is True
+            return [
+                {
+                    "webUrl": "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/spec.xlsx",
+                    "relative_path": "spec.xlsx",
+                },
+                {
+                    "webUrl": "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/nested/detail.csv",
+                    "relative_path": "nested/detail.csv",
+                },
+            ]
+
+    summary = fetch_resource_metadata_in_descriptor(
+        descriptor=descriptor,
+        resource_name="shared-specs",
+        dry_run=False,
+        log=lambda _message: None,
+        sharepoint_client_factory=lambda: DummySharepointClient(),
+    )
+
+    assert summary.changed is True
+    assert summary.generated_resources == 2
+
+    document = descriptor.read_text(encoding="utf-8")
+    assert "nested/detail.csv" in document
+    assert "serviceType: SharePoint" in document
 
 
 def test_resource_adapter_name_prefers_drive_service_over_legacy_adapter() -> None:

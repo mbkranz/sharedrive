@@ -418,6 +418,86 @@ def test_fetch_uses_checked_out_descriptor_when_omitted(monkeypatch: pytest.Monk
     assert captured["descriptor"] == Path("resources/descriptor.yaml")
 
 
+def test_download_source_path_upserts_descriptor_and_runs_download(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_run_download_command(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("sharedrive.cli._run_download_command", fake_run_download_command)
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "download",
+            "--source-path",
+            "https://example.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx",
+            "--resource",
+            "sharepoint-spec",
+        ],
+        prog_name="sharedrive",
+    )
+
+    descriptor = tmp_path / "resources" / "descriptor.yaml"
+    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
+
+    assert result.exit_code == 0
+    assert captured["include"] == ["sharepoint-spec"]
+    assert document["resources"][0]["name"] == "sharepoint-spec"
+    assert document["resources"][0]["syncTarget"] == "path"
+
+
+def test_fetch_source_path_upserts_descriptor_and_runs_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_fetch_resource_metadata_in_descriptor(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(resource_name="shared-specs", generated_resources=2, dry_run=False)
+
+    monkeypatch.setattr(
+        "sharedrive.cli.fetch_resource_metadata_in_descriptor",
+        fake_fetch_resource_metadata_in_descriptor,
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "fetch",
+            "--source-path",
+            "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/",
+            "--resource",
+            "shared-specs",
+        ],
+        prog_name="sharedrive",
+    )
+
+    descriptor = tmp_path / "resources" / "descriptor.yaml"
+    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
+
+    assert result.exit_code == 0
+    assert captured["resource_name"] == "shared-specs"
+    assert document["resources"][0]["name"] == "shared-specs"
+    assert document["resources"][0]["syncTarget"] == "resources"
+
+
+def test_removed_raw_adapter_commands_fail() -> None:
+    for args in (
+        ["gdrive", "list"],
+        ["sharepoint", "get", "https://example.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx"],
+        ["s3", "cp", "s3://bucket/file.csv", "resources/file.csv"],
+    ):
+        result = RUNNER.invoke(app, args, prog_name="sharedrive")
+        assert result.exit_code != 0
+
+
 def test_fetch_command_exits_nonzero_on_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(descriptor)
