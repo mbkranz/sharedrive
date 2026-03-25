@@ -14,10 +14,20 @@ from dotenv import find_dotenv, load_dotenv
 from sharedrive.actions.add import add_resource_to_descriptor, resolve_entity_type, resolve_service_type
 from sharedrive.actions.download import check_auth_for_descriptor, download_from_descriptor
 from sharedrive.actions.fetch import fetch_resource_metadata_in_descriptor
+from sharedrive.helpers import (
+    DESCRIPTOR_DEFAULTS_FILE,
+    get_saved_params_for_descriptor,
+    load_descriptor_defaults_store,
+    resolve_descriptor_path,
+    resolve_output_dir,
+    save_descriptor_defaults_store,
+)
 from sharedrive.models import (
     DrivePackage,
     load_drive_descriptor,
+    normalize_entity_type,
     normalize_service_type,
+    normalize_sync_target,
     save_drive_descriptor,
 )
 
@@ -58,86 +68,10 @@ DESCRIPTOR_DEFAULT_HELP = (
     "Descriptor file path. Defaults to the saved descriptor or the first "
     "standard descriptor path."
 )
-DESCRIPTOR_DEFAULTS_FILE = Path(".sharedrive/sharedrive_set.json")
-
-
-def load_descriptor_defaults_store() -> dict[str, Any]:
-    if not DESCRIPTOR_DEFAULTS_FILE.exists():
-        return {"global": {}, "descriptors": {}}
-
-    try:
-        data = json.loads(DESCRIPTOR_DEFAULTS_FILE.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {"global": {}, "descriptors": {}}
-
-    if not isinstance(data, dict):
-        return {"global": {}, "descriptors": {}}
-    if not isinstance(data.get("global"), dict):
-        data["global"] = {}
-    if not isinstance(data.get("descriptors"), dict):
-        data["descriptors"] = {}
-    return data
-
-
-def save_descriptor_defaults_store(data: dict[str, Any]) -> None:
-    DESCRIPTOR_DEFAULTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    DESCRIPTOR_DEFAULTS_FILE.write_text(
-        json.dumps(data, indent=4) + "\n",
-        encoding="utf-8",
-    )
-
-
-def _saved_params(descriptor: Path | str | None = None) -> dict[str, Any]:
-    store = load_descriptor_defaults_store()
-    merged: dict[str, Any] = {}
-
-    global_params = store.get("global", {})
-    if isinstance(global_params, dict):
-        merged.update(global_params)
-
-    if descriptor is None:
-        return merged
-
-    descriptor_params = store.get("descriptors", {}).get(str(Path(descriptor)), {})
-    if isinstance(descriptor_params, dict):
-        merged.update(descriptor_params)
-    return merged
-
-
-def resolve_descriptor_path(descriptor: Path | str | None = None) -> Path:
-    if descriptor is not None:
-        return Path(descriptor)
-
-    saved_descriptor = _saved_params().get("descriptor")
-    if isinstance(saved_descriptor, str) and saved_descriptor.strip():
-        return Path(saved_descriptor.strip())
-
-    for candidate in (
-        Path("resources/descriptor.yaml"),
-        Path("resources/descriptor.yml"),
-        Path("resources/descriptor.json"),
-    ):
-        if candidate.exists():
-            return candidate
-    return Path("resources/descriptor.yaml")
-
-
-def resolve_output_dir(
-    output_dir: Path | str | None = None,
-    *,
-    descriptor: Path | str | None = None,
-) -> Path:
-    if output_dir is not None:
-        return Path(output_dir)
-
-    saved_output_dir = _saved_params(descriptor).get("output_dir")
-    if isinstance(saved_output_dir, str) and saved_output_dir.strip():
-        return Path(saved_output_dir.strip())
-
-    return Path("resources")
 
 
 def load_descriptor_document(path: Path | str) -> dict[str, Any]:
+    """Load descriptor file as a dict, optional fields for CLI manipulation."""
     descriptor_path = Path(path)
     if not descriptor_path.exists():
         return {"resources": []}
@@ -145,6 +79,7 @@ def load_descriptor_document(path: Path | str) -> dict[str, Any]:
 
 
 def save_descriptor_document(path: Path | str, document: dict[str, Any]) -> None:
+    """Save descriptor dict back to file via dplib models."""
     save_drive_descriptor(path, DrivePackage.model_validate(document))
 
 
@@ -153,6 +88,7 @@ def get_descriptor_resources(
     *,
     create: bool = False,
 ) -> list[dict[str, Any]]:
+    """Get top-level resources array from descriptor dict."""
     resources = document.get("resources")
     if resources is None and create:
         document["resources"] = []
@@ -167,6 +103,7 @@ def get_package_resources(
     *,
     create: bool = False,
 ) -> list[dict[str, Any]]:
+    """Get nested resources array from a resource dict."""
     resources = resource.get("resources")
     if resources is None:
         if create:
@@ -468,14 +405,10 @@ def _normalize_update_property(property_name: str, *, resource_target: bool) -> 
 
 def _normalize_update_value(property_path: str, value: Any) -> Any:
     if property_path == "syncTarget" and isinstance(value, str):
-        from sharedrive.descriptor import normalize_sync_target
-
         return normalize_sync_target(value)
     if property_path == "sources.0.serviceType" and isinstance(value, str):
         return normalize_service_type(value)
     if property_path == "sources.0.entityType" and isinstance(value, str):
-        from sharedrive.descriptor import normalize_entity_type
-
         return normalize_entity_type(value)
     return value
 
@@ -571,8 +504,6 @@ def clone_descriptor(
         return
 
     document = load_descriptor_document(source_descriptor)
-    from sharedrive.descriptor import save_descriptor_document
-
     save_descriptor_document(target_path, document)
     typer.echo(f"Cloned descriptor: {source_descriptor} -> {target_path}")
 
@@ -628,8 +559,6 @@ def update_command(
             typer.echo(f"Would update {target_label}: {change}")
         return
 
-    from sharedrive.descriptor import save_descriptor_document
-
     save_descriptor_document(descriptor_path, document)
     for change in changed_properties:
         typer.echo(f"Updated {target_label}: {change}")
@@ -651,14 +580,14 @@ def checkout_command(
 
 def _run_download_command(
     descriptor: Path,
-    include: str | list[str],
+    package_name: str,
     output_dir: Path,
     dry_run: bool,
     check_auth: bool,
 ) -> None:
     summary = download_from_descriptor(
         descriptor=descriptor,
-        include=include,
+        include=package_name,
         output_dir=output_dir,
         dry_run=dry_run,
         check_auth=check_auth,
@@ -884,6 +813,11 @@ def set_command(
         "--output-dir",
         help="Default output directory to save.",
     ),
+    package: Optional[str] = typer.Option(
+        None,
+        "--package",
+        help="Default package name to save.",
+    ),
 ) -> None:
     """Set reusable key/value parameters for sharedrive descriptor workflows."""
     parsed = _parse_set_args(list(ctx.args))
@@ -904,6 +838,8 @@ def set_command(
         parsed["descriptor"] = descriptor_path.as_posix()
     if output_dir is not None:
         parsed["output_dir"] = output_dir
+    if package is not None:
+        parsed["package"] = package
     if not parsed:
         raise typer.BadParameter("Provide one or more values to save.")
 
@@ -984,14 +920,14 @@ def add(
     ),
 )
 def fetch(
-    resource_name: Optional[str] = typer.Argument(None, help="Resource name to fetch metadata for."),
+    package: Optional[str] = typer.Argument(None, help="Package name to fetch metadata for. If omitted, uses the last-used package."),
     descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
     source_path: Optional[str] = typer.Option(None, "--source-path", help="Direct source URL/URI to add or update before fetching metadata."),
     resource: Optional[str] = typer.Option(None, "--resource", help="Resource name to use with --source-path."),
     dry_run: bool = typer.Option(False, help="Preview descriptor changes without writing them."),
     env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
 ) -> None:
-    """Fetch remote metadata for one resource into the descriptor."""
+    """Fetch remote metadata for one package into the descriptor."""
     _load_env_file(env_file)
     descriptor_path = resolve_descriptor_path(descriptor)
 
@@ -1006,14 +942,20 @@ def fetch(
 
     _exit_if_descriptor_missing(descriptor_path)
 
-    if resource_name is None:
-        typer.echo("Error: a resource name is required. Pass it as an argument or use --source-path.", err=True)
+    # Try to use provided package or saved default
+    package_name = package
+    if package_name is None:
+        saved = get_saved_params_for_descriptor(descriptor_path)
+        package_name = saved.get("package")
+
+    if package_name is None:
+        typer.echo("Error: a package name is required. Pass it as an argument or use --source-path.", err=True)
         raise typer.Exit(code=1)
 
     try:
         summary = fetch_resource_metadata_in_descriptor(
             descriptor=descriptor_path,
-            resource_name=resource_name,
+            resource_name=package_name,
             dry_run=dry_run,
             log=None,
             googledrive_client_factory=lambda: _make_gdrive_client(None),
@@ -1032,27 +974,14 @@ def fetch(
 @app.command(
     "download",
     epilog=_examples_epilog(
-        "sharedrive download resources/descriptor.yaml --dry-run",
-        "sharedrive download resources/descriptor.yaml --include s3 --include sharepoint",
-        "sharedrive download resources/descriptor.yaml --include spec-workbook --output-dir resources",
+        "sharedrive download --dry-run",
+        "sharedrive download my-package --descriptor resources/descriptor.yaml",
+        "sharedrive download my-package --output-dir resources",
     ),
 )
 def download(
-    descriptor_arg: Optional[Path] = typer.Argument(
-        None,
-        exists=False,
-        help=DESCRIPTOR_DEFAULT_HELP,
-    ),
+    package: Optional[str] = typer.Argument(None, help="Package name to download. If omitted, uses the last-used package."),
     descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
-    include: Optional[list[str]] = typer.Option(
-        None,
-        "--include",
-        "-i",
-        help=(
-            "Include adapter types and/or resource names. "
-            "Repeat the option or pass a comma-separated list."
-        ),
-    ),
     source_path: Optional[str] = typer.Option(None, "--source-path", help="Direct source URL/URI to add or update before downloading."),
     resource: Optional[str] = typer.Option(None, "--resource", help="Resource name to use with --source-path."),
     output_dir: Optional[Path] = typer.Option(None, help="Base output directory for relative resource paths."),
@@ -1060,18 +989,19 @@ def download(
     check_auth: bool = typer.Option(False, "--check-auth", help="Validate service credentials before downloading."),
     env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
 ) -> None:
-    """Download descriptor resources by adapter type or resource name filters."""
+    """Download resources from a package in the descriptor."""
     _load_env_file(env_file)
-    if descriptor is not None and descriptor_arg is not None:
-        raise typer.BadParameter("Use either [descriptor] or --descriptor, not both.")
+    descriptor_path = resolve_descriptor_path(descriptor)
 
-    descriptor_path = resolve_descriptor_path(descriptor or descriptor_arg)
-    include_values = _parse_include_values(include)
+    # Try to use provided package or saved default
+    package_name = package
+    if package_name is None:
+        saved = get_saved_params_for_descriptor(descriptor_path)
+        package_name = saved.get("package")
+
     output_dir_path = resolve_output_dir(output_dir, descriptor=descriptor_path)
 
     if source_path is not None:
-        if include is not None:
-            raise typer.BadParameter("--include cannot be combined with --source-path.")
         _run_direct_source_download(
             descriptor_path=descriptor_path,
             source_path=source_path,
@@ -1083,9 +1013,14 @@ def download(
         return
 
     _exit_if_descriptor_missing(descriptor_path)
+
+    if package_name is None:
+        typer.echo("Error: a package name is required. Pass it as an argument or use --source-path.", err=True)
+        raise typer.Exit(code=1)
+
     _run_download_command(
         descriptor=descriptor_path,
-        include=include_values,
+        package_name=package_name,
         output_dir=output_dir_path,
         dry_run=dry_run,
         check_auth=check_auth,
