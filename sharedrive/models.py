@@ -350,11 +350,8 @@ __all__ = [
     "DriveSource",
     "ENTITY_TYPE_ALIASES",
     "SERVICE_TYPE_ALIASES",
-    "SYNC_TARGET_ALIASES",
     "load_drive_descriptor",
     "normalize_entity_type",
     "normalize_service_type",
-    "normalize_sync_target",
     "save_drive_descriptor",
-    "service_type_adapter_name",
 ]
