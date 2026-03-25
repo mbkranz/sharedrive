@@ -26,6 +26,12 @@ ENTITY_TYPE_ALIASES = {
     "container": "Container",
 }
 
+SYNC_TARGET_ALIASES = {
+    "path": "path",
+    "resource": "resources",
+    "resources": "resources",
+}
+
 
 def normalize_service_type(service_type: str) -> str:
     normalized = service_type.strip()
@@ -62,6 +68,29 @@ def normalize_entity_type(entity_type: str) -> str:
     # Accept unknown entity types as-is for forward compatibility with
     # service-specific types (e.g. "Container", "Bundle", etc.)
     return normalized
+
+
+def normalize_sync_target(sync_target: str) -> str:
+    """Normalize syncTarget to the sharedrive descriptor contract."""
+    normalized = sync_target.strip()
+    if not normalized:
+        raise ValueError("syncTarget must be a non-empty string")
+
+    alias = SYNC_TARGET_ALIASES.get(normalized.lower())
+    if alias is not None:
+        return alias
+
+    raise ValueError(f"Unsupported syncTarget '{sync_target}'.")
+
+
+def service_type_adapter_name(service_type: str) -> str:
+    """Return the runtime adapter name for a canonical service type."""
+    normalized = normalize_service_type(service_type)
+    return {
+        "GoogleDrive": "googledrive",
+        "SharePoint": "sharepoint",
+        "S3": "s3",
+    }[normalized]
 
 
 class DriveSource(Source):
@@ -115,6 +144,24 @@ class DriveResource(Resource):
     def source_entity_type(self) -> Optional[str]:
         source = self.primary_source
         return source.entityType if source is not None else None
+
+    @property
+    def sync_target(self) -> str:
+        """Return the declared sync target for a resource.
+
+        `syncTarget` is a sharedrive authoring field. When omitted, resources with
+        nested `resources` default to `resources`; everything else defaults to
+        `path`.
+        """
+        declared = getattr(self, "syncTarget", None)
+        if isinstance(declared, str) and declared.strip():
+            return normalize_sync_target(declared)
+        return "resources" if isinstance(self.resources, list) and self.resources else "path"
+
+    @property
+    def syncs_to_resources(self) -> bool:
+        """Return whether a resource syncs into nested resources."""
+        return self.sync_target == "resources"
 
     @property
     def is_package(self) -> bool:
@@ -303,8 +350,11 @@ __all__ = [
     "DriveSource",
     "ENTITY_TYPE_ALIASES",
     "SERVICE_TYPE_ALIASES",
+    "SYNC_TARGET_ALIASES",
     "load_drive_descriptor",
     "normalize_entity_type",
     "normalize_service_type",
+    "normalize_sync_target",
     "save_drive_descriptor",
+    "service_type_adapter_name",
 ]
