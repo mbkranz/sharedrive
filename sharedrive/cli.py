@@ -16,7 +16,6 @@ from sharedrive.actions.download import check_auth_for_descriptor, download_from
 from sharedrive.actions.fetch import fetch_resource_metadata_in_descriptor
 from sharedrive.descriptor import (
     DESCRIPTOR_DEFAULTS_FILE,
-    check_descriptor_exists,
     get_descriptor_resources,
     get_package_resources,
     load_descriptor_defaults_store,
@@ -262,7 +261,7 @@ def _has_saved_global_descriptor() -> bool:
 
 
 def _set_active_descriptor(descriptor_path: Path) -> Path:
-    if not check_descriptor_exists(descriptor_path):
+    if not descriptor_path.exists():
         raise typer.BadParameter(f"Descriptor '{descriptor_path}' does not exist.")
 
     store = load_descriptor_defaults_store()
@@ -425,7 +424,7 @@ def _set_nested_property(target: Any, property_path: str, value: Any) -> bool:
 
 
 def _exit_if_descriptor_missing(descriptor_path: Path) -> None:
-    if check_descriptor_exists(descriptor_path):
+    if descriptor_path.exists():
         return
 
     typer.echo(f"Descriptor '{descriptor_path}' does not exist.", err=True)
@@ -777,7 +776,7 @@ def set_command(
     """Set reusable key/value parameters for sharedrive descriptor workflows."""
     parsed = _parse_set_args(list(ctx.args))
 
-    if descriptor_scope is not None and not check_descriptor_exists(descriptor_scope):
+    if descriptor_scope is not None and not Path(descriptor_scope).exists():
         raise typer.BadParameter(
             f"Descriptor '{descriptor_scope}' does not exist.",
             param_hint="<descriptor>",
@@ -785,7 +784,7 @@ def set_command(
 
     if descriptor is not None:
         descriptor_path = Path(descriptor)
-        if not check_descriptor_exists(descriptor_path):
+        if not descriptor_path.exists():
             raise typer.BadParameter(
                 f"Descriptor '{descriptor_path}' does not exist.",
                 param_hint="--descriptor",
@@ -810,6 +809,14 @@ def set_command(
         "sharedrive add census-docs --path downloads/census --source https://drive.google.com/drive/folders/<id> --service-type GoogleDrive --entity-type Directory --sync-target resources",
     ),
 )
+
+@app.command(
+    "add",
+    epilog=_examples_epilog(
+        "sharedrive add my-resource --path /data/file.csv --source https://drive.google.com/file/d/123...",
+        "sharedrive add my-package --package --path /data/ --source https://drive.google.com/drive/folders/abc...",
+    ),
+)
 def add(
     name: str = typer.Argument(..., help="Resource name to store in the descriptor."),
     path: str = typer.Option(..., "--path", help="Resource path stored in the descriptor."),
@@ -818,11 +825,12 @@ def add(
     description: Optional[str] = typer.Option(None, "--description", help="Optional resource description."),
     service_type: Optional[str] = typer.Option(None, "--service-type", help="Source serviceType. If omitted, infer from source."),
     entity_type: Optional[str] = typer.Option(None, "--entity-type", help="Source entityType such as File, Directory, or Container."),
-    sync_target: Optional[str] = typer.Option(None, "--sync-target", help="Descriptor syncTarget: 'path' or 'resources'."),
+    package: bool = typer.Option(False, "--package", help="Treat as a package (creates a resource with nested resources)."),
+    catalog: bool = typer.Option(False, "--catalog", help="Treat as a catalog (alias for package, future extension)."),
     profile: Optional[str] = typer.Option(None, "--profile", help="Optional metadata profile for the resource."),
     descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
 ) -> None:
-    """Add a resource entry to a descriptor."""
+    """Add a resource or package entry to a descriptor."""
     descriptor_path = resolve_descriptor_path(descriptor)
     explicit_descriptor = descriptor is not None or _has_saved_global_descriptor()
     if explicit_descriptor:
@@ -838,7 +846,7 @@ def add(
             description=description,
             service_type=service_type,
             entity_type=entity_type,
-            sync_target=sync_target,
+            package=package or catalog,
             profile=profile,
             create_if_missing=not explicit_descriptor,
         )
@@ -850,7 +858,8 @@ def add(
     typer.echo(
         f"Added resource '{resource['name']}' to {descriptor_path} "
         f"with serviceType '{primary_source['serviceType']}', "
-        f"entityType '{primary_source['entityType']}', and syncTarget '{resource['syncTarget']}'."
+        f"entityType '{primary_source['entityType']}'."
+        + (" (package)" if "resources" in resource else "")
     )
 
 
@@ -862,35 +871,18 @@ def add(
     ),
 )
 def fetch(
-    resource_name: Optional[str] = typer.Argument(None, help="Top-level resource name whose metadata should be refreshed."),
     descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
-    source_path: Optional[str] = typer.Option(None, "--source-path", help="Direct source URL/URI to add or update before fetching metadata."),
-    resource: Optional[str] = typer.Option(None, "--resource", help="Resource name to use with --source-path."),
+    source: Optional[str] = typer.Option(None, "--source", help="Direct source URL/URI to add or update before fetching metadata."),
     dry_run: bool = typer.Option(False, help="Preview descriptor changes without writing them."),
     env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
 ) -> None:
     """Fetch remote metadata for one resource into the descriptor."""
     _load_env_file(env_file)
     descriptor_path = resolve_descriptor_path(descriptor)
-    if source_path is not None:
-        if resource_name is not None:
-            raise typer.BadParameter("Use either <resource-name> or --source-path, not both.")
-        _run_direct_source_fetch(
-            descriptor_path=descriptor_path,
-            source_path=source_path,
-            resource_name=resource,
-            dry_run=dry_run,
-        )
-        return
-
-    if resource_name is None:
-        raise typer.BadParameter("Provide <resource-name> or use --source-path.")
-
     _exit_if_descriptor_missing(descriptor_path)
     try:
         summary = fetch_resource_metadata_in_descriptor(
             descriptor=descriptor_path,
-            resource_name=resource_name,
             dry_run=dry_run,
             log=None,
             googledrive_client_factory=lambda: _make_gdrive_client(None),
