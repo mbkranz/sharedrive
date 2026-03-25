@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from sharedrive.descriptor import (
-    get_descriptor_resources,
-    load_descriptor_document,
+import yaml
+
+from sharedrive.models import (
     normalize_entity_type,
     normalize_service_type,
-    save_descriptor_document,
+    load_drive_descriptor,
 )
 
 SUPPORTED_SERVICE_TYPES = {"GoogleDrive", "SharePoint", "S3"}
@@ -123,7 +124,7 @@ def add_resource_to_descriptor(
     The returned dict is a raw descriptor resource object that includes
     ``syncTarget`` and, for package resources, an empty ``resources`` list.
     Both fields survive the YAML round-trip because the descriptor is written
-    directly via ``save_descriptor_document`` rather than through the dplib
+    directly via ``save_drive_descriptor`` rather than through the dplib
     model serializer (which strips empty lists via ``clean_dict``).
 
     .. note::
@@ -173,12 +174,13 @@ def add_resource_to_descriptor(
             "Pass sync_target='resources' or sync_target='path'."
         )
 
-    document = load_descriptor_document(descriptor_path)
-    resources = get_descriptor_resources(document, create=True)
+    document = load_drive_descriptor(descriptor_path, create_if_missing=create_if_missing)
+    resources = document.resources
 
     normalized_name = resource_name.strip().lower()
     if any(
-        isinstance(r, dict) and str(r.get("name", "")).strip().lower() == normalized_name
+        (isinstance(r, dict) and str(r.get("name", "")).strip().lower() == normalized_name)
+        or (hasattr(r, 'name') and str(r.name or "").strip().lower() == normalized_name)
         for r in resources
     ):
         raise ValueError(f"Resource '{resource_name}' already exists in the descriptor")
@@ -205,7 +207,35 @@ def add_resource_to_descriptor(
         resource_payload["resources"] = []
 
     resources.append(resource_payload)
-    save_descriptor_document(descriptor_path, document)
+
+    # Save descriptor as YAML/JSON, preserving the raw resource structures (including empty resources lists)
+    descriptor_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor_dict = document.to_dict()
+
+    # Serialize resources manually to preserve empty lists in raw dict items
+    serialized_resources = []
+    for resource in resources:
+        if isinstance(resource, dict):
+            # Raw dict - preserve as-is
+            serialized_resources.append(resource)
+        else:
+            # Model object - serialize to dict
+            serialized_resources.append(resource.to_dict())
+
+    descriptor_dict["resources"] = serialized_resources
+
+    suffix = descriptor_path.suffix.lower()
+    if suffix == ".json":
+        descriptor_path.write_text(
+            json.dumps(descriptor_dict, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    else:
+        # YAML (default for .yaml, .yml, or unknown extensions)
+        descriptor_path.write_text(
+            yaml.dump(descriptor_dict, default_flow_style=False, allow_unicode=True),
+            encoding="utf-8",
+        )
     return resource_payload
 
 

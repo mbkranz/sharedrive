@@ -8,31 +8,15 @@ from typing import Any, Callable, Iterable
 from urllib.parse import urlparse
 
 from sharedrive.clients.aws import check_s3_credentials, download_s3_url
+from sharedrive.helpers import resolve_default_descriptor
 from sharedrive.models import (
     load_drive_descriptor,
     normalize_entity_type,
     normalize_service_type,
+    service_type_adapter_name,
 )
 
 LogFn = Callable[[str], None]
-
-
-def ensure_descriptor_exists(path: Path | str) -> Path:
-    descriptor_path = Path(path)
-    if not descriptor_path.exists():
-        raise FileNotFoundError(f"Descriptor '{descriptor_path}' does not exist.")
-    return descriptor_path
-
-
-def resolve_default_descriptor() -> Path:
-    for candidate in (
-        Path("resources/descriptor.yaml"),
-        Path("resources/descriptor.yml"),
-        Path("resources/descriptor.json"),
-    ):
-        if candidate.exists():
-            return candidate
-    return Path("resources/descriptor.yaml")
 
 
 def load_descriptor(path: Path | str) -> list[dict[str, Any]]:
@@ -78,15 +62,6 @@ def get_primary_source(
     if not isinstance(primary, dict):
         raise ValueError("Resource source entries must be objects")
     return primary
-
-
-def service_type_adapter_name(service_type: str) -> str:
-    normalized = normalize_service_type(service_type)
-    return {
-        "GoogleDrive": "googledrive",
-        "SharePoint": "sharepoint",
-        "S3": "s3",
-    }[normalized]
 
 
 def source_path(resource: Any) -> str | None:
@@ -620,7 +595,7 @@ def check_auth_for_descriptor(
     googledrive_client_factory: Callable[[], Any] | None = None,
     s3_auth_checker: Callable[[], None] | None = None,
 ) -> list[AuthCheckResult]:
-    descriptor_path = ensure_descriptor_exists(descriptor)
+    descriptor_path = Path(descriptor)
     resources = load_descriptor(descriptor_path)
     adapters = _selected_adapter_names(resources, include)
     return check_auth_for_adapters(
@@ -644,7 +619,7 @@ def download_from_descriptor(
     use_cloudpathlib: bool = True,
 ) -> DownloadSummary:
     """Download resources from a descriptor using adapter-specific clients."""
-    descriptor_path = ensure_descriptor_exists(descriptor)
+    descriptor_path = Path(descriptor)
     include_set = _normalize_include(include)
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
