@@ -339,14 +339,17 @@ def _download_googledrive_directory(
     emit: LogFn,
 ) -> tuple[int, int]:
     resource_name = str(resource.get("name", "resource")).strip() or "resource"
-    discovered_files = client.list_folder_files_from_weburl(source_url, recursive=True)
+    folder_item = client.get_from_weburl(source_url)
 
     downloaded = 0
     dry_run_actions = 0
-    for entry in discovered_files:
-        relative_path = str(entry.get("relative_path", entry.get("name", entry.get("id", "")))).strip()
+    for child in folder_item.children:
+        if child.is_directory:
+            continue
+            
+        relative_path = child.path or child.name or child.id
         if not relative_path:
-            relative_path = str(entry.get("id", "item"))
+            relative_path = child.id
 
         destinations = [root / Path(relative_path) for root in output_roots]
         if dry_run:
@@ -359,10 +362,11 @@ def _download_googledrive_directory(
 
         primary_destination = destinations[0]
         primary_destination.parent.mkdir(parents=True, exist_ok=True)
-        client.download_file(str(entry["id"]), output_path=str(primary_destination))
+        child.download(str(primary_destination))
 
         for destination in destinations[1:]:
             destination.parent.mkdir(parents=True, exist_ok=True)
+            import shutil
             shutil.copy2(primary_destination, destination)
 
         downloaded += len(destinations)
@@ -380,14 +384,17 @@ def _download_sharepoint_directory(
     emit: LogFn,
 ) -> tuple[int, int]:
     resource_name = str(resource.get("name", "resource")).strip() or "resource"
-    discovered_files = client.list_folder_files_from_weburl(source_url, recursive=True)
+    folder_item = client.get_from_weburl(source_url)
 
     downloaded = 0
     dry_run_actions = 0
-    for entry in discovered_files:
-        relative_path = str(entry.get("relative_path", entry.get("name", entry.get("id", "")))).strip()
+    for child in folder_item.children:
+        if child.is_directory:
+            continue
+            
+        relative_path = child.path or child.name or child.id
         if not relative_path:
-            relative_path = str(entry.get("id", "item"))
+            relative_path = child.id
 
         destinations = [root / Path(relative_path) for root in output_roots]
         if dry_run:
@@ -400,10 +407,11 @@ def _download_sharepoint_directory(
 
         primary_destination = destinations[0]
         primary_destination.parent.mkdir(parents=True, exist_ok=True)
-        client.download_from_weburl(str(entry["webUrl"]), output_path=primary_destination, dry_run=False)
+        child.download(str(primary_destination))
 
         for destination in destinations[1:]:
             destination.parent.mkdir(parents=True, exist_ok=True)
+            import shutil
             shutil.copy2(primary_destination, destination)
 
         downloaded += len(destinations)
@@ -651,11 +659,8 @@ def download_from_descriptor(
                 if "sharepoint" not in clients:
                     factory = sharepoint_client_factory or _default_sharepoint_client_factory
                     clients["sharepoint"] = factory()
-                clients["sharepoint"].download_from_weburl(
-                    url=source_url,
-                    output_path=output_path,
-                    dry_run=False,
-                )
+                item = clients["sharepoint"].get_from_weburl(source_url)
+                item.download(str(output_path))
             elif adapter_name == "s3":
                 result = download_s3_url(
                     source_url,
@@ -669,10 +674,8 @@ def download_from_descriptor(
                 if "googledrive" not in clients:
                     factory = googledrive_client_factory or _default_googledrive_client_factory
                     clients["googledrive"] = factory()
-                clients["googledrive"].download_from_weburl(
-                    source_url,
-                    output_path=str(output_path),
-                )
+                item = clients["googledrive"].get_from_weburl(source_url)
+                item.download(str(output_path))
             else:
                 emit(
                     f"Warning, {resource_name} has unsupported adapter '{adapter_name}'"
