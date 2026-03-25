@@ -104,9 +104,17 @@ def test_fetch_from_descriptor_check_auth_allows_download_when_ready(tmp_path: P
         def _ensure_valid_credentials(self) -> None:
             return None
 
-        def download_from_weburl(self, url: str, output_path: str) -> None:
-            self.calls.append((url, output_path))
-            Path(output_path).write_text("ok", encoding="utf-8")
+        def get_from_weburl(self, url: str) -> None:
+            calls = self.calls
+            class DummyFileItem:
+                @property
+                def is_directory(self) -> bool:
+                    return False
+                def download(self, target_path: str) -> None:
+                    calls.append((url, target_path))
+                    Path(target_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(target_path).write_text("ok", encoding="utf-8")
+            return DummyFileItem()
 
     client = DummyDriveClient()
 
@@ -153,17 +161,36 @@ resources:
             self.list_calls: list[tuple[str, bool]] = []
             self.download_calls: list[tuple[str, str]] = []
 
-        def list_folder_files_from_weburl(self, url: str, *, recursive: bool = True):
-            self.list_calls.append((url, recursive))
-            return [
-                {"id": "sheet-1", "name": "summary.csv", "relative_path": "summary.csv"},
-                {"id": "sheet-2", "name": "detail.csv", "relative_path": "nested/detail.csv"},
-            ]
+        def get_from_weburl(self, url: str):
+            list_calls = self.list_calls
+            download_calls = self.download_calls
+            list_calls.append((url, True))
 
-        def download_file(self, file_id: str, output_path: str) -> None:
-            self.download_calls.append((file_id, output_path))
-            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(output_path).write_text(file_id, encoding="utf-8")
+            class DummyItem:
+                def __init__(self, id, name, relative_path):
+                    self.id = id
+                    self.name = name
+                    self.path = relative_path
+                    self.is_directory = False
+
+                def download(self, target_path: str):
+                    download_calls.append((self.id, target_path))
+                    Path(target_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(target_path).write_text(self.id, encoding="utf-8")
+
+            class DummyFolder:
+                @property
+                def is_directory(self):
+                    return True
+
+                @property
+                def children(self):
+                    return [
+                        DummyItem("sheet-1", "summary.csv", "summary.csv"),
+                        DummyItem("sheet-2", "detail.csv", "nested/detail.csv"),
+                    ]
+
+            return DummyFolder()
 
     client = DummyDriveClient()
 
@@ -211,17 +238,34 @@ resources:
         def __init__(self) -> None:
             self.download_calls: list[tuple[str, str]] = []
 
-        def list_folder_files_from_weburl(self, _url: str, *, recursive: bool = True):
-            assert recursive is True
-            return [
-                {"id": "file-1", "relative_path": "summary.csv"},
-                {"id": "file-2", "relative_path": "nested/detail.csv"},
-            ]
+        def get_from_weburl(self, _url: str):
+            download_calls = self.download_calls
 
-        def download_file(self, file_id: str, output_path: str) -> None:
-            self.download_calls.append((file_id, output_path))
-            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(output_path).write_text(file_id, encoding="utf-8")
+            class DummyItem:
+                def __init__(self, id, relative_path):
+                    self.id = id
+                    self.name = relative_path
+                    self.path = relative_path
+                    self.is_directory = False
+
+                def download(self, target_path: str):
+                    download_calls.append((self.id, target_path))
+                    Path(target_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(target_path).write_text(self.id, encoding="utf-8")
+
+            class DummyFolder:
+                @property
+                def is_directory(self):
+                    return True
+
+                @property
+                def children(self):
+                    return [
+                        DummyItem("file-1", "summary.csv"),
+                        DummyItem("file-2", "nested/detail.csv"),
+                    ]
+
+            return DummyFolder()
 
     client = DummyDriveClient()
 
@@ -275,10 +319,20 @@ resources:
         def __init__(self) -> None:
             self.calls: list[tuple[str, str]] = []
 
-        def download_from_weburl(self, url: str, output_path: str) -> None:
-            self.calls.append((url, output_path))
-            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(output_path).write_text("nested-ok", encoding="utf-8")
+        def get_from_weburl(self, url: str):
+            calls = self.calls
+
+            class DummyFileItem:
+                @property
+                def is_directory(self) -> bool:
+                    return False
+
+                def download(self, target_path: str) -> None:
+                    calls.append((url, target_path))
+                    Path(target_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(target_path).write_text("nested-ok", encoding="utf-8")
+
+            return DummyFileItem()
 
     client = DummyDriveClient()
 
@@ -336,10 +390,20 @@ resources:
         def __init__(self) -> None:
             self.calls: list[tuple[str, str]] = []
 
-        def download_from_weburl(self, url: str, output_path: str) -> None:
-            self.calls.append((url, output_path))
-            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(output_path).write_text("nested-ok", encoding="utf-8")
+        def get_from_weburl(self, url: str):
+            calls = self.calls
+
+            class DummyFileItem:
+                @property
+                def is_directory(self) -> bool:
+                    return False
+
+                def download(self, target_path: str) -> None:
+                    calls.append((url, target_path))
+                    Path(target_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(target_path).write_text("nested-ok", encoding="utf-8")
+
+            return DummyFileItem()
 
     client = DummyDriveClient()
 
@@ -390,10 +454,20 @@ resources:
         def __init__(self) -> None:
             self.calls: list[tuple[str, str]] = []
 
-        def download_from_weburl(self, url: str, output_path: str) -> None:
-            self.calls.append((url, output_path))
-            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(output_path).write_text("nested-ok", encoding="utf-8")
+        def get_from_weburl(self, url: str):
+            calls = self.calls
+
+            class DummyFileItem:
+                @property
+                def is_directory(self) -> bool:
+                    return False
+
+                def download(self, target_path: str) -> None:
+                    calls.append((url, target_path))
+                    Path(target_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(target_path).write_text("nested-ok", encoding="utf-8")
+
+            return DummyFileItem()
 
     client = DummyDriveClient()
 
@@ -434,19 +508,74 @@ resources:
     )
 
     class DummySharepointClient:
-        def list_folder_files_from_weburl(self, url: str, *, recursive: bool = True):
+        def get_from_weburl(self, url: str):
             assert url == "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs"
-            assert recursive is True
-            return [
-                {
-                    "webUrl": "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/spec.xlsx",
-                    "relative_path": "spec.xlsx",
-                },
-                {
-                    "webUrl": "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/nested/detail.csv",
-                    "relative_path": "nested/detail.csv",
-                },
-            ]
+
+            class DummyFolder:
+                @property
+                def is_directory(self): return True
+
+                @property
+                def children(self):
+                    class DummyItem1:
+                        @property
+                        def id(self): return "1"
+                        @property
+                        def name(self): return "spec.xlsx"
+                        @property
+                        def path(self): return "spec.xlsx"
+                        @property
+                        def is_directory(self): return False
+                        @property
+                        def source_url(self): return "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/spec.xlsx"
+                        def to_dp(self):
+                            from sharedrive.models import DriveSource, DriveResource
+                            return DriveResource(
+                                name="spec.xlsx",
+                                path="downloads/shared-specs/spec.xlsx",
+                                format="xlsx",
+                                mediatype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                sources=[
+                                    DriveSource(
+                                        title="spec.xlsx",
+                                        path="https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/spec.xlsx",
+                                        email="",
+                                        serviceType="SharePoint",
+                                        entityType="object",
+                                    )
+                                ],
+                            )
+
+                    class DummyItem2:
+                        @property
+                        def id(self): return "2"
+                        @property
+                        def name(self): return "detail.csv"
+                        @property
+                        def path(self): return "nested/detail.csv"
+                        @property
+                        def is_directory(self): return False
+                        @property
+                        def source_url(self): return "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/nested/detail.csv"
+                        def to_dp(self):
+                            from sharedrive.models import DriveSource, DriveResource
+                            return DriveResource(
+                                name="detail.csv",
+                                path="downloads/shared-specs/nested/detail.csv",
+                                format="csv",
+                                mediatype="text/csv",
+                                sources=[
+                                    DriveSource(
+                                        title="detail.csv",
+                                        path="https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/nested/detail.csv",
+                                        email="",
+                                        serviceType="SharePoint",
+                                        entityType="object",
+                                    )
+                                ],
+                            )
+                    return [DummyItem1(), DummyItem2()]
+            return DummyFolder()
 
     summary = fetch_resource_metadata_in_descriptor(
         descriptor=descriptor,

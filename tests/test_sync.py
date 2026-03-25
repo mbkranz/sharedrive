@@ -29,13 +29,34 @@ def test_fetch_resource_metadata_in_descriptor_writes_nested_resources(tmp_path:
     _write_syncable_descriptor(descriptor)
 
     class DummyDriveClient:
-        def list_folder_files_from_weburl(self, url: str, *, recursive: bool = True):
+        def get_from_weburl(self, url: str):
             assert url == "https://drive.google.com/drive/folders/folder123"
-            assert recursive is True
-            return [
-                {"id": "file-2", "relative_path": "nested/detail.csv"},
-                {"id": "file-1", "relative_path": "summary.csv"},
-            ]
+            
+            class DummyItem:
+                def __init__(self, n, p, d=False):
+                    self.name = n
+                    self.path = p
+                    self.is_directory = d
+                    self.id = "id"
+                    self.service_type = "GoogleDrive"
+                    self.source_url = f"https://drive.google.com/open?id={n}"
+                def to_dp(self):
+                    from sharedrive.models import DriveResource, DriveSource
+                    return DriveResource(
+                        name=self.path,
+                        path=self.path,
+                        sources=[DriveSource(path=self.source_url, serviceType=self.service_type, entityType="File")]
+                    )
+                
+            class DummyFolder(DummyItem):
+                @property
+                def children(self):
+                    return [
+                        DummyItem("file-2", "nested/detail.csv"),
+                        DummyItem("file-1", "summary.csv"),
+                    ]
+
+            return DummyFolder("folder", "folder", True)
 
     summary = fetch_resource_metadata_in_descriptor(
         descriptor,
@@ -81,9 +102,29 @@ def test_fetch_resource_metadata_in_descriptor_dry_run_does_not_write(tmp_path: 
     before = descriptor.read_text(encoding="utf-8")
 
     class DummyDriveClient:
-        def list_folder_files_from_weburl(self, _url: str, *, recursive: bool = True):
-            assert recursive is True
-            return [{"id": "file-1", "relative_path": "summary.csv"}]
+        def get_from_weburl(self, _url: str):
+            class DummyItem:
+                def __init__(self, n, p, d=False):
+                    self.name = n
+                    self.path = p
+                    self.is_directory = d
+                    self.id = "id"
+                    self.service_type = "GoogleDrive"
+                    self.source_url = f"https://drive.google.com/open?id={n}"
+                def to_dp(self):
+                    from sharedrive.models import DriveResource, DriveSource
+                    return DriveResource(
+                        name=self.path,
+                        path=self.path,
+                        sources=[DriveSource(path=self.source_url, serviceType=self.service_type, entityType="File")]
+                    )
+            
+            class DummyFolder(DummyItem):
+                @property
+                def children(self):
+                    return [DummyItem("file-1", "summary.csv")]
+                    
+            return DummyFolder("folder", "folder", True)
 
     summary = fetch_resource_metadata_in_descriptor(
         descriptor,
