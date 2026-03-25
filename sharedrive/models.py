@@ -41,6 +41,15 @@ def normalize_service_type(service_type: str) -> str:
 
 
 def normalize_entity_type(entity_type: str) -> str:
+    """Normalize source entity type to OpenMetadata-style class naming.
+
+    Known aliases (e.g. ``"file"`` → ``"File"``, ``"folder"`` → ``"Directory"``)
+    are canonicalized.  Unknown values are returned as-is to preserve
+    forward compatibility with service-specific types that are not yet
+    enumerated here (e.g. ``"Bundle"``, ``"Container"``, vendor extensions).
+    Callers that need strict validation should check the returned value against
+    their own allow-list.
+    """
     normalized = entity_type.strip()
     if not normalized:
         raise ValueError("entityType must be a non-empty string")
@@ -50,7 +59,9 @@ def normalize_entity_type(entity_type: str) -> str:
         return alias
     if normalized in set(ENTITY_TYPE_ALIASES.values()):
         return normalized
-    raise ValueError(f"Unsupported entityType '{entity_type}'.")
+    # Accept unknown entity types as-is for forward compatibility with
+    # service-specific types (e.g. "Container", "Bundle", etc.)
+    return normalized
 
 
 class DriveSource(Source):
@@ -146,12 +157,25 @@ class DriveResource(Resource):
 
 
 def _coerce_drive_entry(value: Any) -> "DriveResource | DrivePackage":
+    """Coerce a raw dict into a DriveResource or DrivePackage.
+
+    A dict is treated as a DrivePackage when:
+    - it contains a ``resources`` list (populated or empty), OR
+    - it declares ``syncTarget: "resources"``
+
+    The second condition handles descriptors whose ``resources: []`` list was
+    stripped by ``clean_dict`` during a previous save, ensuring that a
+    round-tripped package resource is still recognized as a DrivePackage even
+    when its nested resources list is absent from the serialized form.
+    """
     if isinstance(value, (DriveResource, DrivePackage)):
         return value
     if not isinstance(value, dict):
         raise ValueError("Drive descriptor resources must be objects")
 
-    if isinstance(value.get("resources"), list):
+    # Treat as a package when it has nested resources OR when syncTarget is
+    # explicitly set to "resources" (even before any resources are populated).
+    if isinstance(value.get("resources"), list) or value.get("syncTarget") == "resources":
         return DrivePackage.model_validate(value)
     return DriveResource.model_validate(value)
 

@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from sharedrive.item import DriveItem
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from sharedrive.actions.download import resource_adapter_name, resource_source_url
 from sharedrive.models import (
@@ -16,15 +15,31 @@ from sharedrive.models import (
 LogFn = Callable[[str], None]
 
 
-def _build_child_resources(drive_item: "DriveItem") -> list[dict[str, Any]]:
-    entry = drive_item.to_dp()
-    if isinstance(entry, DrivePackage):
-        items: list[DriveResource | DrivePackage] = entry.resources
+def _iter_drive_leaf_items(item: Any) -> Iterable[Any]:
+    """Recursively yield non-directory children from a drive item tree.
+
+    Works with any object that exposes ``is_directory`` and ``children``
+    attributes, including concrete ``DriveFolder`` subclasses and lightweight
+    test doubles without the ``iter_files`` method.
+    """
+    if getattr(item, "is_directory", False):
+        for child in item.children:
+            yield from _iter_drive_leaf_items(child)
     else:
-        items = [entry]
+        yield item
+
+
+def _build_child_resources(drive_item: Any) -> list[dict[str, Any]]:
+    """Build sorted resource dicts from all leaf (non-directory) items.
+
+    Iterates the item tree using ``is_directory`` / ``children`` rather than
+    the concrete ``iter_files`` method so that both real adapter objects and
+    test doubles work without a shared base class.
+    """
+    leaf_items = list(_iter_drive_leaf_items(drive_item))
     return [
-        item.to_dict()
-        for item in sorted(items, key=lambda item: str(item.path or ""))
+        item.to_dp().to_dict()
+        for item in sorted(leaf_items, key=lambda i: str(getattr(i, "path", "") or ""))
     ]
 
 
@@ -95,7 +110,9 @@ def fetch_resource_metadata_in_descriptor(
     resolved_name = str(resource.name or resource_name).strip() or resource_name
     if not isinstance(resource, DrivePackage):
         raise ValueError(
-            f"Resource '{resolved_name}' is not a package resource."
+            f"Resource '{resolved_name}' must have syncTarget 'resources' to use fetch. "
+            "Only package resources (syncTarget: resources) can have their remote "
+            "metadata fetched into nested descriptor resources."
         )
     source_url = resource_source_url(resource)
     if not source_url:

@@ -4,14 +4,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from sharedrive.models import (
-    DrivePackage,
-    DriveResource,
-    DriveSource,
-    load_drive_descriptor,
+from sharedrive.descriptor import (
+    get_descriptor_resources,
+    load_descriptor_document,
     normalize_entity_type,
     normalize_service_type,
-    save_drive_descriptor,
+    save_descriptor_document,
 )
 
 SUPPORTED_SERVICE_TYPES = {"GoogleDrive", "SharePoint", "S3"}
@@ -120,8 +118,26 @@ def add_resource_to_descriptor(
     profile: str | None = None,
     create_if_missing: bool = False,
 ) -> dict[str, Any]:
-    """Append a resource entry to a descriptor and return the created resource."""
+    """Append a resource entry to a descriptor and return the created resource.
+
+    The returned dict is a raw descriptor resource object that includes
+    ``syncTarget`` and, for package resources, an empty ``resources`` list.
+    Both fields survive the YAML round-trip because the descriptor is written
+    directly via ``save_descriptor_document`` rather than through the dplib
+    model serializer (which strips empty lists via ``clean_dict``).
+
+    .. note::
+        When the resolved ``entityType`` is ``"Directory"``, ``sync_target``
+        **must** be supplied explicitly (either ``"path"`` or ``"resources"``).
+        Omitting it raises :class:`ValueError` because the caller must decide
+        whether directory contents are downloaded as individual files
+        (``syncTarget: path``) or indexed as nested descriptor resources
+        (``syncTarget: resources``).
+    """
     descriptor_path = Path(descriptor)
+
+    if not create_if_missing and not descriptor_path.exists():
+        raise FileNotFoundError(f"Descriptor '{descriptor_path}' does not exist.")
 
     resource_name = _require_non_empty(name, "name")
     resource_path = _require_non_empty(path, "path")
@@ -138,6 +154,7 @@ def add_resource_to_descriptor(
     resource_profile = None
     if profile is not None:
         resource_profile = _require_non_empty(profile, "profile")
+
     as_package = package
     if sync_target is not None:
         normalized_legacy_target = sync_target.strip().lower()
@@ -148,34 +165,48 @@ def add_resource_to_descriptor(
         else:
             raise ValueError(f"Unsupported legacy sync_target '{sync_target}'.")
 
-    descriptor_model = load_drive_descriptor(
-        descriptor_path,
-        create_if_missing=create_if_missing,
-    )
+    # Directories must explicitly declare a syncTarget so the caller decides
+    # whether files are synced individually (path) or as nested resources.
+    if resolved_entity_type == "Directory" and sync_target is None:
+        raise ValueError(
+            "syncTarget is required when entityType is 'Directory'. "
+            "Pass sync_target='resources' or sync_target='path'."
+        )
 
-    existing_reference = descriptor_model.get_resource_reference(resource_name)
-    if existing_reference is not None:
+    document = load_descriptor_document(descriptor_path)
+    resources = get_descriptor_resources(document, create=True)
+
+    normalized_name = resource_name.strip().lower()
+    if any(
+        isinstance(r, dict) and str(r.get("name", "")).strip().lower() == normalized_name
+        for r in resources
+    ):
         raise ValueError(f"Resource '{resource_name}' already exists in the descriptor")
 
-    resource_cls = DrivePackage if as_package else DriveResource
-    resource = resource_cls(
-        name=resource_name,
-        path=resource_path,
-        title=title.strip() if title is not None and title.strip() else None,
-        description=description.strip() if description is not None and description.strip() else None,
-        profile=resource_profile,
-        sources=[
-            DriveSource(
-                path=resource_source,
-                serviceType=resolved_service_type,
-                entityType=resolved_entity_type,
-            )
+    resource_payload: dict[str, Any] = {
+        "name": resource_name,
+        "path": resource_path,
+        "syncTarget": "resources" if as_package else "path",
+        "sources": [
+            {
+                "path": resource_source,
+                "serviceType": resolved_service_type,
+                "entityType": resolved_entity_type,
+            }
         ],
-        resources=[] if as_package else None,
-    )
-    descriptor_model.add_resource(resource)
-    save_drive_descriptor(descriptor_path, descriptor_model)
-    return resource.to_dict()
+    }
+    if title is not None and title.strip():
+        resource_payload["title"] = title.strip()
+    if description is not None and description.strip():
+        resource_payload["description"] = description.strip()
+    if resource_profile is not None:
+        resource_payload["profile"] = resource_profile
+    if as_package:
+        resource_payload["resources"] = []
+
+    resources.append(resource_payload)
+    save_descriptor_document(descriptor_path, document)
+    return resource_payload
 
 
 __all__ = [
@@ -187,3 +218,4 @@ __all__ = [
     "resolve_entity_type",
     "resolve_service_type",
 ]
+

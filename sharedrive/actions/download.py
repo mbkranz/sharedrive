@@ -132,6 +132,9 @@ def source_entity_type(resource: Any) -> str | None:
 
 
 def resource_sync_target(resource: dict[str, Any]) -> str:
+    declared = resource.get("syncTarget")
+    if declared == "resources":
+        return "resources"
     return "resources" if isinstance(resource.get("resources"), list) else "path"
 
 
@@ -440,6 +443,20 @@ def _resource_or_descendant_matches_include(
     return False
 
 
+def _iter_drive_item_files(item: Any) -> Iterable[Any]:
+    """Recursively yield non-directory children from a drive item tree.
+
+    Works with any object exposing ``is_directory`` and ``children`` attributes,
+    including concrete ``DriveFolder`` subclasses and lightweight test doubles
+    that do not implement the ``iter_files`` method.
+    """
+    if getattr(item, "is_directory", False):
+        for child in item.children:
+            yield from _iter_drive_item_files(child)
+    else:
+        yield item
+
+
 def _download_googledrive_directory(
     resource: dict[str, Any],
     *,
@@ -454,10 +471,10 @@ def _download_googledrive_directory(
 
     downloaded = 0
     dry_run_actions = 0
-    for child in folder_item.iter_files():
-        relative_path = child.path or child.name or child.id
+    for child in _iter_drive_item_files(folder_item):
+        relative_path = child.path or child.name or getattr(child, "id", None)
         if not relative_path:
-            relative_path = child.id
+            relative_path = getattr(child, "id", "file")
 
         destinations = [root / Path(relative_path) for root in output_roots]
         if dry_run:
@@ -496,10 +513,10 @@ def _download_sharepoint_directory(
 
     downloaded = 0
     dry_run_actions = 0
-    for child in folder_item.iter_files():
-        relative_path = child.path or child.name or child.id
+    for child in _iter_drive_item_files(folder_item):
+        relative_path = child.path or child.name or getattr(child, "id", None)
         if not relative_path:
-            relative_path = child.id
+            relative_path = getattr(child, "id", "file")
 
         destinations = [root / Path(relative_path) for root in output_roots]
         if dry_run:

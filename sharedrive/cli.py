@@ -17,7 +17,6 @@ from sharedrive.actions.fetch import fetch_resource_metadata_in_descriptor
 from sharedrive.models import (
     DrivePackage,
     load_drive_descriptor,
-    normalize_entity_type,
     normalize_service_type,
     save_drive_descriptor,
 )
@@ -981,21 +980,40 @@ def add(
     epilog=_examples_epilog(
         "sharedrive fetch census-package --descriptor resources/descriptor.yaml --dry-run",
         "sharedrive fetch census-package --descriptor resources/descriptor.yaml",
+        "sharedrive fetch --source-path https://drive.google.com/drive/folders/<id> --resource my-package",
     ),
 )
 def fetch(
+    resource_name: Optional[str] = typer.Argument(None, help="Resource name to fetch metadata for."),
     descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
-    source: Optional[str] = typer.Option(None, "--source", help="Direct source URL/URI to add or update before fetching metadata."),
+    source_path: Optional[str] = typer.Option(None, "--source-path", help="Direct source URL/URI to add or update before fetching metadata."),
+    resource: Optional[str] = typer.Option(None, "--resource", help="Resource name to use with --source-path."),
     dry_run: bool = typer.Option(False, help="Preview descriptor changes without writing them."),
     env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
 ) -> None:
     """Fetch remote metadata for one resource into the descriptor."""
     _load_env_file(env_file)
     descriptor_path = resolve_descriptor_path(descriptor)
+
+    if source_path is not None:
+        _run_direct_source_fetch(
+            descriptor_path=descriptor_path,
+            source_path=source_path,
+            resource_name=resource,
+            dry_run=dry_run,
+        )
+        return
+
     _exit_if_descriptor_missing(descriptor_path)
+
+    if resource_name is None:
+        typer.echo("Error: a resource name is required. Pass it as an argument or use --source-path.", err=True)
+        raise typer.Exit(code=1)
+
     try:
         summary = fetch_resource_metadata_in_descriptor(
             descriptor=descriptor_path,
+            resource_name=resource_name,
             dry_run=dry_run,
             log=None,
             googledrive_client_factory=lambda: _make_gdrive_client(None),
