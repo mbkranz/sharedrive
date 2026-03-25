@@ -4,14 +4,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from sharedrive.descriptor import (
-    ensure_descriptor_exists,
-    get_descriptor_resources,
-    load_descriptor_document,
+from sharedrive.models import (
+    DrivePackage,
+    DriveResource,
+    DriveSource,
+    load_drive_descriptor,
     normalize_entity_type,
     normalize_service_type,
-    normalize_sync_target,
-    save_descriptor_document,
+    save_drive_descriptor,
 )
 
 SUPPORTED_SERVICE_TYPES = {"GoogleDrive", "SharePoint", "S3"}
@@ -122,8 +122,6 @@ def add_resource_to_descriptor(
 ) -> dict[str, Any]:
     """Append a resource entry to a descriptor and return the created resource."""
     descriptor_path = Path(descriptor)
-    if not create_if_missing:
-        ensure_descriptor_exists(descriptor_path)
 
     resource_name = _require_non_empty(name, "name")
     resource_path = _require_non_empty(path, "path")
@@ -140,56 +138,44 @@ def add_resource_to_descriptor(
     resource_profile = None
     if profile is not None:
         resource_profile = _require_non_empty(profile, "profile")
+    as_package = package
+    if sync_target is not None:
+        normalized_legacy_target = sync_target.strip().lower()
+        if normalized_legacy_target in {"resources", "resource"}:
+            as_package = True
+        elif normalized_legacy_target == "path":
+            as_package = False
+        else:
+            raise ValueError(f"Unsupported legacy sync_target '{sync_target}'.")
 
-    resolved_sync_target = (
-        "resources" if package and sync_target is None else sync_target
+    descriptor_model = load_drive_descriptor(
+        descriptor_path,
+        create_if_missing=create_if_missing,
     )
-    if resolved_sync_target is None and resolved_entity_type in {"Directory", "Container"}:
-        raise ValueError(
-            "syncTarget is required for Directory or Container sources. "
-            "Use 'path' for one logical resource or 'resources' for nested resources."
-        )
-    normalized_sync_target = (
-        normalize_sync_target(resolved_sync_target)
-        if resolved_sync_target is not None
-        else "path"
-    )
 
-    document = load_descriptor_document(descriptor_path)
-    resources = get_descriptor_resources(document, create=True)
-
-    normalized_names = {
-        str(existing.get("name", "")).strip().lower()
-        for existing in resources
-        if isinstance(existing, dict)
-    }
-    if resource_name.lower() in normalized_names:
+    existing_reference = descriptor_model.get_resource_reference(resource_name)
+    if existing_reference is not None:
         raise ValueError(f"Resource '{resource_name}' already exists in the descriptor")
 
-    resource: dict[str, Any] = {
-        "name": resource_name,
-        "path": resource_path,
-        "syncTarget": normalized_sync_target,
-        "sources": [
-            {
-                "path": resource_source,
-                "serviceType": resolved_service_type,
-                "entityType": resolved_entity_type,
-            }
+    resource_cls = DrivePackage if as_package else DriveResource
+    resource = resource_cls(
+        name=resource_name,
+        path=resource_path,
+        title=title.strip() if title is not None and title.strip() else None,
+        description=description.strip() if description is not None and description.strip() else None,
+        profile=resource_profile,
+        sources=[
+            DriveSource(
+                path=resource_source,
+                serviceType=resolved_service_type,
+                entityType=resolved_entity_type,
+            )
         ],
-    }
-    if title is not None and title.strip():
-        resource["title"] = title.strip()
-    if description is not None and description.strip():
-        resource["description"] = description.strip()
-    if resource_profile is not None:
-        resource["profile"] = resource_profile
-    if normalized_sync_target == "resources":
-        resource["resources"] = []
-
-    resources.append(resource)
-    save_descriptor_document(descriptor_path, document)
-    return resource
+        resources=[] if as_package else None,
+    )
+    descriptor_model.add_resource(resource)
+    save_drive_descriptor(descriptor_path, descriptor_model)
+    return resource.to_dict()
 
 
 __all__ = [

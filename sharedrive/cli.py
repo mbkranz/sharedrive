@@ -14,17 +14,12 @@ from dotenv import find_dotenv, load_dotenv
 from sharedrive.actions.add import add_resource_to_descriptor, resolve_entity_type, resolve_service_type
 from sharedrive.actions.download import check_auth_for_descriptor, download_from_descriptor
 from sharedrive.actions.fetch import fetch_resource_metadata_in_descriptor
-from sharedrive.descriptor import (
-    DESCRIPTOR_DEFAULTS_FILE,
-    get_descriptor_resources,
-    get_package_resources,
-    load_descriptor_defaults_store,
-    load_descriptor_document,
+from sharedrive.models import (
+    DrivePackage,
+    load_drive_descriptor,
+    normalize_entity_type,
     normalize_service_type,
-    resolve_descriptor_path,
-    resolve_output_dir,
-    save_descriptor_document,
-    save_descriptor_defaults_store,
+    save_drive_descriptor,
 )
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -64,6 +59,124 @@ DESCRIPTOR_DEFAULT_HELP = (
     "Descriptor file path. Defaults to the saved descriptor or the first "
     "standard descriptor path."
 )
+DESCRIPTOR_DEFAULTS_FILE = Path(".sharedrive/sharedrive_set.json")
+
+
+def load_descriptor_defaults_store() -> dict[str, Any]:
+    if not DESCRIPTOR_DEFAULTS_FILE.exists():
+        return {"global": {}, "descriptors": {}}
+
+    try:
+        data = json.loads(DESCRIPTOR_DEFAULTS_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {"global": {}, "descriptors": {}}
+
+    if not isinstance(data, dict):
+        return {"global": {}, "descriptors": {}}
+    if not isinstance(data.get("global"), dict):
+        data["global"] = {}
+    if not isinstance(data.get("descriptors"), dict):
+        data["descriptors"] = {}
+    return data
+
+
+def save_descriptor_defaults_store(data: dict[str, Any]) -> None:
+    DESCRIPTOR_DEFAULTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    DESCRIPTOR_DEFAULTS_FILE.write_text(
+        json.dumps(data, indent=4) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _saved_params(descriptor: Path | str | None = None) -> dict[str, Any]:
+    store = load_descriptor_defaults_store()
+    merged: dict[str, Any] = {}
+
+    global_params = store.get("global", {})
+    if isinstance(global_params, dict):
+        merged.update(global_params)
+
+    if descriptor is None:
+        return merged
+
+    descriptor_params = store.get("descriptors", {}).get(str(Path(descriptor)), {})
+    if isinstance(descriptor_params, dict):
+        merged.update(descriptor_params)
+    return merged
+
+
+def resolve_descriptor_path(descriptor: Path | str | None = None) -> Path:
+    if descriptor is not None:
+        return Path(descriptor)
+
+    saved_descriptor = _saved_params().get("descriptor")
+    if isinstance(saved_descriptor, str) and saved_descriptor.strip():
+        return Path(saved_descriptor.strip())
+
+    for candidate in (
+        Path("resources/descriptor.yaml"),
+        Path("resources/descriptor.yml"),
+        Path("resources/descriptor.json"),
+    ):
+        if candidate.exists():
+            return candidate
+    return Path("resources/descriptor.yaml")
+
+
+def resolve_output_dir(
+    output_dir: Path | str | None = None,
+    *,
+    descriptor: Path | str | None = None,
+) -> Path:
+    if output_dir is not None:
+        return Path(output_dir)
+
+    saved_output_dir = _saved_params(descriptor).get("output_dir")
+    if isinstance(saved_output_dir, str) and saved_output_dir.strip():
+        return Path(saved_output_dir.strip())
+
+    return Path("resources")
+
+
+def load_descriptor_document(path: Path | str) -> dict[str, Any]:
+    descriptor_path = Path(path)
+    if not descriptor_path.exists():
+        return {"resources": []}
+    return load_drive_descriptor(descriptor_path).to_dict()
+
+
+def save_descriptor_document(path: Path | str, document: dict[str, Any]) -> None:
+    save_drive_descriptor(path, DrivePackage.model_validate(document))
+
+
+def get_descriptor_resources(
+    document: dict[str, Any],
+    *,
+    create: bool = False,
+) -> list[dict[str, Any]]:
+    resources = document.get("resources")
+    if resources is None and create:
+        document["resources"] = []
+        resources = document["resources"]
+    if not isinstance(resources, list):
+        raise ValueError("Descriptor must contain a top-level 'resources' array")
+    return resources
+
+
+def get_package_resources(
+    resource: dict[str, Any],
+    *,
+    create: bool = False,
+) -> list[dict[str, Any]]:
+    resources = resource.get("resources")
+    if resources is None:
+        if create:
+            resource["resources"] = []
+            return resource["resources"]
+        return []
+    if not isinstance(resources, list):
+        raise ValueError("Resource must contain a 'resources' array")
+    return resources
 
 
 def _examples_epilog(*lines: str) -> str:

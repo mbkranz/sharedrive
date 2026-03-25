@@ -303,9 +303,21 @@ class SharepointClient:
     def get_from_weburl(self, url: str) -> "SharepointItem":
         resolved = self.resolve_weburl(url)
         metadata = self.get_item_metadata(resolved["drive_id"], item_path=resolved["item_path"])
-        return SharepointItem(raw_metadata=metadata, client=self)
+        return self._to_item(metadata, scope_root=True)
 
-        return metadata
+    def _to_item(
+        self,
+        raw_metadata: dict[str, Any],
+        *,
+        current_rel_path: str = "",
+        scope_root: bool = False,
+    ) -> DriveItem:
+        return _sharepoint_to_item(
+            self,
+            raw_metadata,
+            current_rel_path=current_rel_path,
+            scope_root=scope_root,
+        )
 
     def download(self,metadata,path):
         # TODO: refactor/redesign to make object oriented and based on classes from GraphAPI
@@ -462,17 +474,21 @@ class SharepointClient:
 
 
 __all__ = ["SharepointClient"]
-from sharedrive.item import DriveItem
+from sharedrive.item import DriveFile, DriveFolder, DriveItem
 from typing import TYPE_CHECKING, Any, Optional
 
-class SharepointItem(DriveItem):
-    """
-    Sharepoint active drive item integrating the Microsoft Graph API.
-    """
-    def __init__(self, raw_metadata: dict, client: "SharepointClient", current_rel_path: str = ""):
+class SharepointItem:
+    def __init__(
+        self,
+        raw_metadata: dict,
+        client: "SharepointClient",
+        current_rel_path: str = "",
+        scope_root: bool = False,
+    ):
         self.raw = raw_metadata
         self.client = client
         self._current_rel_path = current_rel_path
+        self._scope_root = scope_root
 
     @property
     def id(self) -> str:
@@ -484,50 +500,36 @@ class SharepointItem(DriveItem):
         
     @property
     def path(self) -> str:
-        # Construct the relative path down the descriptor tree
+        relative_path = str(self.raw.get("relative_path", "")).strip()
+        if relative_path:
+            if self._current_rel_path:
+                return f"{self._current_rel_path}/{relative_path}".strip("/")
+            return relative_path
         if self._current_rel_path:
             return f"{self._current_rel_path}/{self.name}"
         return self.name
 
     @property
-    def is_directory(self) -> bool:
-        return "folder" in self.raw
-
-    @property
     def service_type(self) -> str:
-        return "Sharepoint"
+        return "SharePoint"
 
     @property
     def source_url(self) -> str:
         return self.raw.get("webUrl", "")
 
-    @property
-    def children(self) -> list["SharepointItem"]:
-        """Returns the list of child children items inside this item"""
-        results = []
-        for child_raw in self.raw.get("children", []):
-            results.append(
-                SharepointItem(
-                    raw_metadata=child_raw,
-                    client=self.client,
-                    current_rel_path=self.path
-                )
-            )
-        return results
 
+
+class SharepointFile(SharepointItem, DriveFile):
     def download(self, target_dir: str | Path) -> None:
-        if self.is_directory:
-            raise NotImplementedError("Cannot download a directory directly. Iterate over children.")
-        
         target = Path(target_dir)
         if target.is_dir():
             target = target / self.name
-            
+
         target.parent.mkdir(parents=True, exist_ok=True)
         drive_id = self.raw.get("parentReference", {}).get("driveId")
         if not drive_id:
             raise ValueError("Missing driveId in Sharepoint item metadata")
-            
+
         url = self.raw.get("@microsoft.graph.downloadUrl",
                            f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{self.id}/content")
 
@@ -545,4 +547,49 @@ class SharepointItem(DriveItem):
         with open(target, "wb") as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
+
+
+class SharepointFolder(SharepointItem, DriveFolder):
+    @property
+    def children(self) -> list[DriveItem]:
+        contents = self.raw.get("children")
+        if contents is None:
+            drive_id = self.raw.get("parentReference", {}).get("driveId")
+            if not drive_id:
+                raise ValueError("Missing driveId in SharePoint folder metadata")
+            refreshed = self.client.get_item_metadata(drive_id, item_id=self.id)
+            contents = refreshed.get("children", [])
+            self.raw.update(refreshed)
+
+        next_rel_path = "" if self._scope_root else self.path
+        return [
+            self.client._to_item(
+                child_raw,
+                current_rel_path=next_rel_path,
+                scope_root=False,
+            )
+            for child_raw in contents
+        ]
+
+
+def _sharepoint_to_item(
+    client: "SharepointClient",
+    raw_metadata: dict[str, Any],
+    *,
+    current_rel_path: str = "",
+    scope_root: bool = False,
+) -> DriveItem:
+    if "folder" in raw_metadata:
+        return SharepointFolder(
+            raw_metadata=raw_metadata,
+            client=client,
+            current_rel_path=current_rel_path,
+            scope_root=scope_root,
+        )
+    return SharepointFile(
+        raw_metadata=raw_metadata,
+        client=client,
+        current_rel_path=current_rel_path,
+        scope_root=scope_root,
+    )
 

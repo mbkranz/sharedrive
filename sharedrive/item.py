@@ -1,83 +1,110 @@
-from abc import ABC, abstractmethod
-from typing import Optional
-import pathlib
+from __future__ import annotations
 
-from sharedrive.models import DriveResource
+from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import Iterable, cast
+
+from sharedrive.models import DrivePackage, DriveResource
 
 
 class DriveItem(ABC):
-    """
-    Active Path-like entity representing a target file or folder on a remote drive.
-    Unlike passive metadata schemas, this acts as the interface to the literal binary bytes.
-    """
-
     @property
     @abstractmethod
     def id(self) -> str:
-        """The native drive ID for the item."""
-        pass
+        raise NotImplementedError
 
     @property
     @abstractmethod
     def name(self) -> str:
-        """The file or folder native name."""
-        pass
-    
-    @property
-    @abstractmethod
-    def path(self) -> str:
-        """
-        The relative path of this item in the sync scope constraint. 
-        Usually aligns with descriptor "name" or path.
-        """
-        pass
+        raise NotImplementedError
 
     @property
     @abstractmethod
-    def is_directory(self) -> bool:
-        """Whether this item is a folder container."""
-        pass
+    def path(self) -> str:
+        raise NotImplementedError
 
     @property
     @abstractmethod
     def service_type(self) -> str:
-        """String constant for this drive adapter (e.g. 'GoogleDrive', 'SharePoint')"""
-        pass
+        raise NotImplementedError
 
     @property
     @abstractmethod
     def source_url(self) -> str:
-        """The specific canonical URL mapping to this item (e.g. download or open link)"""
-        pass
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def is_directory(self) -> bool:
+        raise NotImplementedError
 
     @abstractmethod
-    def download(self, target_dir: pathlib.Path | str) -> None:
-        """
-        Pull the file bytes down to the target tree context.
-        Should raise a NotImplementedError if `is_directory` is True.
-        """
-        pass
+    def download(self, target: Path | str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def to_dp(self) -> DriveResource | DrivePackage:
+        raise NotImplementedError
+
+
+class DriveFile(DriveItem, ABC):
+    @property
+    def is_directory(self) -> bool:
+        return False
 
     def to_dp(self) -> DriveResource:
-        """
-        Convert this active item instance into a passive Data Package Resource state block.
-        """
         format_str = None
-        if "." in self.name and not self.is_directory:
-            format_str = self.name.split(".")[-1]
-
-        type_str = "table" if format_str in ("csv", "xls", "xlsx") else "file"
+        if "." in self.name:
+            format_str = self.name.rsplit(".", 1)[-1].lower()
 
         return DriveResource.from_drive_metadata(
             name=self.path,
             path=self.path,
             service_type=self.service_type,
-            entity_type="Directory" if self.is_directory else "File",
+            entity_type="File",
             source_url=self.source_url,
-            type_str=type_str,
             format_str=format_str,
             drive_id=self.id,
         )
 
 
-__all__ = ["DriveItem"]
+class DriveFolder(DriveItem, ABC):
+    @property
+    def is_directory(self) -> bool:
+        return True
+
+    @property
+    @abstractmethod
+    def children(self) -> list[DriveItem]:
+        raise NotImplementedError
+
+    def iter_files(self) -> Iterable[DriveFile]:
+        for child in self.children:
+            if child.is_directory:
+                yield from cast("DriveFolder", child).iter_files()
+                continue
+            yield cast(DriveFile, child)
+
+    def download(self, target: Path | str) -> None:
+        target_root = Path(target)
+        target_root.mkdir(parents=True, exist_ok=True)
+        for child in self.iter_files():
+            child.download(target_root / Path(child.path))
+
+    def to_dp(self) -> DrivePackage:
+        return DrivePackage(
+            name=self.path,
+            path=self.path,
+            driveId=self.id,
+            sources=[
+                {
+                    "path": self.source_url,
+                    "serviceType": self.service_type,
+                    "entityType": "Directory",
+                }
+            ],
+            resources=[child.to_dp() for child in self.children],
+        )
+
+
+__all__ = ["DriveFile", "DriveFolder", "DriveItem"]

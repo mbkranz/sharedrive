@@ -8,20 +8,131 @@ from typing import Any, Callable, Iterable
 from urllib.parse import urlparse
 
 from sharedrive.clients.aws import check_s3_credentials, download_s3_url
-from sharedrive.descriptor import (
-    ensure_descriptor_exists,
-    get_package_resources,
-    get_primary_source,
-    load_descriptor,
-    resolve_default_descriptor,
-    resource_sync_target,
-    service_type_adapter_name,
-    source_entity_type,
-    source_path,
-    source_service_type,
+from sharedrive.models import (
+    load_drive_descriptor,
+    normalize_entity_type,
+    normalize_service_type,
 )
 
 LogFn = Callable[[str], None]
+
+
+def ensure_descriptor_exists(path: Path | str) -> Path:
+    descriptor_path = Path(path)
+    if not descriptor_path.exists():
+        raise FileNotFoundError(f"Descriptor '{descriptor_path}' does not exist.")
+    return descriptor_path
+
+
+def resolve_default_descriptor() -> Path:
+    for candidate in (
+        Path("resources/descriptor.yaml"),
+        Path("resources/descriptor.yml"),
+        Path("resources/descriptor.json"),
+    ):
+        if candidate.exists():
+            return candidate
+    return Path("resources/descriptor.yaml")
+
+
+def load_descriptor(path: Path | str) -> list[dict[str, Any]]:
+    descriptor = load_drive_descriptor(path)
+    return descriptor.to_dict().get("resources", [])
+
+
+def get_package_resources(
+    resource: dict[str, Any],
+    *,
+    create: bool = False,
+) -> list[dict[str, Any]]:
+    resources = resource.get("resources")
+    if resources is None:
+        if create:
+            resource["resources"] = []
+            return resource["resources"]
+        return []
+    if not isinstance(resources, list):
+        raise ValueError("Resource must contain a 'resources' array")
+    return resources
+
+
+def get_primary_source(
+    resource: dict[str, Any],
+    *,
+    create: bool = False,
+) -> dict[str, Any] | None:
+    sources = resource.get("sources")
+    if sources is None:
+        if create:
+            resource["sources"] = [{}]
+            return resource["sources"][0]
+        return None
+    if not isinstance(sources, list):
+        raise ValueError("Resource must contain a 'sources' array")
+    if not sources:
+        if create:
+            sources.append({})
+            return sources[0]
+        return None
+    primary = sources[0]
+    if not isinstance(primary, dict):
+        raise ValueError("Resource source entries must be objects")
+    return primary
+
+
+def service_type_adapter_name(service_type: str) -> str:
+    normalized = normalize_service_type(service_type)
+    return {
+        "GoogleDrive": "googledrive",
+        "SharePoint": "sharepoint",
+        "S3": "s3",
+    }[normalized]
+
+
+def source_path(resource: Any) -> str | None:
+    source_value = getattr(resource, "source_path", None)
+    if isinstance(source_value, str) and source_value.strip():
+        return source_value.strip()
+
+    primary = get_primary_source(resource)
+    if primary is None:
+        return None
+    value = primary.get("path")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def source_service_type(resource: Any) -> str | None:
+    service_value = getattr(resource, "source_service_type", None)
+    if isinstance(service_value, str) and service_value.strip():
+        return normalize_service_type(service_value)
+
+    primary = get_primary_source(resource)
+    if primary is None:
+        return None
+    value = primary.get("serviceType")
+    if isinstance(value, str) and value.strip():
+        return normalize_service_type(value)
+    return None
+
+
+def source_entity_type(resource: Any) -> str | None:
+    entity_value = getattr(resource, "source_entity_type", None)
+    if isinstance(entity_value, str) and entity_value.strip():
+        return normalize_entity_type(entity_value)
+
+    primary = get_primary_source(resource)
+    if primary is None:
+        return None
+    value = primary.get("entityType")
+    if isinstance(value, str) and value.strip():
+        return normalize_entity_type(value)
+    return None
+
+
+def resource_sync_target(resource: dict[str, Any]) -> str:
+    return "resources" if isinstance(resource.get("resources"), list) else "path"
 
 
 @dataclass(slots=True)
@@ -50,7 +161,7 @@ class AuthCheckResult:
         }
 
 
-def resource_source_url(resource: dict[str, Any]) -> str | None:
+def resource_source_url(resource: Any) -> str | None:
     """Resolve the primary source locator for a resource."""
     return source_path(resource)
 
@@ -118,7 +229,7 @@ def resource_output_paths(resource: dict[str, Any], output_dir: Path) -> list[Pa
     return list(deduped.values())
 
 
-def resource_adapter_name(resource: dict[str, Any], source_url: str | None) -> str:
+def resource_adapter_name(resource: Any, source_url: str | None) -> str:
     """Resolve runtime adapter name from source serviceType or fallback inference."""
     service_type = source_service_type(resource)
     if service_type is not None:
@@ -276,7 +387,7 @@ def _inherit_resource_defaults(
             if isinstance(inherited_value, str) and inherited_value.strip() and not current_value:
                 child_source[field_name] = inherited_value
 
-    for field_name in ("driveService", "x-adapter", "syncTarget"):
+    for field_name in ("driveService", "x-adapter"):
         inherited_value = parent.get(field_name)
         current_value = normalized.get(field_name)
         if isinstance(inherited_value, str) and inherited_value.strip() and not current_value:
@@ -343,10 +454,7 @@ def _download_googledrive_directory(
 
     downloaded = 0
     dry_run_actions = 0
-    for child in folder_item.children:
-        if child.is_directory:
-            continue
-            
+    for child in folder_item.iter_files():
         relative_path = child.path or child.name or child.id
         if not relative_path:
             relative_path = child.id
@@ -388,10 +496,7 @@ def _download_sharepoint_directory(
 
     downloaded = 0
     dry_run_actions = 0
-    for child in folder_item.children:
-        if child.is_directory:
-            continue
-            
+    for child in folder_item.iter_files():
         relative_path = child.path or child.name or child.id
         if not relative_path:
             relative_path = child.id
