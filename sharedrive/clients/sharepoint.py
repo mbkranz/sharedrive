@@ -78,7 +78,6 @@ class SharepointClient:
         try:
             response = requests.get(endpoint, headers=self.auth_header, params=params)
             response.raise_for_status()
-            return response.json()
         except requests.exceptions.HTTPError as http_err:
             raise GraphApiDriveError(
                 f"HTTP error while calling Microsoft Graph\n"
@@ -90,8 +89,39 @@ class SharepointClient:
             ) from http_err
         except requests.exceptions.RequestException as req_err:
             raise GraphApiDriveError(f"Request error when calling {endpoint}: {req_err}") from req_err
+        
+        response_json = response.json()
+        
+        # Handle pagination for collection endpoints (e.g., drives, children)
+        if "@odata.nextLink" in response_json:
+            current_json = response_json
+            while "@odata.nextLink" in current_json:
+                next_link = current_json["@odata.nextLink"]
+                try:
+                    next_resp = requests.get(next_link, headers=self.auth_header)
+                    next_resp.raise_for_status()
+                except requests.exceptions.HTTPError as http_err:
+                    raise GraphApiDriveError(
+                        f"HTTP error while calling Microsoft Graph (pagination)\n"
+                        f"URL: {next_resp.url}\n"
+                        f"Status: {next_resp.status_code} - {next_resp.reason}\n"
+                        f"Details: {next_resp.text}",
+                        status_code=next_resp.status_code,
+                        response_text=next_resp.text,
+                    ) from http_err
+                except requests.exceptions.RequestException as req_err:
+                    raise GraphApiDriveError(f"Request error when calling {next_link}: {req_err}") from req_err
+                
+                current_json = next_resp.json()
+                # Aggregate items if "value" array exists
+                if "value" in response_json and "value" in current_json:
+                    response_json["value"].extend(current_json.get("value", []))
+                    
+            # Remove the nextLink from final aggregated response
+            response_json.pop("@odata.nextLink", None)
 
-
+        return response_json
+            
 
     def get_site_id(self,site_name):
         endpoint = f"https://graph.microsoft.com/v1.0/sites/{self.host_url}:/sites/{site_name}"
@@ -176,44 +206,40 @@ class SharepointClient:
 
         return drive_data["id"]
 
-    def get_item_metadata(self,drive_id,itempath):
-
+    def get_item_metadata(self, drive: str, *, item_path: str | None = None, item_id: str | None = None, fields: list[str] | None = None):
         """
-        get item metadata based on relative file path within the drive
-
+        get item metadata based on relative file path or item id within the drive
         """
-        normalized_itempath = str(itempath).strip()
-        if not normalized_itempath:
-            normalized_itempath = "/"
-        if normalized_itempath == "/":
-            endpoint = f'https://graph.microsoft.com/v1.0/drives/{drive_id}/root'
+        if fields is None:
+            fields = ["id","name","folder","file","parentReference","webUrl","lastModifiedDateTime"]
+        
+        select_query = ",".join(fields)
+        
+        if item_id:
+            endpoint = f'https://graph.microsoft.com/v1.0/drives/{drive}/items/{item_id}?$select={select_query}'
+            children_endpoint = f'https://graph.microsoft.com/v1.0/drives/{drive}/items/{item_id}/children?$select={select_query}'
         else:
-            if not normalized_itempath.startswith("/"):
-                normalized_itempath = f"/{normalized_itempath}"
-            endpoint = f'https://graph.microsoft.com/v1.0/drives/{drive_id}/root:{normalized_itempath}'
+            normalized_itempath = str(item_path).strip() if item_path else "/"
+            if not normalized_itempath:
+                normalized_itempath = "/"
+            if normalized_itempath == "/":
+                endpoint = f'https://graph.microsoft.com/v1.0/drives/{drive}/root?$select={select_query}'
+                children_endpoint = f'https://graph.microsoft.com/v1.0/drives/{drive}/root/children?$select={select_query}'
+            else:
+                if not normalized_itempath.startswith("/"):
+                    normalized_itempath = f"/{normalized_itempath}"
+                endpoint = f'https://graph.microsoft.com/v1.0/drives/{drive}/root:{normalized_itempath}?$select={select_query}'
+                children_endpoint = f'https://graph.microsoft.com/v1.0/drives/{drive}/root:{normalized_itempath}:/children?$select={select_query}'
 
-        return self._request_json(endpoint)
+        metadata = self._request_json(endpoint)
+        has_children = metadata.get("folder",{}).get("childCount",0) > 0
+        if has_children:
+            list_of_children = self._request_json(children_endpoint).get("value",[])
+            metadata["children"] = [self.get_item_metadata(drive, item_id=child["id"], fields=fields) for child in list_of_children]
 
-    def get_item_by_id(self, drive_id: str, item_id: str) -> dict[str, Any]:
-        endpoint = f'https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}'
-        return self._request_json(endpoint)
+        #TODO: return other container types (bundles,lists, etc)
 
-    def list_item_children(self, drive_id: str, item_id: str) -> list[dict[str, Any]]:
-        endpoint = f'https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}/children'
-        items: list[dict[str, Any]] = []
-        next_url = endpoint
-        while next_url:
-            data = self._request_json(next_url)
-            value = data.get("value", [])
-            if not isinstance(value, list):
-                raise GraphApiDriveError(
-                    f"Unexpected children response for drive '{drive_id}' item '{item_id}'"
-                )
-            items.extend(item for item in value if isinstance(item, dict))
-            next_url = data.get("@odata.nextLink")
-            if next_url is not None and not isinstance(next_url, str):
-                raise GraphApiDriveError("Unexpected @odata.nextLink value returned by Graph")
-        return items
+        return metadata
 
     def resolve_weburl(self, url: str) -> dict[str, str]:
         parsed = urlparse(url)
@@ -274,102 +300,45 @@ class SharepointClient:
             print(response.reason)
             return None
 
-    def get_from_weburl(self, url):
-        """
-        Generic method to get a file or folder from a SharePoint URL.
-        NOTE: this will work with both copying straight from browser address bar or from "copy link" option in SharePoint UI.
-        
-        Parses the SharePoint URL to extract:
-        - site_name: The name of the SharePoint site
-        - item_path: The path to the file or folder
-        
-        Args:
-            url (str): The SharePoint URL (e.g., https://norc.sharepoint.com/sites/MySite/Shared Documents/folder/file.xlsx)
-            metadata_only (bool): If True, only return metadata for files. Defaults to False.
-            depth (int): For folders, the recursion depth. Defaults to 0 (immediate contents only).
-        
-        Returns:
-            dict: Item metadata and content (for files) or folder contents (for folders)
-        
-        Raises:
-            ValueError: If the URL cannot be parsed or is invalid
-        """
+    def get_from_weburl(self, url: str) -> "SharepointItem":
         resolved = self.resolve_weburl(url)
-        return self.get_item_metadata(resolved["drive_id"], resolved["item_path"])
+        metadata = self.get_item_metadata(resolved["drive_id"], item_path=resolved["item_path"])
+        return SharepointItem(raw_metadata=metadata, client=self)
 
-    def list_folder_files(
-        self,
-        drive_id: str,
-        folder_id: str,
-        *,
-        recursive: bool = True,
-    ) -> list[dict[str, Any]]:
-        results: list[dict[str, Any]] = []
+        return metadata
 
-        def walk(item_id: str, relative_root: PurePosixPath) -> None:
-            for child in self.list_item_children(drive_id, item_id):
-                child_name = str(child.get("name", child.get("id", "item"))).strip() or str(child.get("id", "item"))
-                relative_path = (relative_root / child_name).as_posix()
-                child_with_path = dict(child)
-                child_with_path["relative_path"] = relative_path
+    def download(self,metadata,path):
+        # TODO: refactor/redesign to make object oriented and based on classes from GraphAPI
+        metadata_downloaded = {}
+        if "file" in metadata:
+            drive_id = metadata["parentReference"]["driveId"]
+            item_id = metadata["id"]
+            url = metadata.get("@microsoft.graph.downloadUrl",
+                                f'https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}/content')
+            response = requests.get(url,headers=self.auth_header)
+            if response.status_code == 302:
+                # [Handle redirect for download URL](https://learn.microsoft.com/en-us/graph/api/driveitem-get-content?view=graph-rest-1.0&tabs=http#response)
+                download_url = response.headers.get("Location")
+                if download_url:
+                    response = requests.get(download_url)
+                else:
+                    raise GraphApiDriveError(f"Received 302 but no Location header found for URL: {url}")
+                
+            content = response.content
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
 
-                if "file" in child:
-                    results.append(child_with_path)
-                    continue
+            metadata_downloaded[path] = metadata
+    
+        if "folder" in metadata:
+            for child in metadata.get("children",[]):
+                self.download(child,path / child["name"])
+                metadata_downloaded[path / child["name"]] = child
 
-                if recursive and "folder" in child:
-                    walk(str(child.get("id", "")), PurePosixPath(relative_path))
-
-        walk(folder_id, PurePosixPath())
-        return results
-
-    def list_folder_files_from_weburl(
-        self,
-        url: str,
-        *,
-        recursive: bool = True,
-    ) -> list[dict[str, Any]]:
-        resolved = self.resolve_weburl(url)
-        metadata = self.get_item_metadata(resolved["drive_id"], resolved["item_path"])
-        if "folder" not in metadata:
-            raise ValueError(f"SharePoint source is not a folder: {url}")
-        return self.list_folder_files(
-            resolved["drive_id"],
-            str(metadata["id"]),
-            recursive=recursive,
-        )
-
-    def download_from_weburl(self, url,output_path,dry_run=True):
-        if dry_run:
-            print(f"Dry run: sharepoint download {url} -> {output_path}")
-            return
-
-        metadata = self.get_from_weburl(url)
-        if "folder" in metadata and "file" not in metadata:
-            raise ValueError(f"SharePoint source is a folder, not a file: {url}")
+        return metadata_downloaded
         
-        if dry_run:
-            print(f"Dry run: sharepoint download {url} -> {output_path}")
-            print(f"Metadata: {json.dumps(metadata, indent=2)}")
 
-        download_url = metadata.get("@microsoft.graph.downloadUrl")
-        if download_url:
-            content = self.download_content(download_url=download_url)
-        else:
-            # TODO: make pydantic classes for metadata and validate expected fields and types, and handle missing fields more gracefully
-            # TODO: 
-            # class ItemNotFoundResponse(BaseModel):
-            #     error: {subclass with error details}
-            
-            drive_id = metadata.get("parentReference", {}).get("driveId")
-            item_id = metadata.get("id")
-            content = self.download_content(drive_id=drive_id, item_id=item_id)
 
-        if content is None:
-            raise RuntimeError(f"Failed to download content: {url}")
-
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(content)
 
     def get_file(self,site_name,file_path,metadata_only=False):
         """ 
@@ -380,7 +349,7 @@ class SharepointClient:
         
         site_id = self.get_site_id(site_name)
         drive_id = self.get_drive_id(site_id)
-        item_metadata = self.get_item_metadata(drive_id,file_path)
+        item_metadata = self.get_item_metadata(drive_id, item_path=file_path)
         
         if not item_metadata or 'id' not in item_metadata:
             raise FileNotFoundError(f"File not found at path: {file_path} in site: {site_name}")
@@ -394,88 +363,28 @@ class SharepointClient:
         else:
 
             if item_metadata.get('@microsoft.graph.downloadUrl'):
-                item_content = self.download_content(download_url=item_metadata['@microsoft.graph.downloadUrl'])
+                item_content = self.download(item_metadata, Path(file_path))
             else:
                 print("No Presigned URL detected...using drive id and item id")
-                item_content = self.download_content(drive_id,item_id)
+                item_content = self.download(item_metadata, Path(file_path))
 
             item["content"] = item_content
 
             return item
 
-    def get_folder(self, site_name: str, folder_path: str, depth: int = 0):
+    def get_folder(self, site_name: str, path: str):
         """
         Retrieve the contents of a folder, with optional recursion depth.
 
         Args:
             site_name (str): The name of the SharePoint site.
-            folder_path (str): The path to the folder.
-            depth (int, optional): The depth for recursive fetching.
-                                   - 0: Immediate contents only.
-                                   - -1: Full recursion.
-                                   - n > 0: Recurse n levels deep.
-                                   Defaults to 0.
+            path (str): The path to the folder.
 
         Returns:
             dict: A dictionary containing the folder's contents.
         """
-        site_id = self.get_site_id(site_name)
-        drive_id = self.get_drive_id(site_id)
-        
-        # For SharePoint, the item-id of the folder is needed for recursive calls.
-        # We can get this from the path.
-        item_metadata = self.get_item_metadata(drive_id, folder_path)
-        if not item_metadata or 'id' not in item_metadata:
-            raise FileNotFoundError(f"Folder not found at path: {folder_path}")
-        
-        folder_id = item_metadata['id']
+        raise NotImplementedError("get_folder has been deprecated in favor of `get_from_weburl` or `get_item_metadata` with options for recursion")
 
-        contents = self._get_folder_contents_recursive(drive_id, folder_id, depth)
-        return {"value": contents}
-
-    def _get_folder_contents_recursive(self, drive_id: str, folder_id: str, depth: int):
-        """Helper function to recursively get folder contents."""
-        items = self.list_item_children(drive_id, folder_id)
-        for item in items:
-            if 'folder' in item:
-                new_depth = depth - 1 if depth > 0 else -1
-                item['children'] = self._get_folder_contents_recursive(drive_id, item['id'], new_depth)
-
-        return items
-
-    def get_folder_contents(self, site_name, path,recursive=False,metadata_only=True):
-        """
-        Lists all files in a given directory recursively with paths relative to the input directory.
-
-        :param site_name: The name of the SharePoint site.
-        :param path: The path of the folder within the SharePoint drive.
-        :param relative_path: The relative path used to build paths relative to the input directory.
-        :return: A list of all files with their paths relative to the input directory.
-
-        # TODO: put in logging info and exceptions
-        # TODO: make API calls more efficient either by batching or using expand=children parameter (although this has limitations on depth )
-        ## see https://learn.microsoft.com/en-us/graph/query-parameters
-        """
-
-        site_id = self.get_site_id(site_name)
-        drive_id = self.get_drive_id(site_id)
-        folder_metadata = self.get_item_metadata(drive_id, path)
-        if "folder" not in folder_metadata:
-            raise FileNotFoundError(f"Folder not found at path: {path}")
-
-        files = self.list_folder_files(
-            drive_id,
-            str(folder_metadata["id"]),
-            recursive=recursive,
-        )
-        if metadata_only:
-            return files
-
-        all_files = []
-        for item in files:
-            item_path = f"{path.rstrip('/')}/{item['relative_path']}"
-            all_files.append(self.get_file(site_name, item_path, metadata_only=False))
-        return all_files
 
     def upload_new_content(self, site_name, folder_path, local_file_path):
         """
@@ -522,7 +431,7 @@ class SharepointClient:
 
         # Attempt to get file metadata
         try:
-            file_metadata = self.get_item_metadata(drive_id, file_path)
+            file_metadata = self.get_item_metadata(drive_id, item_path=file_path)
             file_id = file_metadata.get('id')
         except requests.HTTPError as e:
             if e.response.status_code == 404:
@@ -553,3 +462,87 @@ class SharepointClient:
 
 
 __all__ = ["SharepointClient"]
+from sharedrive.item import DriveItem
+from typing import TYPE_CHECKING, Any, Optional
+
+class SharepointItem(DriveItem):
+    """
+    Sharepoint active drive item integrating the Microsoft Graph API.
+    """
+    def __init__(self, raw_metadata: dict, client: "SharepointClient", current_rel_path: str = ""):
+        self.raw = raw_metadata
+        self.client = client
+        self._current_rel_path = current_rel_path
+
+    @property
+    def id(self) -> str:
+        return self.raw.get("id", "")
+
+    @property
+    def name(self) -> str:
+        return self.raw.get("name", "")
+        
+    @property
+    def path(self) -> str:
+        # Construct the relative path down the descriptor tree
+        if self._current_rel_path:
+            return f"{self._current_rel_path}/{self.name}"
+        return self.name
+
+    @property
+    def is_directory(self) -> bool:
+        return "folder" in self.raw
+
+    @property
+    def service_type(self) -> str:
+        return "Sharepoint"
+
+    @property
+    def source_url(self) -> str:
+        return self.raw.get("webUrl", "")
+
+    @property
+    def children(self) -> list["SharepointItem"]:
+        """Returns the list of child children items inside this item"""
+        results = []
+        for child_raw in self.raw.get("children", []):
+            results.append(
+                SharepointItem(
+                    raw_metadata=child_raw,
+                    client=self.client,
+                    current_rel_path=self.path
+                )
+            )
+        return results
+
+    def download(self, target_dir: str | Path) -> None:
+        if self.is_directory:
+            raise NotImplementedError("Cannot download a directory directly. Iterate over children.")
+        
+        target = Path(target_dir)
+        if target.is_dir():
+            target = target / self.name
+            
+        target.parent.mkdir(parents=True, exist_ok=True)
+        drive_id = self.raw.get("parentReference", {}).get("driveId")
+        if not drive_id:
+            raise ValueError("Missing driveId in Sharepoint item metadata")
+            
+        url = self.raw.get("@microsoft.graph.downloadUrl",
+                           f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{self.id}/content")
+
+        response = requests.get(
+            url,
+            headers=self.client.auth_header,
+            stream=True
+        )
+        if response.status_code == 302:
+            redirect_url = response.headers.get("Location")
+            if redirect_url:
+                response = requests.get(redirect_url, stream=True)
+        response.raise_for_status()
+
+        with open(target, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+
