@@ -291,7 +291,8 @@ Options:
   --description TEXT   Optional resource description.
   --service-type TEXT  Source serviceType. If omitted, infer from source.
   --entity-type TEXT   Source entityType such as File, Directory, or Container.
-  --sync-target TEXT   Descriptor syncTarget: 'path' or 'resources'.
+  --package           Treat as a package (creates a resource with nested resources).
+  --catalog           Treat as a catalog (alias for package, future extension).
   --profile TEXT       Optional metadata profile for the resource.
   --descriptor PATH    Descriptor file path. Defaults to the saved descriptor or
                        the first standard descriptor path.
@@ -315,9 +316,9 @@ Options:
 
   ```bash
 
-  sharedrive add census-docs --path downloads/census --source
-  https://drive.google.com/drive/folders/<id> --service-type GoogleDrive
-  --entity-type Directory --sync-target resources
+  sharedrive add census-docs --package --path downloads/census --source \
+  https://drive.google.com/drive/folders/<id> --service-type GoogleDrive \
+  --entity-type Directory
 
   ```
 ```

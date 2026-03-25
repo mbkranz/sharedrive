@@ -39,8 +39,7 @@ Auto-generated from source signatures and docstrings.
   - Normalize source entity type to OpenMetadata-style class naming.
 - `def normalize_service_type(service_type: str) -> str`
   - Normalize source service type to OpenMetadata enum spelling.
-- `def normalize_sync_target(sync_target: str) -> str`
-  - Normalize syncTarget to the sharedrive descriptor contract.
+  # normalize_sync_target(sync_target: str) is deprecated and ignored in the new resource model.
 - `def resolve_descriptor_path(descriptor: Path | str | None = None) -> Path`
   - Resolve descriptor path from explicit input, saved defaults, or standard locations.
 - `def resolve_default_descriptor() -> Path`
@@ -53,10 +52,7 @@ Auto-generated from source signatures and docstrings.
   - Persist descriptor defaults store to disk.
 - `def resource_profile(resource: dict[str, Any]) -> str | None`
   - Return the metadata profile declared for a resource, if any.
-- `def resource_sync_target(resource: dict[str, Any]) -> str`
-  - Return the declared sync target for a resource.
-- `def resource_syncs_to_resources(resource: dict[str, Any]) -> bool`
-  - Return whether a resource syncs into nested resources.
+  # resource_sync_target(resource: dict[str, Any]) and resource_syncs_to_resources(resource: dict[str, Any]) are deprecated and ignored in the new resource model.
 - `def service_type_adapter_name(service_type: str) -> str`
   - Return the runtime adapter name for a canonical service type.
 - `def source_entity_type(resource: dict[str, Any]) -> str | None`
