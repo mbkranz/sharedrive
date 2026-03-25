@@ -321,10 +321,10 @@ def test_download_defaults_to_all_when_include_is_omitted(monkeypatch: pytest.Mo
 
     monkeypatch.setattr("sharedrive.cli.download_from_descriptor", fake_download_from_descriptor)
 
-    result = RUNNER.invoke(app, ["download", str(descriptor), "--dry-run"], prog_name="sharedrive")
+    result = RUNNER.invoke(app, ["download", "my-package", "--descriptor", str(descriptor), "--dry-run"], prog_name="sharedrive")
 
     assert result.exit_code == 0
-    assert captured["include"] == "all"
+    assert captured["include"] == "my-package"
 
 
 def test_download_uses_saved_defaults_when_descriptor_omitted(
@@ -345,7 +345,7 @@ def test_download_uses_saved_defaults_when_descriptor_omitted(
 
     set_result = RUNNER.invoke(
         app,
-        ["set", "--global", "--descriptor", "resources/descriptor.yaml", "--output-dir", "exports"],
+        ["set", "--global", "--descriptor", "resources/descriptor.yaml", "--output-dir", "exports", "--package", "my-package"],
         prog_name="sharedrive",
     )
     assert set_result.exit_code == 0
@@ -356,12 +356,13 @@ def test_download_uses_saved_defaults_when_descriptor_omitted(
     assert captured["descriptor"] == Path("resources/descriptor.yaml")
     assert captured["output_dir"] == Path("exports")
     assert captured["check_auth"] is True
+    assert captured["include"] == "my-package"
 
 
 def test_download_exits_nonzero_when_descriptor_is_missing(tmp_path: Path) -> None:
     descriptor = tmp_path / "missing.yaml"
 
-    result = RUNNER.invoke(app, ["download", str(descriptor), "--dry-run"], prog_name="sharedrive")
+    result = RUNNER.invoke(app, ["download", "my-package", "--descriptor", str(descriptor), "--dry-run"], prog_name="sharedrive")
 
     assert result.exit_code == 1
     assert "does not exist" in result.output

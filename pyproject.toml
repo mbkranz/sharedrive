@@ -66,3 +66,11 @@ docstring-code-format = true
 skip-magic-trailing-comma = true
 preview = true  # Enables improved formatter behavior
 
+[tool.uv.workspace]
+members = [
+    "submodules/dplib-py",
+]
+
+[tool.uv.sources]
+dplib-py = { workspace = true }
+
