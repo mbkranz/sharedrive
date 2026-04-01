@@ -9,7 +9,7 @@ from typing import Any, Dict, Literal, Optional, Sequence, Union
 import requests
 from google.auth.credentials import Credentials
 from google.auth.transport.requests import Request
-from sharedrive.item import DriveItem
+from sharedrive.item import DriveFile, DriveFolder, DriveItem
 
 from sharedrive.auth.base import CredentialStrategy
 from sharedrive.auth.google import default_drive_strategy, normalize_google_scopes
@@ -539,11 +539,29 @@ class GoogleDriveClient(GoogleBaseClient):
         mapped to our active GDriveItem model.
         """
         file_id = self._extract_id_from_url(web_url)
-        metadata = self.get_file(file_id, fields=fields + ",mimeType")
-        mime_type = metadata.get("mimeType", "")
-        if mime_type == FOLDER_MIME:
-            metadata["contents"] = self.list_folder_files(file_id, recursive=True)
-        return GDriveItem(raw_metadata=metadata, client=self)
+        metadata = self.get_file(file_id, fields=fields + ",mimeType,webViewLink")
+        return self._to_item(metadata, scope_root=True)
+
+    def _to_item(
+        self,
+        raw_metadata: dict[str, Any],
+        *,
+        current_rel_path: str = "",
+        scope_root: bool = False,
+    ) -> DriveItem:
+        if raw_metadata.get("mimeType") == FOLDER_MIME:
+            return GDriveFolder(
+                raw_metadata=raw_metadata,
+                client=self,
+                current_rel_path=current_rel_path,
+                scope_root=scope_root,
+            )
+        return GDriveFile(
+            raw_metadata=raw_metadata,
+            client=self,
+            current_rel_path=current_rel_path,
+            scope_root=scope_root,
+        )
 
     def download_from_weburl(self, web_url: str, **kwargs) -> Union[bytes, str]:
         file_id = self._extract_id_from_url(web_url)
@@ -585,14 +603,18 @@ __all__ = [
 ]
 
 
-class GDriveItem(DriveItem):
-    """
-    Google Drive active item implementation.
-    """
-    def __init__(self, raw_metadata: dict, client: "GoogleDriveClient", current_rel_path: str = ""):
+class GDriveItem:
+    def __init__(
+        self,
+        raw_metadata: dict[str, Any],
+        client: "GoogleDriveClient",
+        current_rel_path: str = "",
+        scope_root: bool = False,
+    ):
         self.raw = raw_metadata
         self.client = client
         self._current_rel_path = current_rel_path
+        self._scope_root = scope_root
 
     @property
     def id(self) -> str:
@@ -604,16 +626,14 @@ class GDriveItem(DriveItem):
 
     @property
     def path(self) -> str:
-        # Use relative_path from list_folder_files if available
-        if "relative_path" in self.raw:
-            return self.raw["relative_path"]
+        relative_path = str(self.raw.get("relative_path", "")).strip()
+        if relative_path:
+            if self._current_rel_path:
+                return f"{self._current_rel_path}/{relative_path}".strip("/")
+            return relative_path
         if self._current_rel_path:
             return f"{self._current_rel_path}/{self.name}"
         return self.name
-
-    @property
-    def is_directory(self) -> bool:
-        return self.raw.get("mimeType") == FOLDER_MIME
 
     @property
     def service_type(self) -> str:
@@ -624,30 +644,15 @@ class GDriveItem(DriveItem):
         # Generate open format if not present
         return self.raw.get("webViewLink") or f"https://drive.google.com/open?id={self.id}"
 
-    @property
-    def children(self) -> list["GDriveItem"]:
-        """Returns the list of child items if this item is a directory"""
-        results = []
-        for child_raw in self.raw.get("contents", []):
-            results.append(
-                GDriveItem(
-                    raw_metadata=child_raw,
-                    client=self.client,
-                    current_rel_path=self.path
-                )
-            )
-        return results
 
+
+class GDriveFile(GDriveItem, DriveFile):
     def download(self, target_dir: str | Path) -> None:
-        if self.is_directory:
-            raise NotImplementedError("Cannot download a directory directly.")
-            
         target = Path(target_dir)
         if target.is_dir():
             target = target / self.name
-            
+
         target.parent.mkdir(parents=True, exist_ok=True)
-        # Handle native Google formats differently? For now use standard download
         content = self.client.download_file(self.id)
         if isinstance(content, bytes):
             with open(target, "wb") as f:
@@ -655,3 +660,22 @@ class GDriveItem(DriveItem):
         else:
             with open(target, "w", encoding="utf-8") as f:
                 f.write(content)
+
+
+class GDriveFolder(GDriveItem, DriveFolder):
+    @property
+    def children(self) -> list[DriveItem]:
+        contents = self.raw.get("contents")
+        if contents is None:
+            contents = self.client.list_folder_contents(self.id, recursive=False)
+            self.raw["contents"] = contents
+
+        next_rel_path = "" if self._scope_root else self.path
+        return [
+            self.client._to_item(
+                child_raw,
+                current_rel_path=next_rel_path,
+                scope_root=False,
+            )
+            for child_raw in contents
+        ]

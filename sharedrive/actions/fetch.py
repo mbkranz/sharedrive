@@ -2,44 +2,45 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from sharedrive.item import DriveItem
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from sharedrive.actions.download import resource_adapter_name, resource_source_url
-from sharedrive.descriptor import (
-    ensure_descriptor_exists,
-    get_descriptor_resources,
-    load_descriptor_document,
-    resource_syncs_to_resources,
-    save_descriptor_document,
-    source_entity_type,
+from sharedrive.models import (
+    DrivePackage,
+    DriveResource,
+    load_drive_descriptor,
+    save_drive_descriptor,
 )
 
 LogFn = Callable[[str], None]
 
 
-def _build_child_resources(drive_item: "DriveItem", entity_type: str) -> list[dict]:
-    """Recursively collect active drive items into passive descriptor metadata blocks."""
-    resources = []
-    
-    if entity_type == "Directory":
-        items = drive_item.children
+def _iter_drive_leaf_items(item: Any) -> Iterable[Any]:
+    """Recursively yield non-directory children from a drive item tree.
+
+    Works with any object that exposes ``is_directory`` and ``children``
+    attributes, including concrete ``DriveFolder`` subclasses and lightweight
+    test doubles without the ``iter_files`` method.
+    """
+    if getattr(item, "is_directory", False):
+        for child in item.children:
+            yield from _iter_drive_leaf_items(child)
     else:
-        items = [drive_item]
-        
-    for item in items:
-        # Convert Pydantic dplib object to serializable dict
-        dp_resource = item.to_dp().model_dump(exclude_unset=True, exclude_none=True)
-        # Required descriptor structure mappings that don't match frictionless directly 
-        # (if any, like serviceType in sources instead of generic dicts, and nested components)
-        res_dict = {
-            "name": dp_resource.get("name"),
-            "path": dp_resource.get("path"),
-            "sources": dp_resource.get("sources", [])
-        }
-        resources.append(res_dict)
-    
-    return sorted(resources, key=lambda i: str(i.get("path", "")))
+        yield item
+
+
+def _build_child_resources(drive_item: Any) -> list[dict[str, Any]]:
+    """Build sorted resource dicts from all leaf (non-directory) items.
+
+    Iterates the item tree using ``is_directory`` / ``children`` rather than
+    the concrete ``iter_files`` method so that both real adapter objects and
+    test doubles work without a shared base class.
+    """
+    leaf_items = list(_iter_drive_leaf_items(drive_item))
+    return [
+        item.to_dp().to_dict()
+        for item in sorted(leaf_items, key=lambda i: str(getattr(i, "path", "") or ""))
+    ]
 
 
 @dataclass(slots=True)
@@ -57,8 +58,7 @@ def _fetch_from_adapter(
     sharepoint_client_factory: Callable[[], Any] | None,
 ) -> list[dict[str, Any]]:
     adapter_name = resource_adapter_name(resource, source_url)
-    entity_type = source_entity_type(resource)
-    
+
     if adapter_name == "googledrive":
         if googledrive_client_factory is None:
             from sharedrive.auth.google import default_drive_strategy
@@ -66,9 +66,9 @@ def _fetch_from_adapter(
             client = GoogleDriveClient(credential_strategy=default_drive_strategy())
         else:
             client = googledrive_client_factory()
-            
+
         drive_item = client.get_from_weburl(source_url)
-        return _build_child_resources(drive_item, entity_type)
+        return _build_child_resources(drive_item)
 
     elif adapter_name == "sharepoint":
         if sharepoint_client_factory is None:
@@ -76,9 +76,9 @@ def _fetch_from_adapter(
             client = make_sharepoint_client_from_microsoft_auth()
         else:
             client = sharepoint_client_factory()
-            
+
         drive_item = client.get_from_weburl(source_url)
-        return _build_child_resources(drive_item, entity_type)
+        return _build_child_resources(drive_item)
 
     else:
         raise NotImplementedError(
@@ -96,30 +96,23 @@ def fetch_resource_metadata_in_descriptor(
     sharepoint_client_factory: Callable[[], Any] | None = None,
 ) -> FetchSummary:
     """Fetch metadata for one top-level resource into nested descriptor resources."""
-    descriptor_path = ensure_descriptor_exists(descriptor)
+    descriptor_path = Path(descriptor)
     normalized_name = resource_name.strip().lower()
     if not normalized_name:
         raise ValueError("resource_name must be a non-empty string")
 
-    document = load_descriptor_document(descriptor_path)
-    resources = get_descriptor_resources(document)
-    matches = [
-        resource
-        for resource in resources
-        if isinstance(resource, dict)
-        and str(resource.get("name", "")).strip().lower() == normalized_name
-    ]
-
-    if not matches:
+    descriptor_model = load_drive_descriptor(descriptor_path)
+    resolved_reference = descriptor_model.get_resource_reference(resource_name)
+    if resolved_reference is None:
         raise ValueError(f"Resource '{resource_name}' was not found.")
-    if len(matches) > 1:
-        raise ValueError(f"Resource '{resource_name}' is ambiguous.")
 
-    resource = matches[0]
-    resolved_name = str(resource.get("name", resource_name)).strip() or resource_name
-    if not resource_syncs_to_resources(resource):
+    _, resource = resolved_reference
+    resolved_name = str(resource.name or resource_name).strip() or resource_name
+    if not isinstance(resource, DrivePackage):
         raise ValueError(
-            f"Resource '{resolved_name}' is not configured with syncTarget 'resources'."
+            f"Resource '{resolved_name}' must have syncTarget 'resources' to use fetch. "
+            "Only package resources (syncTarget: resources) can have their remote "
+            "metadata fetched into nested descriptor resources."
         )
     source_url = resource_source_url(resource)
     if not source_url:
@@ -145,8 +138,13 @@ def fetch_resource_metadata_in_descriptor(
             changed=False,
         )
 
-    resource["resources"] = child_resources
-    save_descriptor_document(descriptor_path, document)
+    resource.resources = [
+        DrivePackage.model_validate(item)
+        if isinstance(item.get("resources"), list)
+        else DriveResource.model_validate(item)
+        for item in child_resources
+    ]
+    save_drive_descriptor(descriptor_path, descriptor_model)
     return FetchSummary(
         resource_name=resolved_name,
         generated_resources=len(child_resources),

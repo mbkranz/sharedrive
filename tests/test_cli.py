@@ -18,6 +18,7 @@ def _write_descriptor(path: Path) -> None:
     path.write_text(
         yaml.safe_dump(
             {
+                "$schema": "data-package-catalog",
                 "resources": [
                     {
                         "name": "sharepoint-spec",
@@ -43,6 +44,8 @@ def _write_descriptor(path: Path) -> None:
                             }
                         ],
                     },
+                ],
+                "packages": [
                     {
                         "name": "census-package",
                         "path": "downloads/census",
@@ -56,7 +59,27 @@ def _write_descriptor(path: Path) -> None:
                         ],
                         "resources": [],
                     },
-                ]
+                ],
+                "catalogs": [
+                    {
+                        "name": "archived",
+                        "packages": [
+                            {
+                                "name": "nested-package",
+                                "path": "downloads/archived/nested-package",
+                                "syncTarget": "resources",
+                                "sources": [
+                                    {
+                                        "path": "https://drive.google.com/drive/folders/nested-folder",
+                                        "serviceType": "GoogleDrive",
+                                        "entityType": "Directory",
+                                    }
+                                ],
+                                "resources": [],
+                            }
+                        ],
+                    }
+                ],
             },
             sort_keys=False,
         ),
@@ -321,10 +344,10 @@ def test_download_defaults_to_all_when_include_is_omitted(monkeypatch: pytest.Mo
 
     monkeypatch.setattr("sharedrive.cli.download_from_descriptor", fake_download_from_descriptor)
 
-    result = RUNNER.invoke(app, ["download", str(descriptor), "--dry-run"], prog_name="sharedrive")
+    result = RUNNER.invoke(app, ["download", "my-package", "--descriptor", str(descriptor), "--dry-run"], prog_name="sharedrive")
 
     assert result.exit_code == 0
-    assert captured["include"] == "all"
+    assert captured["include"] == "my-package"
 
 
 def test_download_uses_saved_defaults_when_descriptor_omitted(
@@ -345,7 +368,7 @@ def test_download_uses_saved_defaults_when_descriptor_omitted(
 
     set_result = RUNNER.invoke(
         app,
-        ["set", "--global", "--descriptor", "resources/descriptor.yaml", "--output-dir", "exports"],
+        ["set", "--global", "--descriptor", "resources/descriptor.yaml", "--output-dir", "exports", "--selector", "my-package"],
         prog_name="sharedrive",
     )
     assert set_result.exit_code == 0
@@ -356,12 +379,13 @@ def test_download_uses_saved_defaults_when_descriptor_omitted(
     assert captured["descriptor"] == Path("resources/descriptor.yaml")
     assert captured["output_dir"] == Path("exports")
     assert captured["check_auth"] is True
+    assert captured["include"] == "my-package"
 
 
 def test_download_exits_nonzero_when_descriptor_is_missing(tmp_path: Path) -> None:
     descriptor = tmp_path / "missing.yaml"
 
-    result = RUNNER.invoke(app, ["download", str(descriptor), "--dry-run"], prog_name="sharedrive")
+    result = RUNNER.invoke(app, ["download", "my-package", "--descriptor", str(descriptor), "--dry-run"], prog_name="sharedrive")
 
     assert result.exit_code == 1
     assert "does not exist" in result.output
@@ -416,6 +440,42 @@ def test_fetch_uses_checked_out_descriptor_when_omitted(monkeypatch: pytest.Monk
 
     assert result.exit_code == 0
     assert captured["descriptor"] == Path("resources/descriptor.yaml")
+
+
+def test_fetch_uses_checked_out_descriptor_and_saved_selector_when_arguments_are_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    descriptor = tmp_path / "resources" / "descriptor.yaml"
+    descriptor.parent.mkdir(parents=True, exist_ok=True)
+    _write_descriptor(descriptor)
+    captured: dict[str, object] = {}
+
+    def fake_fetch_resource_metadata_in_descriptor(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(resource_name="archived.nested-package", generated_resources=1, dry_run=True)
+
+    monkeypatch.setattr(
+        "sharedrive.cli.fetch_resource_metadata_in_descriptor",
+        fake_fetch_resource_metadata_in_descriptor,
+    )
+
+    checkout_result = RUNNER.invoke(app, ["checkout", "resources/descriptor.yaml"], prog_name="sharedrive")
+    assert checkout_result.exit_code == 0
+
+    set_result = RUNNER.invoke(
+        app,
+        ["set", "--global", "--selector", "archived.nested-package"],
+        prog_name="sharedrive",
+    )
+    assert set_result.exit_code == 0
+
+    result = RUNNER.invoke(app, ["fetch", "--dry-run"], prog_name="sharedrive")
+
+    assert result.exit_code == 0
+    assert captured["descriptor"] == Path("resources/descriptor.yaml")
+    assert captured["resource_name"] == "archived.nested-package"
 
 
 def test_download_source_path_upserts_descriptor_and_runs_download(
@@ -484,8 +544,8 @@ def test_fetch_source_path_upserts_descriptor_and_runs_fetch(
 
     assert result.exit_code == 0
     assert captured["resource_name"] == "shared-specs"
-    assert document["resources"][0]["name"] == "shared-specs"
-    assert document["resources"][0]["syncTarget"] == "resources"
+    assert document["packages"][0]["name"] == "shared-specs"
+    assert document["packages"][0]["syncTarget"] == "resources"
 
 
 def test_removed_raw_adapter_commands_fail() -> None:
@@ -563,7 +623,10 @@ def test_add_uses_saved_global_descriptor_default(monkeypatch: pytest.MonkeyPatc
     monkeypatch.chdir(tmp_path)
     descriptor = tmp_path / "resources" / "descriptor.yaml"
     descriptor.parent.mkdir(parents=True, exist_ok=True)
-    descriptor.write_text("$schema: example\nresources: []\n", encoding="utf-8")
+    descriptor.write_text(
+        "$schema: data-package-catalog\nresources: []\npackages: []\ncatalogs: []\n",
+        encoding="utf-8",
+    )
 
     set_result = RUNNER.invoke(
         app,

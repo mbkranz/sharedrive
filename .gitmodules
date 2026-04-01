@@ -1,0 +1,3 @@
+[submodule "submodules/dplib-py"]
+	path = submodules/dplib-py
+	url = https://github.com/mbkranz/dplib-py.git
