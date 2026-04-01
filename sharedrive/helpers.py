@@ -63,6 +63,23 @@ def get_saved_params_for_descriptor(
     return merged
 
 
+def get_checked_out_entity() -> str | None:
+    """Return the currently checked-out entity dot-path, or None if no entity is active.
+
+    The checked-out entity is set via ``sharedrive checkout DESCRIPTOR ENTITY`` and
+    is stored in the global scope alongside the active descriptor.  It is distinct
+    from values written by ``sharedrive set`` so that ``set`` remains focused on
+    workflow defaults (output directories, etc.) and the entity context is managed
+    exclusively through checkout.
+    """
+    store = load_descriptor_defaults_store()
+    global_scope = store.get("global", {})
+    if not isinstance(global_scope, dict):
+        return None
+    entity = global_scope.get("entity")
+    return entity if isinstance(entity, str) and entity.strip() else None
+
+
 def resolve_descriptor_path(descriptor: Path | str | None = None) -> Path:
     """Resolve descriptor path from explicit input, saved defaults, or standard locations."""
     if descriptor is not None:
@@ -106,6 +123,7 @@ def resolve_default_descriptor() -> Path:
 __all__ = [
     "DESCRIPTOR_DEFAULTS_FILE",
     "descriptor_scope_key",
+    "get_checked_out_entity",
     "get_saved_params_for_descriptor",
     "load_descriptor_defaults_store",
     "resolve_default_descriptor",

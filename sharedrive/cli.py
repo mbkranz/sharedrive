@@ -16,6 +16,7 @@ from sharedrive.actions.download import check_auth_for_descriptor, download_from
 from sharedrive.actions.fetch import fetch_resource_metadata_in_descriptor
 from sharedrive.helpers import (
     DESCRIPTOR_DEFAULTS_FILE,
+    get_checked_out_entity,
     get_saved_params_for_descriptor,
     load_descriptor_defaults_store,
     resolve_descriptor_path,
@@ -344,7 +345,7 @@ def _has_saved_global_descriptor() -> bool:
     return isinstance(descriptor_value, str) and bool(descriptor_value.strip())
 
 
-def _set_active_descriptor(descriptor_path: Path) -> Path:
+def _set_active_descriptor(descriptor_path: Path, *, entity: str | None = None) -> Path:
     if not descriptor_path.exists():
         raise typer.BadParameter(f"Descriptor '{descriptor_path}' does not exist.")
 
@@ -355,6 +356,10 @@ def _set_active_descriptor(descriptor_path: Path) -> Path:
         store["global"] = global_scope
 
     global_scope["descriptor"] = descriptor_path.as_posix()
+    if entity is not None and entity.strip():
+        global_scope["entity"] = entity.strip()
+    else:
+        global_scope.pop("entity", None)
     save_descriptor_defaults_store(store)
     return descriptor_path
 
@@ -643,14 +648,29 @@ def update_command(
     "checkout",
     epilog=_examples_epilog(
         "sharedrive checkout resources/descriptor.yaml",
+        "sharedrive checkout resources/descriptor.yaml research",
+        "sharedrive checkout resources/descriptor.yaml research.archive",
     ),
 )
 def checkout_command(
     descriptor: Path = typer.Argument(..., help="Descriptor path to activate for later commands."),
+    entity: Optional[str] = typer.Argument(
+        None,
+        help="Entity dot-path within the descriptor to set as the active scope for fetch/download commands.",
+    ),
 ) -> None:
-    """Activate a descriptor for later commands."""
-    descriptor_path = _set_active_descriptor(descriptor)
-    typer.echo(f"Checked out descriptor: {descriptor_path}")
+    """Activate a descriptor and optionally an entity within it for later commands.
+
+    When an entity is checked out, ``fetch`` and ``download`` without a selector
+    argument operate on the whole entity.  A selector argument is then treated as
+    a path relative to the checked-out entity (e.g. ``fetch archive`` becomes
+    ``research.archive`` when ``research`` is checked out).
+    """
+    descriptor_path = _set_active_descriptor(descriptor, entity=entity)
+    if entity and entity.strip():
+        typer.echo(f"Checked out entity '{entity.strip()}' in {descriptor_path}")
+    else:
+        typer.echo(f"Checked out descriptor: {descriptor_path}")
 
 
 def _run_download_command(
@@ -895,16 +915,6 @@ def set_command(
         "--output-dir",
         help="Default output directory to save.",
     ),
-    selector: Optional[str] = typer.Option(
-        None,
-        "--selector",
-        help="Default selector to save for fetch/download commands.",
-    ),
-    package: Optional[str] = typer.Option(
-        None,
-        "--package",
-        help="Deprecated alias for --selector.",
-    ),
 ) -> None:
     """Set reusable key/value parameters for sharedrive descriptor workflows."""
     parsed = _parse_set_args(list(ctx.args))
@@ -925,9 +935,6 @@ def set_command(
         parsed["descriptor"] = descriptor_path.as_posix()
     if output_dir is not None:
         parsed["output_dir"] = output_dir
-    resolved_selector = selector or package
-    if resolved_selector is not None:
-        parsed["selector"] = resolved_selector
     if not parsed:
         raise typer.BadParameter("Provide one or more values to save.")
 
@@ -1002,13 +1009,14 @@ def add(
 @app.command(
     "fetch",
     epilog=_examples_epilog(
+        "sharedrive fetch # get metadata for the default selector in the checked-out descriptor",
         "sharedrive fetch census-package --descriptor resources/descriptor.yaml --dry-run",
         "sharedrive fetch census-package --descriptor resources/descriptor.yaml",
         "sharedrive fetch --source-path https://drive.google.com/drive/folders/<id> --resource my-package",
     ),
 )
 def fetch(
-    selector: Optional[str] = typer.Argument(None, help="Resource selector to fetch metadata for. If omitted, uses the last-used selector."),
+    selector: Optional[str] = typer.Argument(None, help="Resource selector to fetch metadata for. If omitted, uses the checked-out descriptor."),
     descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
     source_path: Optional[str] = typer.Option(None, "--source-path", help="Direct source URL/URI to add or update before fetching metadata."),
     resource: Optional[str] = typer.Option(None, "--resource", help="Resource name to use with --source-path."),
@@ -1030,15 +1038,25 @@ def fetch(
 
     _exit_if_descriptor_missing(descriptor_path)
 
-    # Try to use provided selector or saved default
-    selector_name = selector
-    if selector_name is None:
-        saved = get_saved_params_for_descriptor(descriptor_path)
-        selector_name = saved.get("selector") or saved.get("package")
-
-    if selector_name is None:
-        typer.echo("Error: a selector is required. Pass it as an argument, save one with 'sharedrive set --selector', or use --source-path.", err=True)
-        raise typer.Exit(code=1)
+    # Resolve the effective selector from the argument and the checked-out entity.
+    # The checked-out entity (set via `sharedrive checkout DESCRIPTOR ENTITY`) acts
+    # as the current scope:
+    #   - No selector arg → operate on the whole checked-out entity.
+    #   - Selector arg    → treat it as a path relative to the checked-out entity.
+    #   - No entity and no selector arg → error.
+    checked_out_entity = get_checked_out_entity()
+    if selector is None:
+        if checked_out_entity:
+            selector_name = checked_out_entity
+        else:
+            typer.echo(
+                "Error: a selector is required. Pass it as an argument or check out an entity with "
+                "'sharedrive checkout DESCRIPTOR ENTITY'.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+    else:
+        selector_name = f"{checked_out_entity}.{selector}" if checked_out_entity else selector
 
     try:
         summary = fetch_resource_metadata_in_descriptor(
@@ -1068,7 +1086,7 @@ def fetch(
     ),
 )
 def download(
-    selector: Optional[str] = typer.Argument(None, help="Selector to download. If omitted, uses the last-used selector."),
+    selector: Optional[str] = typer.Argument(None, help="Selector to download. If omitted, uses the checked-out descriptor."),
     descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
     source_path: Optional[str] = typer.Option(None, "--source-path", help="Direct source URL/URI to add or update before downloading."),
     resource: Optional[str] = typer.Option(None, "--resource", help="Resource name to use with --source-path."),
@@ -1081,11 +1099,14 @@ def download(
     _load_env_file(env_file)
     descriptor_path = resolve_descriptor_path(descriptor)
 
-    # Try to use provided selector or saved default
-    package_name = selector
-    if package_name is None:
-        saved = get_saved_params_for_descriptor(descriptor_path)
-        package_name = saved.get("selector") or saved.get("package")
+    # Resolve the effective selector from the argument and the checked-out entity.
+    # Mirrors the fetch command: the checked-out entity provides the scope and a
+    # selector argument is interpreted as a path relative to that entity.
+    checked_out_entity = get_checked_out_entity()
+    if selector is None:
+        package_name = checked_out_entity  # may remain None → checked later
+    else:
+        package_name = f"{checked_out_entity}.{selector}" if checked_out_entity else selector
 
     output_dir_path = resolve_output_dir(output_dir, descriptor=descriptor_path)
 
@@ -1103,7 +1124,11 @@ def download(
     _exit_if_descriptor_missing(descriptor_path)
 
     if package_name is None:
-        typer.echo("Error: a selector is required. Pass it as an argument, save one with 'sharedrive set --selector', or use --source-path.", err=True)
+        typer.echo(
+            "Error: a selector is required. Pass it as an argument or check out an entity with "
+            "'sharedrive checkout DESCRIPTOR ENTITY'.",
+            err=True,
+        )
         raise typer.Exit(code=1)
 
     _run_download_command(

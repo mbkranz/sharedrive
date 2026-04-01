@@ -350,7 +350,7 @@ def test_download_defaults_to_all_when_include_is_omitted(monkeypatch: pytest.Mo
     assert captured["include"] == "my-package"
 
 
-def test_download_uses_saved_defaults_when_descriptor_omitted(
+def test_download_uses_checked_out_entity_and_saved_output_dir(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -366,9 +366,18 @@ def test_download_uses_saved_defaults_when_descriptor_omitted(
 
     monkeypatch.setattr("sharedrive.cli.download_from_descriptor", fake_download_from_descriptor)
 
+    # checkout sets both the active descriptor and the checked-out entity
+    checkout_result = RUNNER.invoke(
+        app,
+        ["checkout", "resources/descriptor.yaml", "my-package"],
+        prog_name="sharedrive",
+    )
+    assert checkout_result.exit_code == 0
+
+    # set provides defaults like output_dir (not selectors)
     set_result = RUNNER.invoke(
         app,
-        ["set", "--global", "--descriptor", "resources/descriptor.yaml", "--output-dir", "exports", "--selector", "my-package"],
+        ["set", "resources/descriptor.yaml", "--output-dir", "exports"],
         prog_name="sharedrive",
     )
     assert set_result.exit_code == 0
@@ -442,7 +451,7 @@ def test_fetch_uses_checked_out_descriptor_when_omitted(monkeypatch: pytest.Monk
     assert captured["descriptor"] == Path("resources/descriptor.yaml")
 
 
-def test_fetch_uses_checked_out_descriptor_and_saved_selector_when_arguments_are_omitted(
+def test_fetch_uses_checked_out_entity_when_selector_omitted(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -461,21 +470,90 @@ def test_fetch_uses_checked_out_descriptor_and_saved_selector_when_arguments_are
         fake_fetch_resource_metadata_in_descriptor,
     )
 
-    checkout_result = RUNNER.invoke(app, ["checkout", "resources/descriptor.yaml"], prog_name="sharedrive")
-    assert checkout_result.exit_code == 0
-
-    set_result = RUNNER.invoke(
+    checkout_result = RUNNER.invoke(
         app,
-        ["set", "--global", "--selector", "archived.nested-package"],
+        ["checkout", "resources/descriptor.yaml", "archived.nested-package"],
         prog_name="sharedrive",
     )
-    assert set_result.exit_code == 0
+    assert checkout_result.exit_code == 0
 
     result = RUNNER.invoke(app, ["fetch", "--dry-run"], prog_name="sharedrive")
 
     assert result.exit_code == 0
     assert captured["descriptor"] == Path("resources/descriptor.yaml")
     assert captured["resource_name"] == "archived.nested-package"
+
+
+def test_checkout_with_entity_stores_entity_and_bare_checkout_clears_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    descriptor = tmp_path / "resources" / "descriptor.yaml"
+    descriptor.parent.mkdir(parents=True, exist_ok=True)
+    _write_descriptor(descriptor)
+
+    result = RUNNER.invoke(
+        app,
+        ["checkout", "resources/descriptor.yaml", "research.archive"],
+        prog_name="sharedrive",
+    )
+    assert result.exit_code == 0
+    store = json.loads((tmp_path / ".sharedrive" / "sharedrive_set.json").read_text(encoding="utf-8"))
+    assert store["global"]["entity"] == "research.archive"
+    assert "research.archive" in result.output
+
+    # A bare checkout (no entity) should clear the stored entity
+    result2 = RUNNER.invoke(
+        app,
+        ["checkout", "resources/descriptor.yaml"],
+        prog_name="sharedrive",
+    )
+    assert result2.exit_code == 0
+    store2 = json.loads((tmp_path / ".sharedrive" / "sharedrive_set.json").read_text(encoding="utf-8"))
+    assert "entity" not in store2["global"]
+
+
+def test_fetch_with_selector_arg_prepends_checked_out_entity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    descriptor = tmp_path / "resources" / "descriptor.yaml"
+    descriptor.parent.mkdir(parents=True, exist_ok=True)
+    _write_descriptor(descriptor)
+    captured: dict[str, object] = {}
+
+    def fake_fetch_resource_metadata_in_descriptor(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(resource_name="research.archive", generated_resources=1, dry_run=False)
+
+    monkeypatch.setattr(
+        "sharedrive.cli.fetch_resource_metadata_in_descriptor",
+        fake_fetch_resource_metadata_in_descriptor,
+    )
+
+    RUNNER.invoke(app, ["checkout", "resources/descriptor.yaml", "research"], prog_name="sharedrive")
+
+    result = RUNNER.invoke(app, ["fetch", "archive", "--descriptor", str(descriptor)], prog_name="sharedrive")
+
+    assert result.exit_code == 0
+    assert captured["resource_name"] == "research.archive"
+
+
+def test_fetch_without_entity_and_without_selector_exits_with_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    descriptor = tmp_path / "resources" / "descriptor.yaml"
+    descriptor.parent.mkdir(parents=True, exist_ok=True)
+    _write_descriptor(descriptor)
+
+    # Ensure no entity is checked out
+    RUNNER.invoke(app, ["checkout", "resources/descriptor.yaml"], prog_name="sharedrive")
+
+    result = RUNNER.invoke(app, ["fetch", "--descriptor", str(descriptor)], prog_name="sharedrive")
+
+    assert result.exit_code == 1
+    assert "selector is required" in result.output
 
 
 def test_download_source_path_upserts_descriptor_and_runs_download(
