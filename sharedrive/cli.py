@@ -23,7 +23,8 @@ from sharedrive.helpers import (
     save_descriptor_defaults_store,
 )
 from sharedrive.models import (
-    DrivePackage,
+    CATALOG_PROFILE,
+    DriveCatalog,
     load_drive_descriptor,
     normalize_entity_type,
     normalize_service_type,
@@ -74,13 +75,13 @@ def load_descriptor_document(path: Path | str) -> dict[str, Any]:
     """Load descriptor file as a dict, optional fields for CLI manipulation."""
     descriptor_path = Path(path)
     if not descriptor_path.exists():
-        return {"resources": []}
+        return {"$schema": CATALOG_PROFILE, "resources": [], "packages": [], "catalogs": []}
     return load_drive_descriptor(descriptor_path).to_dict()
 
 
 def save_descriptor_document(path: Path | str, document: dict[str, Any]) -> None:
     """Save descriptor dict back to file via dplib models."""
-    save_drive_descriptor(path, DrivePackage.model_validate(document))
+    save_drive_descriptor(path, DriveCatalog.model_validate(document))
 
 
 def get_descriptor_resources(
@@ -96,6 +97,40 @@ def get_descriptor_resources(
     if not isinstance(resources, list):
         raise ValueError("Descriptor must contain a top-level 'resources' array")
     return resources
+
+
+def get_descriptor_packages(
+    document: dict[str, Any],
+    *,
+    create: bool = False,
+) -> list[dict[str, Any]]:
+    """Get top-level packages array from descriptor dict."""
+    packages = document.get("packages")
+    if packages is None and create:
+        document["packages"] = []
+        packages = document["packages"]
+    if packages is None:
+        return []
+    if not isinstance(packages, list):
+        raise ValueError("Descriptor must contain a top-level 'packages' array")
+    return packages
+
+
+def get_descriptor_catalogs(
+    document: dict[str, Any],
+    *,
+    create: bool = False,
+) -> list[dict[str, Any]]:
+    """Get top-level catalogs array from descriptor dict."""
+    catalogs = document.get("catalogs")
+    if catalogs is None and create:
+        document["catalogs"] = []
+        catalogs = document["catalogs"]
+    if catalogs is None:
+        return []
+    if not isinstance(catalogs, list):
+        raise ValueError("Descriptor must contain a top-level 'catalogs' array")
+    return catalogs
 
 
 def get_package_resources(
@@ -352,11 +387,51 @@ def _iter_resource_references(
     return references
 
 
+def _iter_catalog_references(
+    document: dict[str, Any],
+    *,
+    parent_path: str | None = None,
+) -> list[tuple[str, dict[str, Any]]]:
+    references = _iter_resource_references(
+        get_descriptor_resources(document),
+        parent_path=parent_path,
+    )
+
+    for package in get_descriptor_packages(document):
+        if not isinstance(package, dict):
+            continue
+        name = str(package.get("name", "")).strip()
+        if not name:
+            continue
+
+        selector_path = name if parent_path is None else f"{parent_path}.{name}"
+        references.append((selector_path, package))
+        references.extend(
+            _iter_resource_references(
+                get_package_resources(package),
+                parent_path=selector_path,
+            )
+        )
+
+    for catalog in get_descriptor_catalogs(document):
+        if not isinstance(catalog, dict):
+            continue
+        name = str(catalog.get("name", "")).strip()
+        if not name:
+            continue
+
+        selector_path = name if parent_path is None else f"{parent_path}.{name}"
+        references.append((selector_path, catalog))
+        references.extend(_iter_catalog_references(catalog, parent_path=selector_path))
+
+    return references
+
+
 def _resolve_exact_resource_reference(
     resource_selector: str,
-    resources: list[dict[str, Any]],
+    document: dict[str, Any],
 ) -> tuple[str, dict[str, Any]]:
-    references = _iter_resource_references(resources)
+    references = _iter_catalog_references(document)
     normalized_selector = resource_selector.strip().lower()
     if not normalized_selector:
         raise typer.BadParameter("Resource selector must be a non-empty string.")
@@ -537,7 +612,7 @@ def update_command(
     if resource is not None:
         resolved_path, target = _resolve_exact_resource_reference(
             resource,
-            get_descriptor_resources(document),
+            document,
         )
         target_label = f"{resolved_path} in {descriptor_path}"
 
@@ -659,12 +734,19 @@ def _upsert_source_resource(
     )
 
     document = load_descriptor_document(descriptor_path)
-    resources = get_descriptor_resources(document, create=True)
+    target_collection = (
+        get_descriptor_packages(document, create=True)
+        if sync_target == "resources"
+        else get_descriptor_resources(document, create=True)
+    )
     normalized_name = resource_name.strip().lower()
     existing = next(
         (
             resource
-            for resource in resources
+            for resource in [
+                *get_descriptor_resources(document),
+                *get_descriptor_packages(document),
+            ]
             if isinstance(resource, dict)
             and str(resource.get("name", "")).strip().lower() == normalized_name
         ),
@@ -692,7 +774,7 @@ def _upsert_source_resource(
         existing.update(resource_payload)
         resource_ref = existing
     else:
-        resources.append(resource_payload)
+        target_collection.append(resource_payload)
         resource_ref = resource_payload
 
     if not dry_run:
@@ -813,10 +895,15 @@ def set_command(
         "--output-dir",
         help="Default output directory to save.",
     ),
+    selector: Optional[str] = typer.Option(
+        None,
+        "--selector",
+        help="Default selector to save for fetch/download commands.",
+    ),
     package: Optional[str] = typer.Option(
         None,
         "--package",
-        help="Default package name to save.",
+        help="Deprecated alias for --selector.",
     ),
 ) -> None:
     """Set reusable key/value parameters for sharedrive descriptor workflows."""
@@ -838,8 +925,9 @@ def set_command(
         parsed["descriptor"] = descriptor_path.as_posix()
     if output_dir is not None:
         parsed["output_dir"] = output_dir
-    if package is not None:
-        parsed["package"] = package
+    resolved_selector = selector or package
+    if resolved_selector is not None:
+        parsed["selector"] = resolved_selector
     if not parsed:
         raise typer.BadParameter("Provide one or more values to save.")
 
@@ -920,14 +1008,14 @@ def add(
     ),
 )
 def fetch(
-    package: Optional[str] = typer.Argument(None, help="Package name to fetch metadata for. If omitted, uses the last-used package."),
+    selector: Optional[str] = typer.Argument(None, help="Resource selector to fetch metadata for. If omitted, uses the last-used selector."),
     descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
     source_path: Optional[str] = typer.Option(None, "--source-path", help="Direct source URL/URI to add or update before fetching metadata."),
     resource: Optional[str] = typer.Option(None, "--resource", help="Resource name to use with --source-path."),
     dry_run: bool = typer.Option(False, help="Preview descriptor changes without writing them."),
     env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
 ) -> None:
-    """Fetch remote metadata for one package into the descriptor."""
+    """Fetch remote metadata for one selector into the descriptor."""
     _load_env_file(env_file)
     descriptor_path = resolve_descriptor_path(descriptor)
 
@@ -942,20 +1030,20 @@ def fetch(
 
     _exit_if_descriptor_missing(descriptor_path)
 
-    # Try to use provided package or saved default
-    package_name = package
-    if package_name is None:
+    # Try to use provided selector or saved default
+    selector_name = selector
+    if selector_name is None:
         saved = get_saved_params_for_descriptor(descriptor_path)
-        package_name = saved.get("package")
+        selector_name = saved.get("selector") or saved.get("package")
 
-    if package_name is None:
-        typer.echo("Error: a package name is required. Pass it as an argument or use --source-path.", err=True)
+    if selector_name is None:
+        typer.echo("Error: a selector is required. Pass it as an argument, save one with 'sharedrive set --selector', or use --source-path.", err=True)
         raise typer.Exit(code=1)
 
     try:
         summary = fetch_resource_metadata_in_descriptor(
             descriptor=descriptor_path,
-            resource_name=package_name,
+            resource_name=selector_name,
             dry_run=dry_run,
             log=None,
             googledrive_client_factory=lambda: _make_gdrive_client(None),
@@ -980,7 +1068,7 @@ def fetch(
     ),
 )
 def download(
-    package: Optional[str] = typer.Argument(None, help="Package name to download. If omitted, uses the last-used package."),
+    selector: Optional[str] = typer.Argument(None, help="Selector to download. If omitted, uses the last-used selector."),
     descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
     source_path: Optional[str] = typer.Option(None, "--source-path", help="Direct source URL/URI to add or update before downloading."),
     resource: Optional[str] = typer.Option(None, "--resource", help="Resource name to use with --source-path."),
@@ -989,15 +1077,15 @@ def download(
     check_auth: bool = typer.Option(False, "--check-auth", help="Validate service credentials before downloading."),
     env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
 ) -> None:
-    """Download resources from a package in the descriptor."""
+    """Download resources from a selector in the descriptor."""
     _load_env_file(env_file)
     descriptor_path = resolve_descriptor_path(descriptor)
 
-    # Try to use provided package or saved default
-    package_name = package
+    # Try to use provided selector or saved default
+    package_name = selector
     if package_name is None:
         saved = get_saved_params_for_descriptor(descriptor_path)
-        package_name = saved.get("package")
+        package_name = saved.get("selector") or saved.get("package")
 
     output_dir_path = resolve_output_dir(output_dir, descriptor=descriptor_path)
 
@@ -1015,7 +1103,7 @@ def download(
     _exit_if_descriptor_missing(descriptor_path)
 
     if package_name is None:
-        typer.echo("Error: a package name is required. Pass it as an argument or use --source-path.", err=True)
+        typer.echo("Error: a selector is required. Pass it as an argument, save one with 'sharedrive set --selector', or use --source-path.", err=True)
         raise typer.Exit(code=1)
 
     _run_download_command(

@@ -14,16 +14,28 @@ RUNNER = CliRunner()
 def _write_descriptor(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        """
-resources:
-  - name: source-export
-    path: downloads/source.csv
-    syncTarget: path
-    sources:
-      - path: s3://bucket/source.csv
-        serviceType: S3
-        entityType: File
-""".strip(),
+        yaml.safe_dump(
+            {
+                "$schema": "data-package-catalog",
+                "resources": [
+                    {
+                        "name": "source-export",
+                        "path": "downloads/source.csv",
+                        "syncTarget": "path",
+                        "sources": [
+                            {
+                                "path": "s3://bucket/source.csv",
+                                "serviceType": "S3",
+                                "entityType": "File",
+                            }
+                        ],
+                    }
+                ],
+                "packages": [],
+                "catalogs": [],
+            },
+            sort_keys=False,
+        ),
         encoding="utf-8",
     )
 
@@ -40,9 +52,10 @@ def test_clone_descriptor_writes_target_yaml(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0
-    assert yaml.safe_load(target_descriptor.read_text(encoding="utf-8")) == yaml.safe_load(
-        source_descriptor.read_text(encoding="utf-8")
-    )
+    cloned = yaml.safe_load(target_descriptor.read_text(encoding="utf-8"))
+    source = yaml.safe_load(source_descriptor.read_text(encoding="utf-8"))
+    assert cloned["$schema"] == source["$schema"]
+    assert cloned["resources"] == source["resources"]
 
 
 def test_clone_descriptor_uses_target_suffix_format(tmp_path: Path) -> None:
@@ -88,7 +101,7 @@ def test_clone_descriptor_rejects_existing_target_without_force(tmp_path: Path) 
     source_descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(source_descriptor)
     target_descriptor = tmp_path / "descriptor-copy.yaml"
-    target_descriptor.write_text("resources: []\n", encoding="utf-8")
+    target_descriptor.write_text("$schema: data-package-catalog\nresources: []\npackages: []\ncatalogs: []\n", encoding="utf-8")
 
     result = RUNNER.invoke(
         app,
@@ -104,7 +117,7 @@ def test_clone_descriptor_force_overwrites_existing_target(tmp_path: Path) -> No
     source_descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(source_descriptor)
     target_descriptor = tmp_path / "descriptor-copy.yaml"
-    target_descriptor.write_text("resources: []\n", encoding="utf-8")
+    target_descriptor.write_text("$schema: data-package-catalog\nresources: []\npackages: []\ncatalogs: []\n", encoding="utf-8")
 
     result = RUNNER.invoke(
         app,

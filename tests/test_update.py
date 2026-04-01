@@ -14,6 +14,7 @@ def _write_descriptor(path: Path) -> None:
     path.write_text(
         yaml.safe_dump(
             {
+                "$schema": "data-package-catalog",
                 "title": "Original title",
                 "description": "Original description",
                 "resources": [
@@ -42,6 +43,8 @@ def _write_descriptor(path: Path) -> None:
                         ],
                     },
                 ],
+                "packages": [],
+                "catalogs": [],
             },
             sort_keys=False,
         ),

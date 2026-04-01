@@ -8,9 +8,29 @@ import yaml
 from sharedrive.actions.add import add_resource_to_descriptor, infer_drive_service
 
 
+def _write_catalog_descriptor(
+    path: Path,
+    *,
+    resources: list[dict] | None = None,
+    packages: list[dict] | None = None,
+) -> None:
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "$schema": "data-package-catalog",
+                "resources": resources or [],
+                "packages": packages or [],
+                "catalogs": [],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_add_resource_to_descriptor_writes_source_service_type(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
-    descriptor.write_text("$schema: example\nresources: []\n", encoding="utf-8")
+    _write_catalog_descriptor(descriptor)
 
     resource = add_resource_to_descriptor(
         descriptor,
@@ -24,16 +44,29 @@ def test_add_resource_to_descriptor_writes_source_service_type(tmp_path: Path) -
     document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
 
     assert resource["syncTarget"] == "path"
-    assert document["$schema"] == "example"
+    assert document["$schema"] == "data-package-catalog"
     assert document["resources"][0]["sources"][0]["serviceType"] == "S3"
     assert document["resources"][0]["sources"][0]["entityType"] == "File"
 
 
 def test_add_resource_to_descriptor_rejects_duplicate_names(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
-    descriptor.write_text(
-        "resources:\n  - name: source-export\n    path: existing.csv\n    syncTarget: path\n    sources:\n      - path: s3://bucket/existing.csv\n        serviceType: S3\n        entityType: File\n",
-        encoding="utf-8",
+    _write_catalog_descriptor(
+        descriptor,
+        resources=[
+            {
+                "name": "source-export",
+                "path": "existing.csv",
+                "syncTarget": "path",
+                "sources": [
+                    {
+                        "path": "s3://bucket/existing.csv",
+                        "serviceType": "S3",
+                        "entityType": "File",
+                    }
+                ],
+            }
+        ],
     )
 
     with pytest.raises(ValueError, match="already exists"):
@@ -47,7 +80,7 @@ def test_add_resource_to_descriptor_rejects_duplicate_names(tmp_path: Path) -> N
 
 def test_add_resource_to_descriptor_rejects_unsupported_service_type(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
-    descriptor.write_text("resources: []\n", encoding="utf-8")
+    _write_catalog_descriptor(descriptor)
 
     with pytest.raises(NotImplementedError, match="not implemented"):
         add_resource_to_descriptor(
@@ -61,7 +94,7 @@ def test_add_resource_to_descriptor_rejects_unsupported_service_type(tmp_path: P
 
 def test_add_resource_to_descriptor_creates_resources_sync_target(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
-    descriptor.write_text("resources: []\n", encoding="utf-8")
+    _write_catalog_descriptor(descriptor)
 
     resource = add_resource_to_descriptor(
         descriptor,
@@ -79,15 +112,15 @@ def test_add_resource_to_descriptor_creates_resources_sync_target(tmp_path: Path
     assert resource["profile"] == "data-package"
     assert resource["syncTarget"] == "resources"
     assert resource["resources"] == []
-    assert document["resources"][0]["profile"] == "data-package"
-    assert document["resources"][0]["resources"] == []
-    assert document["resources"][0]["sources"][0]["serviceType"] == "GoogleDrive"
-    assert document["resources"][0]["sources"][0]["entityType"] == "Directory"
+    assert document["packages"][0]["profile"] == "data-package"
+    assert document["packages"][0]["resources"] == []
+    assert document["packages"][0]["sources"][0]["serviceType"] == "GoogleDrive"
+    assert document["packages"][0]["sources"][0]["entityType"] == "Directory"
 
 
 def test_add_resource_to_descriptor_requires_sync_target_for_directory_source(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
-    descriptor.write_text("resources: []\n", encoding="utf-8")
+    _write_catalog_descriptor(descriptor)
 
     with pytest.raises(ValueError, match="syncTarget is required"):
         add_resource_to_descriptor(

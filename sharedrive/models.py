@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Optional
 
 import pydantic
+import yaml
+from dplib.models.catalog import Catalog
 from dplib.models.package import Package
 from dplib.models.resource import Resource
 from dplib.models.source import Source
 from dplib.system import Model
+
+
+CATALOG_PROFILE = "data-package-catalog"
 
 
 SERVICE_TYPE_ALIASES = {
@@ -91,6 +97,67 @@ def service_type_adapter_name(service_type: str) -> str:
         "SharePoint": "sharepoint",
         "S3": "s3",
     }[normalized]
+
+
+def _resolve_entity_reference[T: Model](
+    model: Model,
+    selector: str,
+    entity_types: tuple[type[T], ...],
+) -> tuple[str, T] | None:
+    normalized_selector = selector.strip()
+    if not normalized_selector:
+        return None
+
+    lowered_selector = normalized_selector.lower()
+    matches = [
+        (path, item)
+        for path, item in model.iter_entity_references()
+        if isinstance(item, entity_types)
+        and (
+            path.strip().lower() == lowered_selector
+            or path.strip().lower().split(".")[-1] == lowered_selector
+        )
+    ]
+    if not matches:
+        return None
+    if len(matches) > 1 and "." not in normalized_selector:
+        raise ValueError(
+            f'Resource selector "{selector}" is ambiguous. Use the full dot-path selector.'
+        )
+    return matches[0]
+
+
+def _empty_catalog_document() -> dict[str, Any]:
+    return {
+        "$schema": CATALOG_PROFILE,
+        "resources": [],
+        "packages": [],
+        "catalogs": [],
+    }
+
+
+def _legacy_descriptor_message(descriptor_path: Path) -> str:
+    return (
+        f"Descriptor '{descriptor_path}' must use a catalog root with '$schema: {CATALOG_PROFILE}'. "
+        "Legacy package-root descriptors are no longer supported. "
+        "Wrap top-level package entries under 'packages:' (or standalone assets under 'resources:') "
+        "and set '$schema: data-package-catalog' at the root."
+    )
+
+
+def _load_raw_descriptor_document(path: Path) -> dict[str, Any]:
+    suffix = path.suffix.lower()
+    raw_text = path.read_text(encoding="utf-8")
+    if suffix == ".json":
+        data = json.loads(raw_text)
+    else:
+        data = yaml.safe_load(raw_text)
+
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Descriptor '{path}' must be an object at the document root."
+        )
+    return data
 
 
 class DriveSource(Source):
@@ -282,69 +349,118 @@ class DrivePackage(Package):
         self,
         resource_selector: str,
     ) -> tuple[str, DriveResource | DrivePackage] | None:
-        normalized_selector = resource_selector.strip()
-        if not normalized_selector:
-            return None
+        return _resolve_entity_reference(
+            self,
+            resource_selector,
+            (DriveResource, DrivePackage),
+        )
 
-        if "." not in normalized_selector:
-            direct_match = self.get_resource(name=normalized_selector)
-            if isinstance(direct_match, (DriveResource, DrivePackage)):
-                return normalized_selector, direct_match
 
-        references: list[tuple[str, DriveResource | DrivePackage]] = []
+class DriveCatalog(Catalog):
+    profile: str = pydantic.Field(default=CATALOG_PROFILE, alias="$schema")
+    resources: list[DriveResource] = pydantic.Field(default_factory=list)
+    packages: list[DrivePackage] = pydantic.Field(default_factory=list)
+    catalogs: list["DriveCatalog"] = pydantic.Field(default_factory=list)
 
-        def walk(resources: list[DriveResource | DrivePackage], parent_path: str | None = None) -> None:
-            for resource in resources:
-                name = (resource.name or "").strip()
-                if not name:
-                    continue
-                selector_path = name if parent_path is None else f"{parent_path}.{name}"
-                references.append((selector_path, resource))
-                if isinstance(resource, DrivePackage) and resource.resources:
-                    walk(resource.resources, selector_path)
-
-        walk(self.resources)
-        lowered_selector = normalized_selector.lower()
-        matches = [
-            (path, resource)
-            for path, resource in references
-            if path.lower() == lowered_selector or path.split(".")[-1].lower() == lowered_selector
+    @pydantic.field_validator("resources", mode="before")
+    @classmethod
+    def _coerce_resources(cls, value: Any) -> list[DriveResource]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("resources must be a list")
+        return [
+            item if isinstance(item, DriveResource) else DriveResource.model_validate(item)
+            for item in value
         ]
-        if not matches:
-            return None
-        if len(matches) > 1 and "." not in normalized_selector:
-            raise ValueError(
-                f'Resource selector "{resource_selector}" is ambiguous. Use the full dot-path selector.'
-            )
-        return matches[0]
 
-DriveDescriptor = DrivePackage
+    @pydantic.field_validator("packages", mode="before")
+    @classmethod
+    def _coerce_packages(cls, value: Any) -> list[DrivePackage]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("packages must be a list")
+        return [
+            item if isinstance(item, DrivePackage) else DrivePackage.model_validate(item)
+            for item in value
+        ]
+
+    @pydantic.field_validator("catalogs", mode="before")
+    @classmethod
+    def _coerce_catalogs(cls, value: Any) -> list["DriveCatalog"]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("catalogs must be a list")
+        return [
+            item if isinstance(item, DriveCatalog) else DriveCatalog.model_validate(item)
+            for item in value
+        ]
+
+    def to_dict(self):
+        data = {"$schema": CATALOG_PROFILE}
+        data.update(Model.to_dict(self))
+        return data
+
+    def get_entity_reference(
+        self,
+        selector: str,
+    ) -> tuple[str, DriveResource | DrivePackage | "DriveCatalog"] | None:
+        return _resolve_entity_reference(
+            self,
+            selector,
+            (DriveResource, DrivePackage, DriveCatalog),
+        )
+
+    def get_resource_reference(
+        self,
+        selector: str,
+    ) -> tuple[str, DriveResource | DrivePackage] | None:
+        resolved = self.get_entity_reference(selector)
+        if resolved is None:
+            return None
+        path, item = resolved
+        if isinstance(item, DriveCatalog):
+            return None
+        return path, item
+
+
+DriveDescriptor = DriveCatalog
 
 
 def load_drive_descriptor(
     path: Path | str,
     *,
     create_if_missing: bool = False,
-) -> DrivePackage:
+) -> DriveCatalog:
     descriptor_path = Path(path)
     if not descriptor_path.exists():
         if create_if_missing:
-            return DrivePackage(resources=[])
+            return DriveCatalog.model_validate(_empty_catalog_document())
         raise FileNotFoundError(f"Descriptor '{descriptor_path}' does not exist.")
-    return DrivePackage.from_path(str(descriptor_path), basepath=None)
+
+    document = _load_raw_descriptor_document(descriptor_path)
+    if document.get("$schema") != CATALOG_PROFILE:
+        raise ValueError(_legacy_descriptor_message(descriptor_path))
+
+    return DriveCatalog.model_validate(document)
 
 
-def save_drive_descriptor(path: Path | str, descriptor: DrivePackage) -> None:
+def save_drive_descriptor(path: Path | str, descriptor: DriveCatalog) -> None:
     descriptor_path = Path(path)
     descriptor_path.parent.mkdir(parents=True, exist_ok=True)
     descriptor.to_path(str(descriptor_path))
 
 
 DrivePackage.model_rebuild()
+DriveCatalog.model_rebuild()
 
 
 __all__ = [
+    "CATALOG_PROFILE",
     "DriveDescriptor",
+    "DriveCatalog",
     "DrivePackage",
     "DriveResource",
     "DriveSource",

@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 import yaml
 
 from sharedrive.models import (
+    CATALOG_PROFILE,
     normalize_entity_type,
     normalize_service_type,
     load_drive_descriptor,
@@ -175,13 +176,13 @@ def add_resource_to_descriptor(
         )
 
     document = load_drive_descriptor(descriptor_path, create_if_missing=create_if_missing)
-    resources = document.resources
+    target_collection = document.packages if as_package else document.resources
+    top_level_entries = [*document.resources, *document.packages, *document.catalogs]
 
     normalized_name = resource_name.strip().lower()
     if any(
-        (isinstance(r, dict) and str(r.get("name", "")).strip().lower() == normalized_name)
-        or (hasattr(r, 'name') and str(r.name or "").strip().lower() == normalized_name)
-        for r in resources
+        str(getattr(entry, "name", "") or "").strip().lower() == normalized_name
+        for entry in top_level_entries
     ):
         raise ValueError(f"Resource '{resource_name}' already exists in the descriptor")
 
@@ -206,23 +207,25 @@ def add_resource_to_descriptor(
     if as_package:
         resource_payload["resources"] = []
 
-    resources.append(resource_payload)
+    target_collection.append(resource_payload)
 
     # Save descriptor as YAML/JSON, preserving the raw resource structures (including empty resources lists)
     descriptor_path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor_dict = document.to_dict()
-
-    # Serialize resources manually to preserve empty lists in raw dict items
-    serialized_resources = []
-    for resource in resources:
-        if isinstance(resource, dict):
-            # Raw dict - preserve as-is
-            serialized_resources.append(resource)
-        else:
-            # Model object - serialize to dict
-            serialized_resources.append(resource.to_dict())
-
-    descriptor_dict["resources"] = serialized_resources
+    descriptor_dict = {
+        "$schema": CATALOG_PROFILE,
+        "resources": [
+            resource if isinstance(resource, dict) else resource.to_dict()
+            for resource in document.resources
+        ],
+        "packages": [
+            package_entry if isinstance(package_entry, dict) else package_entry.to_dict()
+            for package_entry in document.packages
+        ],
+        "catalogs": [
+            catalog if isinstance(catalog, dict) else catalog.to_dict()
+            for catalog in document.catalogs
+        ],
+    }
 
     suffix = descriptor_path.suffix.lower()
     if suffix == ".json":
