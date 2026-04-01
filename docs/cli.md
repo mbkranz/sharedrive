@@ -336,9 +336,6 @@ Arguments:
 Options:
   --descriptor PATH         Descriptor file path. Defaults to the saved
                             descriptor or the first standard descriptor path.
-  --source-path TEXT        Direct source URL/URI to add or update before
-                            fetching metadata.
-  --resource TEXT           Resource name to use with --source-path.
   --dry-run / --no-dry-run  Preview descriptor changes without writing them.
                             [default: no-dry-run]
   --env-file PATH           Path to .env file for credentials. Defaults to .env
@@ -377,9 +374,6 @@ Options:
                             descriptor or the first standard descriptor path.
   -i, --include TEXT        Include adapter types and/or resource names. Repeat
                             the option or pass a comma-separated list.
-  --source-path TEXT        Direct source URL/URI to add or update before
-                            downloading.
-  --resource TEXT           Resource name to use with --source-path.
   --output-dir PATH         Base output directory for relative resource paths.
   --dry-run / --no-dry-run  Print actions without downloading.  [default: no-
                             dry-run]
