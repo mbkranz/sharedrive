@@ -405,13 +405,13 @@ def test_fetch_passes_descriptor_and_dry_run(monkeypatch: pytest.MonkeyPatch, tm
     _write_descriptor(descriptor)
     captured: dict[str, object] = {}
 
-    def fake_fetch_resource_metadata_in_descriptor(**kwargs):
+    def fake_fetch_entity_metadata_in_descriptor(**kwargs):
         captured.update(kwargs)
-        return SimpleNamespace(resource_name="census-package", generated_resources=2, dry_run=True)
+        return [SimpleNamespace(resource_name="census-package", generated_resources=2, dry_run=True)]
 
     monkeypatch.setattr(
-        "sharedrive.cli.fetch_resource_metadata_in_descriptor",
-        fake_fetch_resource_metadata_in_descriptor,
+        "sharedrive.cli.fetch_entity_metadata_in_descriptor",
+        fake_fetch_entity_metadata_in_descriptor,
     )
 
     result = RUNNER.invoke(
@@ -422,7 +422,7 @@ def test_fetch_passes_descriptor_and_dry_run(monkeypatch: pytest.MonkeyPatch, tm
 
     assert result.exit_code == 0
     assert captured["descriptor"] == descriptor
-    assert captured["resource_name"] == "census-package"
+    assert captured["entity_selector"] == "census-package"
     assert captured["dry_run"] is True
 
 
@@ -433,13 +433,13 @@ def test_fetch_uses_checked_out_descriptor_when_omitted(monkeypatch: pytest.Monk
     _write_descriptor(descriptor)
     captured: dict[str, object] = {}
 
-    def fake_fetch_resource_metadata_in_descriptor(**kwargs):
+    def fake_fetch_entity_metadata_in_descriptor(**kwargs):
         captured.update(kwargs)
-        return SimpleNamespace(resource_name="census-package", generated_resources=1, dry_run=True)
+        return [SimpleNamespace(resource_name="census-package", generated_resources=1, dry_run=True)]
 
     monkeypatch.setattr(
-        "sharedrive.cli.fetch_resource_metadata_in_descriptor",
-        fake_fetch_resource_metadata_in_descriptor,
+        "sharedrive.cli.fetch_entity_metadata_in_descriptor",
+        fake_fetch_entity_metadata_in_descriptor,
     )
 
     checkout_result = RUNNER.invoke(app, ["checkout", "resources/descriptor.yaml"], prog_name="sharedrive")
@@ -461,13 +461,13 @@ def test_fetch_uses_checked_out_entity_when_selector_omitted(
     _write_descriptor(descriptor)
     captured: dict[str, object] = {}
 
-    def fake_fetch_resource_metadata_in_descriptor(**kwargs):
+    def fake_fetch_entity_metadata_in_descriptor(**kwargs):
         captured.update(kwargs)
-        return SimpleNamespace(resource_name="archived.nested-package", generated_resources=1, dry_run=True)
+        return [SimpleNamespace(resource_name="nested-package", generated_resources=1, dry_run=True)]
 
     monkeypatch.setattr(
-        "sharedrive.cli.fetch_resource_metadata_in_descriptor",
-        fake_fetch_resource_metadata_in_descriptor,
+        "sharedrive.cli.fetch_entity_metadata_in_descriptor",
+        fake_fetch_entity_metadata_in_descriptor,
     )
 
     checkout_result = RUNNER.invoke(
@@ -481,7 +481,7 @@ def test_fetch_uses_checked_out_entity_when_selector_omitted(
 
     assert result.exit_code == 0
     assert captured["descriptor"] == Path("resources/descriptor.yaml")
-    assert captured["resource_name"] == "archived.nested-package"
+    assert captured["entity_selector"] == "archived.nested-package"
 
 
 def test_checkout_with_entity_stores_entity_and_bare_checkout_clears_it(
@@ -522,13 +522,13 @@ def test_fetch_with_selector_arg_prepends_checked_out_entity(
     _write_descriptor(descriptor)
     captured: dict[str, object] = {}
 
-    def fake_fetch_resource_metadata_in_descriptor(**kwargs):
+    def fake_fetch_entity_metadata_in_descriptor(**kwargs):
         captured.update(kwargs)
-        return SimpleNamespace(resource_name="research.archive", generated_resources=1, dry_run=False)
+        return [SimpleNamespace(resource_name="archive", generated_resources=1, dry_run=False)]
 
     monkeypatch.setattr(
-        "sharedrive.cli.fetch_resource_metadata_in_descriptor",
-        fake_fetch_resource_metadata_in_descriptor,
+        "sharedrive.cli.fetch_entity_metadata_in_descriptor",
+        fake_fetch_entity_metadata_in_descriptor,
     )
 
     RUNNER.invoke(app, ["checkout", "resources/descriptor.yaml", "research"], prog_name="sharedrive")
@@ -536,7 +536,7 @@ def test_fetch_with_selector_arg_prepends_checked_out_entity(
     result = RUNNER.invoke(app, ["fetch", "archive", "--descriptor", str(descriptor)], prog_name="sharedrive")
 
     assert result.exit_code == 0
-    assert captured["resource_name"] == "research.archive"
+    assert captured["entity_selector"] == "research.archive"
 
 
 def test_fetch_without_entity_and_without_selector_exits_with_error(
@@ -553,77 +553,7 @@ def test_fetch_without_entity_and_without_selector_exits_with_error(
     result = RUNNER.invoke(app, ["fetch", "--descriptor", str(descriptor)], prog_name="sharedrive")
 
     assert result.exit_code == 1
-    assert "selector is required" in result.output
-
-
-def test_download_source_path_upserts_descriptor_and_runs_download(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    captured: dict[str, object] = {}
-
-    def fake_run_download_command(**kwargs):
-        captured.update(kwargs)
-
-    monkeypatch.setattr("sharedrive.cli._run_download_command", fake_run_download_command)
-
-    result = RUNNER.invoke(
-        app,
-        [
-            "download",
-            "--source-path",
-            "https://example.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx",
-            "--resource",
-            "sharepoint-spec",
-        ],
-        prog_name="sharedrive",
-    )
-
-    descriptor = tmp_path / "resources" / "descriptor.yaml"
-    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
-
-    assert result.exit_code == 0
-    assert captured["include"] == ["sharepoint-spec"]
-    assert document["resources"][0]["name"] == "sharepoint-spec"
-    assert document["resources"][0]["syncTarget"] == "path"
-
-
-def test_fetch_source_path_upserts_descriptor_and_runs_fetch(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    captured: dict[str, object] = {}
-
-    def fake_fetch_resource_metadata_in_descriptor(**kwargs):
-        captured.update(kwargs)
-        return SimpleNamespace(resource_name="shared-specs", generated_resources=2, dry_run=False)
-
-    monkeypatch.setattr(
-        "sharedrive.cli.fetch_resource_metadata_in_descriptor",
-        fake_fetch_resource_metadata_in_descriptor,
-    )
-
-    result = RUNNER.invoke(
-        app,
-        [
-            "fetch",
-            "--source-path",
-            "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/",
-            "--resource",
-            "shared-specs",
-        ],
-        prog_name="sharedrive",
-    )
-
-    descriptor = tmp_path / "resources" / "descriptor.yaml"
-    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
-
-    assert result.exit_code == 0
-    assert captured["resource_name"] == "shared-specs"
-    assert document["packages"][0]["name"] == "shared-specs"
-    assert document["packages"][0]["syncTarget"] == "resources"
+    assert "entity is required" in result.output
 
 
 def test_removed_raw_adapter_commands_fail() -> None:
@@ -641,8 +571,8 @@ def test_fetch_command_exits_nonzero_on_error(monkeypatch: pytest.MonkeyPatch, t
     _write_descriptor(descriptor)
 
     monkeypatch.setattr(
-        "sharedrive.cli.fetch_resource_metadata_in_descriptor",
-        lambda **_kwargs: (_ for _ in ()).throw(ValueError("Resource 'missing' was not found.")),
+        "sharedrive.cli.fetch_entity_metadata_in_descriptor",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("Entity 'missing' was not found in descriptor.")),
     )
 
     result = RUNNER.invoke(

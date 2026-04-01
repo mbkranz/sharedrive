@@ -71,13 +71,21 @@ def get_checked_out_entity() -> str | None:
     from values written by ``sharedrive set`` so that ``set`` remains focused on
     workflow defaults (output directories, etc.) and the entity context is managed
     exclusively through checkout.
+
+    Only the entity portion is returned; the descriptor path is resolved separately
+    via :func:`resolve_descriptor_path`.
     """
     store = load_descriptor_defaults_store()
     global_scope = store.get("global", {})
-    if not isinstance(global_scope, dict):
-        return None
-    entity = global_scope.get("entity")
-    return entity if isinstance(entity, str) and entity.strip() else None
+    descriptor_path = global_scope.get("descriptor")
+    entity_path = global_scope.get("entity")
+
+    if entity_path and not descriptor_path:
+        raise ValueError("Inconsistent state: entity path is set without a descriptor path")
+
+    if isinstance(entity_path, str) and entity_path.strip():
+        return entity_path.strip()
+    return None
 
 
 def resolve_descriptor_path(descriptor: Path | str | None = None) -> Path:

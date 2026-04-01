@@ -10,16 +10,28 @@ from sharedrive.actions.fetch import fetch_resource_metadata_in_descriptor
 
 def _write_syncable_descriptor(path: Path) -> None:
     path.write_text(
-        """
-resources:
-  - name: census-docs
-    path: downloads/census
-    syncTarget: resources
-    sources:
-      - path: https://drive.google.com/drive/folders/folder123
-        serviceType: GoogleDrive
-        entityType: Directory
-""".strip(),
+        yaml.safe_dump(
+            {
+                "$schema": "data-package-catalog",
+                "resources": [],
+                "packages": [
+                    {
+                        "name": "census-docs",
+                        "path": "downloads/census",
+                        "syncTarget": "resources",
+                        "sources": [
+                            {
+                                "path": "https://drive.google.com/drive/folders/folder123",
+                                "serviceType": "GoogleDrive",
+                                "entityType": "Directory",
+                            }
+                        ],
+                    }
+                ],
+                "catalogs": [],
+            },
+            sort_keys=False,
+        ),
         encoding="utf-8",
     )
 
@@ -70,7 +82,7 @@ def test_fetch_resource_metadata_in_descriptor_writes_nested_resources(tmp_path:
     assert summary.resource_name == "census-docs"
     assert summary.generated_resources == 2
     assert summary.changed is True
-    assert document["resources"][0]["resources"] == [
+    assert document["packages"][0]["resources"] == [
         {
             "name": "nested/detail.csv",
             "path": "nested/detail.csv",
@@ -142,16 +154,28 @@ def test_fetch_resource_metadata_in_descriptor_dry_run_does_not_write(tmp_path: 
 def test_fetch_resource_metadata_in_descriptor_rejects_path_sync_target(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     descriptor.write_text(
-        """
-resources:
-  - name: drive-export
-    path: downloads/export.csv
-    syncTarget: path
-    sources:
-      - path: https://docs.google.com/spreadsheets/d/test-sheet/edit
-        serviceType: GoogleDrive
-        entityType: File
-""".strip(),
+        yaml.safe_dump(
+            {
+                "$schema": "data-package-catalog",
+                "resources": [
+                    {
+                        "name": "drive-export",
+                        "path": "downloads/export.csv",
+                        "syncTarget": "path",
+                        "sources": [
+                            {
+                                "path": "https://docs.google.com/spreadsheets/d/test-sheet/edit",
+                                "serviceType": "GoogleDrive",
+                                "entityType": "File",
+                            }
+                        ],
+                    }
+                ],
+                "packages": [],
+                "catalogs": [],
+            },
+            sort_keys=False,
+        ),
         encoding="utf-8",
     )
 

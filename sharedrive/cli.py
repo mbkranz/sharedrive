@@ -6,14 +6,13 @@ import os
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
-from urllib.parse import unquote, urlparse
 
 import typer
 from dotenv import find_dotenv, load_dotenv
 
-from sharedrive.actions.add import add_resource_to_descriptor, resolve_entity_type, resolve_service_type
+from sharedrive.actions.add import add_resource_to_descriptor
 from sharedrive.actions.download import check_auth_for_descriptor, download_from_descriptor
-from sharedrive.actions.fetch import fetch_resource_metadata_in_descriptor
+from sharedrive.actions.fetch import fetch_entity_metadata_in_descriptor
 from sharedrive.helpers import (
     DESCRIPTOR_DEFAULTS_FILE,
     get_checked_out_entity,
@@ -694,183 +693,6 @@ def _run_download_command(
         raise typer.Exit(code=1)
 
 
-def _source_locator_parts(source_path: str) -> list[str]:
-    parsed = urlparse(source_path)
-    path_parts = [part for part in Path(unquote(parsed.path)).parts if part not in {"/", ""}]
-    return path_parts
-
-
-def _derive_source_resource_name(source_path: str, requested_name: str | None) -> str:
-    if requested_name is not None and requested_name.strip():
-        return requested_name.strip()
-
-    parts = _source_locator_parts(source_path)
-    if not parts:
-        parsed = urlparse(source_path)
-        if parsed.scheme == "s3" and parsed.netloc:
-            return parsed.netloc
-        raise typer.BadParameter("Could not derive a resource name from --source-path. Use --resource.")
-
-    leaf = parts[-1]
-    if leaf.lower() in {"edit", "view"} and len(parts) > 1:
-        leaf = parts[-2]
-    return leaf.strip() or "resource"
-
-
-def _derive_descriptor_resource_path(
-    source_path: str,
-    *,
-    resource_name: str,
-    entity_type: str,
-    sync_target: str,
-) -> str:
-    parts = _source_locator_parts(source_path)
-    leaf = parts[-1] if parts else resource_name
-    if leaf.lower() in {"edit", "view"} and len(parts) > 1:
-        leaf = parts[-2]
-
-    if sync_target == "resources":
-        return (Path("downloads") / resource_name).as_posix()
-    if entity_type in {"Directory", "Container"}:
-        return (Path("downloads") / resource_name).as_posix()
-    return (Path("downloads") / leaf).as_posix()
-
-
-def _upsert_source_resource(
-    descriptor_path: Path,
-    *,
-    source_path: str,
-    resource_name: str,
-    sync_target: str,
-    dry_run: bool,
-) -> tuple[dict[str, Any], str]:
-    service_type = resolve_service_type(source_path)
-    entity_type = resolve_entity_type(source_path, service_type=service_type)
-    resource_path = _derive_descriptor_resource_path(
-        source_path,
-        resource_name=resource_name,
-        entity_type=entity_type,
-        sync_target=sync_target,
-    )
-
-    document = load_descriptor_document(descriptor_path)
-    target_collection = (
-        get_descriptor_packages(document, create=True)
-        if sync_target == "resources"
-        else get_descriptor_resources(document, create=True)
-    )
-    normalized_name = resource_name.strip().lower()
-    existing = next(
-        (
-            resource
-            for resource in [
-                *get_descriptor_resources(document),
-                *get_descriptor_packages(document),
-            ]
-            if isinstance(resource, dict)
-            and str(resource.get("name", "")).strip().lower() == normalized_name
-        ),
-        None,
-    )
-
-    resource_payload = {
-        "name": resource_name,
-        "path": resource_path,
-        "syncTarget": sync_target,
-        "sources": [
-            {
-                "path": source_path,
-                "serviceType": service_type,
-                "entityType": entity_type,
-            }
-        ],
-    }
-    if sync_target == "resources":
-        resource_payload["resources"] = []
-
-    action = "updated" if existing is not None else "added"
-    if existing is not None:
-        existing.clear()
-        existing.update(resource_payload)
-        resource_ref = existing
-    else:
-        target_collection.append(resource_payload)
-        resource_ref = resource_payload
-
-    if not dry_run:
-        save_descriptor_document(descriptor_path, document)
-
-    return resource_ref, action
-
-
-def _run_direct_source_download(
-    *,
-    descriptor_path: Path,
-    source_path: str,
-    resource_name: str | None,
-    output_dir: Path,
-    dry_run: bool,
-    check_auth: bool,
-) -> None:
-    resolved_name = _derive_source_resource_name(source_path, resource_name)
-    resource, action = _upsert_source_resource(
-        descriptor_path,
-        source_path=source_path,
-        resource_name=resolved_name,
-        sync_target="path",
-        dry_run=dry_run,
-    )
-    if dry_run:
-        typer.echo(
-            f"Would {action} resource '{resolved_name}' in {descriptor_path} and download {source_path} to {output_dir / Path(str(resource['path']))}."
-        )
-        return
-
-    typer.echo(f"{action.capitalize()} resource '{resolved_name}' in {descriptor_path}.")
-    _run_download_command(
-        descriptor=descriptor_path,
-        include=[resolved_name],
-        output_dir=output_dir,
-        dry_run=False,
-        check_auth=check_auth,
-    )
-
-
-def _run_direct_source_fetch(
-    *,
-    descriptor_path: Path,
-    source_path: str,
-    resource_name: str | None,
-    dry_run: bool,
-) -> None:
-    resolved_name = _derive_source_resource_name(source_path, resource_name)
-    _, action = _upsert_source_resource(
-        descriptor_path,
-        source_path=source_path,
-        resource_name=resolved_name,
-        sync_target="resources",
-        dry_run=dry_run,
-    )
-    if dry_run:
-        typer.echo(
-            f"Would {action} resource '{resolved_name}' in {descriptor_path} and fetch remote metadata from {source_path}."
-        )
-        return
-
-    typer.echo(f"{action.capitalize()} resource '{resolved_name}' in {descriptor_path}.")
-    summary = fetch_resource_metadata_in_descriptor(
-        descriptor=descriptor_path,
-        resource_name=resolved_name,
-        dry_run=False,
-        log=None,
-        googledrive_client_factory=lambda: _make_gdrive_client(None),
-        sharepoint_client_factory=_make_sharepoint_client,
-    )
-    typer.echo(
-        f"Fetched metadata for {summary.generated_resources} resource(s) into resource '{summary.resource_name}' in {descriptor_path}."
-    )
-
-
 def _render_auth_results(results: list[Any], output_format: OutputFormat) -> None:
     if output_format == OutputFormat.JSON:
         _echo_json([result.to_dict() for result in results])
@@ -1012,29 +834,20 @@ def add(
         "sharedrive fetch # get metadata for the default selector in the checked-out descriptor",
         "sharedrive fetch census-package --descriptor resources/descriptor.yaml --dry-run",
         "sharedrive fetch census-package --descriptor resources/descriptor.yaml",
-        "sharedrive fetch --source-path https://drive.google.com/drive/folders/<id> --resource my-package",
     ),
 )
 def fetch(
-    selector: Optional[str] = typer.Argument(None, help="Resource selector to fetch metadata for. If omitted, uses the checked-out descriptor."),
+    entity: Optional[str] = typer.Argument(None, help="Entity or package dot-path to fetch. If omitted, uses the checked-out entity."),
     descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
-    source_path: Optional[str] = typer.Option(None, "--source-path", help="Direct source URL/URI to add or update before fetching metadata."),
-    resource: Optional[str] = typer.Option(None, "--resource", help="Resource name to use with --source-path."),
     dry_run: bool = typer.Option(False, help="Preview descriptor changes without writing them."),
     env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
 ) -> None:
-    """Fetch remote metadata for one selector into the descriptor."""
+    """Fetch remote metadata for one selector into the descriptor.
+
+    TODO(manage_todo_list): reconsider direct source-path fetch flow.
+    """
     _load_env_file(env_file)
     descriptor_path = resolve_descriptor_path(descriptor)
-
-    if source_path is not None:
-        _run_direct_source_fetch(
-            descriptor_path=descriptor_path,
-            source_path=source_path,
-            resource_name=resource,
-            dry_run=dry_run,
-        )
-        return
 
     _exit_if_descriptor_missing(descriptor_path)
 
@@ -1045,23 +858,23 @@ def fetch(
     #   - Selector arg    → treat it as a path relative to the checked-out entity.
     #   - No entity and no selector arg → error.
     checked_out_entity = get_checked_out_entity()
-    if selector is None:
+    if entity is None:
         if checked_out_entity:
-            selector_name = checked_out_entity
+            entity_name = checked_out_entity
         else:
             typer.echo(
-                "Error: a selector is required. Pass it as an argument or check out an entity with "
+                "Error: an entity is required. Pass it as an argument or check out an entity with "
                 "'sharedrive checkout DESCRIPTOR ENTITY'.",
                 err=True,
             )
             raise typer.Exit(code=1)
     else:
-        selector_name = f"{checked_out_entity}.{selector}" if checked_out_entity else selector
+        entity_name = f"{checked_out_entity}.{entity}" if checked_out_entity else entity
 
     try:
-        summary = fetch_resource_metadata_in_descriptor(
+        summaries = fetch_entity_metadata_in_descriptor(
             descriptor=descriptor_path,
-            resource_name=selector_name,
+            entity_selector=entity_name,
             dry_run=dry_run,
             log=None,
             googledrive_client_factory=lambda: _make_gdrive_client(None),
@@ -1071,10 +884,14 @@ def fetch(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
-    action = "Would fetch" if summary.dry_run else "Fetched"
-    typer.echo(
-        f"{action} metadata for {summary.generated_resources} resource(s) into resource '{summary.resource_name}' in {descriptor_path}."
-    )
+    if not summaries:
+        typer.echo(f"No fetchable packages found for '{entity_name}'.")
+        return
+    for summary in summaries:
+        action = "Would fetch" if summary.dry_run else "Fetched"
+        typer.echo(
+            f"{action} metadata for {summary.generated_resources} resource(s) into '{summary.resource_name}' in {descriptor_path}."
+        )
 
 
 @app.command(
@@ -1088,14 +905,15 @@ def fetch(
 def download(
     selector: Optional[str] = typer.Argument(None, help="Selector to download. If omitted, uses the checked-out descriptor."),
     descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
-    source_path: Optional[str] = typer.Option(None, "--source-path", help="Direct source URL/URI to add or update before downloading."),
-    resource: Optional[str] = typer.Option(None, "--resource", help="Resource name to use with --source-path."),
     output_dir: Optional[Path] = typer.Option(None, help="Base output directory for relative resource paths."),
     dry_run: bool = typer.Option(False, help="Print actions without downloading."),
     check_auth: bool = typer.Option(False, "--check-auth", help="Validate service credentials before downloading."),
     env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
 ) -> None:
-    """Download resources from a selector in the descriptor."""
+    """Download resources from a selector in the descriptor.
+
+    TODO(manage_todo_list): reconsider direct source-path download flow.
+    """
     _load_env_file(env_file)
     descriptor_path = resolve_descriptor_path(descriptor)
 
@@ -1109,17 +927,6 @@ def download(
         package_name = f"{checked_out_entity}.{selector}" if checked_out_entity else selector
 
     output_dir_path = resolve_output_dir(output_dir, descriptor=descriptor_path)
-
-    if source_path is not None:
-        _run_direct_source_download(
-            descriptor_path=descriptor_path,
-            source_path=source_path,
-            resource_name=resource,
-            output_dir=output_dir_path,
-            dry_run=dry_run,
-            check_auth=check_auth,
-        )
-        return
 
     _exit_if_descriptor_missing(descriptor_path)
 

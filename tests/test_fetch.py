@@ -6,7 +6,7 @@ import yaml
 
 from sharedrive.actions.download import check_auth_for_descriptor, download_from_descriptor
 from sharedrive.actions.download import resource_adapter_name
-from sharedrive.actions.fetch import fetch_resource_metadata_in_descriptor
+from sharedrive.actions.fetch import fetch_entity_metadata_in_descriptor, fetch_resource_metadata_in_descriptor
 
 
 def _write_catalog_descriptor(
@@ -912,3 +912,298 @@ def test_check_auth_for_descriptor_requires_existing_descriptor(tmp_path: Path) 
         assert "does not exist" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("Expected FileNotFoundError for missing descriptor")
+
+
+def test_fetch_entity_metadata_fetches_all_packages_in_catalog(tmp_path: Path) -> None:
+    """fetch_entity_metadata_in_descriptor with a DriveCatalog selector fetches each package."""
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_catalog_descriptor(
+        descriptor,
+        catalogs=[
+            {
+                "name": "research",
+                "packages": [
+                    {
+                        "name": "docs",
+                        "path": "downloads/docs",
+                        "syncTarget": "resources",
+                        "sources": [
+                            {
+                                "path": "https://drive.google.com/drive/folders/docs-folder",
+                                "serviceType": "GoogleDrive",
+                                "entityType": "Directory",
+                            }
+                        ],
+                    },
+                    {
+                        "name": "data",
+                        "path": "downloads/data",
+                        "syncTarget": "resources",
+                        "sources": [
+                            {
+                                "path": "https://drive.google.com/drive/folders/data-folder",
+                                "serviceType": "GoogleDrive",
+                                "entityType": "Directory",
+                            }
+                        ],
+                    },
+                ],
+                "catalogs": [],
+            }
+        ],
+    )
+
+    fetched_urls: list[str] = []
+
+    class DummyDriveClient:
+        def get_from_weburl(self, url: str):
+            fetched_urls.append(url)
+
+            class DummyItem:
+                path = "report.csv"
+                is_directory = False
+
+                def to_dp(self):
+                    from sharedrive.models import DriveResource, DriveSource
+                    return DriveResource(
+                        name="report.csv",
+                        path="report.csv",
+                        sources=[DriveSource(path=url + "/report.csv", serviceType="GoogleDrive", entityType="File")],
+                    )
+
+            class DummyFolder:
+                @property
+                def is_directory(self):
+                    return True
+
+                @property
+                def children(self):
+                    return [DummyItem()]
+
+            return DummyFolder()
+
+    summaries = fetch_entity_metadata_in_descriptor(
+        descriptor=descriptor,
+        entity_selector="research",
+        dry_run=False,
+        log=None,
+        googledrive_client_factory=lambda: DummyDriveClient(),
+    )
+
+    assert len(summaries) == 2
+    assert summaries[0].resource_name == "docs"
+    assert summaries[0].generated_resources == 1
+    assert summaries[0].changed is True
+    assert summaries[1].resource_name == "data"
+    assert summaries[1].generated_resources == 1
+    assert summaries[1].changed is True
+
+    assert fetched_urls == [
+        "https://drive.google.com/drive/folders/docs-folder",
+        "https://drive.google.com/drive/folders/data-folder",
+    ]
+
+    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
+    catalog = document["catalogs"][0]
+    assert catalog["packages"][0]["resources"][0]["name"] == "report.csv"
+    assert catalog["packages"][1]["resources"][0]["name"] == "report.csv"
+
+
+def test_fetch_entity_metadata_dry_run_does_not_write_catalog(tmp_path: Path) -> None:
+    """Catalog fetch with dry_run=True does not modify the descriptor."""
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_catalog_descriptor(
+        descriptor,
+        catalogs=[
+            {
+                "name": "research",
+                "packages": [
+                    {
+                        "name": "docs",
+                        "path": "downloads/docs",
+                        "syncTarget": "resources",
+                        "sources": [
+                            {
+                                "path": "https://drive.google.com/drive/folders/docs-folder",
+                                "serviceType": "GoogleDrive",
+                                "entityType": "Directory",
+                            }
+                        ],
+                    }
+                ],
+                "catalogs": [],
+            }
+        ],
+    )
+    before = descriptor.read_text(encoding="utf-8")
+
+    class DummyDriveClient:
+        def get_from_weburl(self, _url: str):
+            class DummyItem:
+                path = "report.csv"
+                is_directory = False
+
+                def to_dp(self):
+                    from sharedrive.models import DriveResource, DriveSource
+                    return DriveResource(
+                        name="report.csv",
+                        path="report.csv",
+                        sources=[DriveSource(path="https://example.com/report.csv", serviceType="GoogleDrive", entityType="File")],
+                    )
+
+            class DummyFolder:
+                @property
+                def is_directory(self):
+                    return True
+
+                @property
+                def children(self):
+                    return [DummyItem()]
+
+            return DummyFolder()
+
+    summaries = fetch_entity_metadata_in_descriptor(
+        descriptor=descriptor,
+        entity_selector="research",
+        dry_run=True,
+        log=None,
+        googledrive_client_factory=lambda: DummyDriveClient(),
+    )
+
+    assert len(summaries) == 1
+    assert summaries[0].dry_run is True
+    assert summaries[0].changed is False
+    assert descriptor.read_text(encoding="utf-8") == before
+
+
+def test_fetch_entity_metadata_with_depth_recurses_sub_catalogs(tmp_path: Path) -> None:
+    """depth=1 causes fetch to recurse one level into nested catalogs."""
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_catalog_descriptor(
+        descriptor,
+        catalogs=[
+            {
+                "name": "research",
+                "packages": [
+                    {
+                        "name": "top-docs",
+                        "path": "downloads/top",
+                        "syncTarget": "resources",
+                        "sources": [
+                            {
+                                "path": "https://drive.google.com/drive/folders/top-folder",
+                                "serviceType": "GoogleDrive",
+                                "entityType": "Directory",
+                            }
+                        ],
+                    }
+                ],
+                "catalogs": [
+                    {
+                        "name": "archive",
+                        "packages": [
+                            {
+                                "name": "archive-docs",
+                                "path": "downloads/archive",
+                                "syncTarget": "resources",
+                                "sources": [
+                                    {
+                                        "path": "https://drive.google.com/drive/folders/archive-folder",
+                                        "serviceType": "GoogleDrive",
+                                        "entityType": "Directory",
+                                    }
+                                ],
+                            }
+                        ],
+                        "catalogs": [],
+                    }
+                ],
+            }
+        ],
+    )
+
+    fetched_urls: list[str] = []
+
+    class DummyDriveClient:
+        def get_from_weburl(self, url: str):
+            fetched_urls.append(url)
+
+            class DummyItem:
+                path = "file.csv"
+                is_directory = False
+
+                def to_dp(self):
+                    from sharedrive.models import DriveResource, DriveSource
+                    return DriveResource(
+                        name="file.csv",
+                        path="file.csv",
+                        sources=[DriveSource(path=url + "/file.csv", serviceType="GoogleDrive", entityType="File")],
+                    )
+
+            class DummyFolder:
+                @property
+                def is_directory(self):
+                    return True
+
+                @property
+                def children(self):
+                    return [DummyItem()]
+
+            return DummyFolder()
+
+    # depth=0 (default): only top-level package
+    summaries_flat = fetch_entity_metadata_in_descriptor(
+        descriptor=descriptor,
+        entity_selector="research",
+        dry_run=True,
+        depth=0,
+        log=None,
+        googledrive_client_factory=lambda: DummyDriveClient(),
+    )
+    assert len(summaries_flat) == 1
+    assert summaries_flat[0].resource_name == "top-docs"
+
+    # depth=1: top-level package AND packages in direct sub-catalogs
+    summaries_deep = fetch_entity_metadata_in_descriptor(
+        descriptor=descriptor,
+        entity_selector="research",
+        dry_run=True,
+        depth=1,
+        log=None,
+        googledrive_client_factory=lambda: DummyDriveClient(),
+    )
+    assert len(summaries_deep) == 2
+    assert summaries_deep[0].resource_name == "top-docs"
+    assert summaries_deep[1].resource_name == "archive-docs"
+
+
+def test_fetch_entity_metadata_raises_for_standalone_resource(tmp_path: Path) -> None:
+    """fetch_entity_metadata_in_descriptor raises ValueError for standalone DriveResource."""
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_catalog_descriptor(
+        descriptor,
+        resources=[
+            {
+                "name": "my-file",
+                "path": "downloads/file.csv",
+                "sources": [
+                    {
+                        "path": "https://docs.google.com/spreadsheets/d/abc/edit",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "File",
+                    }
+                ],
+            }
+        ],
+    )
+
+    try:
+        fetch_entity_metadata_in_descriptor(
+            descriptor=descriptor,
+            entity_selector="my-file",
+            log=None,
+        )
+    except ValueError as exc:
+        assert "standalone resource" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Expected ValueError for standalone resource")
