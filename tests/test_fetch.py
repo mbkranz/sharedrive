@@ -2,38 +2,75 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
+
 from sharedrive.actions.download import check_auth_for_descriptor, download_from_descriptor
 from sharedrive.actions.download import resource_adapter_name
 from sharedrive.actions.fetch import fetch_resource_metadata_in_descriptor
 
 
-def _write_descriptor(path: Path) -> None:
+def _write_catalog_descriptor(
+    path: Path,
+    *,
+    resources: list[dict] | None = None,
+    packages: list[dict] | None = None,
+    catalogs: list[dict] | None = None,
+) -> None:
     path.write_text(
-        """
-resources:
-  - name: sharepoint-spec
-    path: downloads/spec.xlsx
-    syncTarget: path
-    sources:
-      - path: https://example.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx
-        serviceType: SharePoint
-        entityType: File
-  - name: drive-export
-    path: downloads/export.csv
-    syncTarget: path
-    sources:
-      - path: https://docs.google.com/spreadsheets/d/test-sheet/edit
-        serviceType: GoogleDrive
-        entityType: File
-  - name: raw-data
-    path: downloads/raw.csv
-    syncTarget: path
-    sources:
-      - path: s3://bucket/raw.csv
-        serviceType: S3
-        entityType: File
-""".strip(),
+        yaml.safe_dump(
+            {
+                "$schema": "data-package-catalog",
+                "resources": resources or [],
+                "packages": packages or [],
+                "catalogs": catalogs or [],
+            },
+            sort_keys=False,
+        ),
         encoding="utf-8",
+    )
+
+
+def _write_descriptor(path: Path) -> None:
+    _write_catalog_descriptor(
+        path,
+        resources=[
+            {
+                "name": "sharepoint-spec",
+                "path": "downloads/spec.xlsx",
+                "syncTarget": "path",
+                "sources": [
+                    {
+                        "path": "https://example.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx",
+                        "serviceType": "SharePoint",
+                        "entityType": "File",
+                    }
+                ],
+            },
+            {
+                "name": "drive-export",
+                "path": "downloads/export.csv",
+                "syncTarget": "path",
+                "sources": [
+                    {
+                        "path": "https://docs.google.com/spreadsheets/d/test-sheet/edit",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "File",
+                    }
+                ],
+            },
+            {
+                "name": "raw-data",
+                "path": "downloads/raw.csv",
+                "syncTarget": "path",
+                "sources": [
+                    {
+                        "path": "s3://bucket/raw.csv",
+                        "serviceType": "S3",
+                        "entityType": "File",
+                    }
+                ],
+            },
+        ],
     )
 
 
@@ -142,18 +179,22 @@ def test_fetch_from_descriptor_check_auth_allows_download_when_ready(tmp_path: P
 
 def test_fetch_from_descriptor_materializes_google_drive_directory_resources(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
-    descriptor.write_text(
-        """
-resources:
-  - name: census-docs
-    path: downloads/census
-    syncTarget: resources
-    sources:
-      - path: https://drive.google.com/drive/folders/folder123
-        serviceType: GoogleDrive
-        entityType: Directory
-""".strip(),
-        encoding="utf-8",
+    _write_catalog_descriptor(
+        descriptor,
+        packages=[
+            {
+                "name": "census-docs",
+                "path": "downloads/census",
+                "syncTarget": "resources",
+                "sources": [
+                    {
+                        "path": "https://drive.google.com/drive/folders/folder123",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "Directory",
+                    }
+                ],
+            }
+        ],
     )
 
     class DummyDriveClient:
@@ -220,18 +261,22 @@ resources:
 
 def test_fetch_from_descriptor_materializes_google_drive_directory_path_target(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
-    descriptor.write_text(
-        """
-resources:
-  - name: term-proposal-docs
-    path: downloads/term-proposal-documents
-    syncTarget: path
-    sources:
-      - path: https://drive.google.com/drive/folders/folder123
-        serviceType: GoogleDrive
-        entityType: Directory
-""".strip(),
-        encoding="utf-8",
+    _write_catalog_descriptor(
+        descriptor,
+        resources=[
+            {
+                "name": "term-proposal-docs",
+                "path": "downloads/term-proposal-documents",
+                "syncTarget": "path",
+                "sources": [
+                    {
+                        "path": "https://drive.google.com/drive/folders/folder123",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "Directory",
+                    }
+                ],
+            }
+        ],
     )
 
     class DummyDriveClient:
@@ -294,25 +339,35 @@ resources:
 
 def test_fetch_from_descriptor_fetches_nested_package_resources(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
-    descriptor.write_text(
-        """
-resources:
-  - name: analytics-docs
-    path: downloads/analytics
-    syncTarget: resources
-    sources:
-      - path: https://drive.google.com/drive/folders/folder123
-        serviceType: GoogleDrive
-        entityType: Directory
-    resources:
-      - name: selected-export
-        path: export.csv
-        sources:
-          - path: https://docs.google.com/spreadsheets/d/test-sheet/edit
-            serviceType: GoogleDrive
-            entityType: File
-""".strip(),
-        encoding="utf-8",
+    _write_catalog_descriptor(
+        descriptor,
+        packages=[
+            {
+                "name": "analytics-docs",
+                "path": "downloads/analytics",
+                "syncTarget": "resources",
+                "sources": [
+                    {
+                        "path": "https://drive.google.com/drive/folders/folder123",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "Directory",
+                    }
+                ],
+                "resources": [
+                    {
+                        "name": "selected-export",
+                        "path": "export.csv",
+                        "sources": [
+                            {
+                                "path": "https://docs.google.com/spreadsheets/d/test-sheet/edit",
+                                "serviceType": "GoogleDrive",
+                                "entityType": "File",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
     )
 
     class DummyDriveClient:
@@ -359,31 +414,46 @@ resources:
 
 def test_fetch_from_descriptor_matches_nested_dot_path_include(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
-    descriptor.write_text(
-        """
-resources:
-  - name: analytics-docs
-    path: downloads/analytics
-    syncTarget: resources
-    sources:
-      - path: https://drive.google.com/drive/folders/folder123
-        serviceType: GoogleDrive
-        entityType: Directory
-    resources:
-      - name: selected-export
-        path: export.csv
-        sources:
-          - path: https://docs.google.com/spreadsheets/d/test-sheet/edit
-            serviceType: GoogleDrive
-            entityType: File
-      - name: other-export
-        path: other.csv
-        sources:
-          - path: https://docs.google.com/spreadsheets/d/other-sheet/edit
-            serviceType: GoogleDrive
-            entityType: File
-""".strip(),
-        encoding="utf-8",
+    _write_catalog_descriptor(
+        descriptor,
+        packages=[
+            {
+                "name": "analytics-docs",
+                "path": "downloads/analytics",
+                "syncTarget": "resources",
+                "sources": [
+                    {
+                        "path": "https://drive.google.com/drive/folders/folder123",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "Directory",
+                    }
+                ],
+                "resources": [
+                    {
+                        "name": "selected-export",
+                        "path": "export.csv",
+                        "sources": [
+                            {
+                                "path": "https://docs.google.com/spreadsheets/d/test-sheet/edit",
+                                "serviceType": "GoogleDrive",
+                                "entityType": "File",
+                            }
+                        ],
+                    },
+                    {
+                        "name": "other-export",
+                        "path": "other.csv",
+                        "sources": [
+                            {
+                                "path": "https://docs.google.com/spreadsheets/d/other-sheet/edit",
+                                "serviceType": "GoogleDrive",
+                                "entityType": "File",
+                            }
+                        ],
+                    },
+                ],
+            }
+        ],
     )
 
     class DummyDriveClient:
@@ -429,25 +499,35 @@ resources:
 
 def test_fetch_from_descriptor_matches_top_level_package_name(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
-    descriptor.write_text(
-        """
-resources:
-  - name: analytics-docs
-    path: downloads/analytics
-    syncTarget: resources
-    sources:
-      - path: https://drive.google.com/drive/folders/folder123
-        serviceType: GoogleDrive
-        entityType: Directory
-    resources:
-      - name: selected-export
-        path: export.csv
-        sources:
-          - path: https://docs.google.com/spreadsheets/d/test-sheet/edit
-            serviceType: GoogleDrive
-            entityType: File
-""".strip(),
-        encoding="utf-8",
+    _write_catalog_descriptor(
+        descriptor,
+        packages=[
+            {
+                "name": "analytics-docs",
+                "path": "downloads/analytics",
+                "syncTarget": "resources",
+                "sources": [
+                    {
+                        "path": "https://drive.google.com/drive/folders/folder123",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "Directory",
+                    }
+                ],
+                "resources": [
+                    {
+                        "name": "selected-export",
+                        "path": "export.csv",
+                        "sources": [
+                            {
+                                "path": "https://docs.google.com/spreadsheets/d/test-sheet/edit",
+                                "serviceType": "GoogleDrive",
+                                "entityType": "File",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
     )
 
     class DummyDriveClient:
@@ -491,20 +571,108 @@ resources:
     ]
 
 
+def test_download_from_descriptor_matches_nested_catalog_package_name(tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_catalog_descriptor(
+        descriptor,
+        catalogs=[
+            {
+                "name": "research",
+                "catalogs": [
+                    {
+                        "name": "archive",
+                        "packages": [
+                            {
+                                "name": "analytics-docs",
+                                "path": "downloads/analytics",
+                                "syncTarget": "resources",
+                                "sources": [
+                                    {
+                                        "path": "https://drive.google.com/drive/folders/folder123",
+                                        "serviceType": "GoogleDrive",
+                                        "entityType": "Directory",
+                                    }
+                                ],
+                                "resources": [
+                                    {
+                                        "name": "selected-export",
+                                        "path": "export.csv",
+                                        "sources": [
+                                            {
+                                                "path": "https://docs.google.com/spreadsheets/d/test-sheet/edit",
+                                                "serviceType": "GoogleDrive",
+                                                "entityType": "File",
+                                            }
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    )
+
+    class DummyDriveClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def get_from_weburl(self, url: str):
+            calls = self.calls
+
+            class DummyFileItem:
+                @property
+                def is_directory(self) -> bool:
+                    return False
+
+                def download(self, target_path: str) -> None:
+                    calls.append((url, target_path))
+                    Path(target_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(target_path).write_text("nested-ok", encoding="utf-8")
+
+            return DummyFileItem()
+
+    client = DummyDriveClient()
+
+    summary = download_from_descriptor(
+        descriptor,
+        include=["research.archive.analytics-docs"],
+        output_dir=tmp_path / "resources",
+        dry_run=False,
+        log=lambda _message: None,
+        googledrive_client_factory=lambda: client,
+    )
+
+    output_path = tmp_path / "resources" / "downloads" / "analytics" / "export.csv"
+    assert summary.ok is True
+    assert summary.downloaded == 1
+    assert client.calls == [
+        (
+            "https://docs.google.com/spreadsheets/d/test-sheet/edit",
+            str(output_path),
+        )
+    ]
+
+
 def test_fetch_resource_metadata_supports_sharepoint_directory(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
-    descriptor.write_text(
-        """
-resources:
-  - name: shared-specs
-    path: downloads/shared-specs
-    syncTarget: resources
-    sources:
-      - path: https://example.sharepoint.com/sites/Test/Shared%20Documents/specs
-        serviceType: SharePoint
-        entityType: Directory
-""".strip(),
-        encoding="utf-8",
+    _write_catalog_descriptor(
+        descriptor,
+        packages=[
+            {
+                "name": "shared-specs",
+                "path": "downloads/shared-specs",
+                "syncTarget": "resources",
+                "sources": [
+                    {
+                        "path": "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs",
+                        "serviceType": "SharePoint",
+                        "entityType": "Directory",
+                    }
+                ],
+            }
+        ],
     )
 
     class DummySharepointClient:
@@ -591,6 +759,111 @@ resources:
     document = descriptor.read_text(encoding="utf-8")
     assert "nested/detail.csv" in document
     assert "serviceType: SharePoint" in document
+
+
+def test_fetch_resource_metadata_resolves_nested_catalog_package_selector(tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_catalog_descriptor(
+        descriptor,
+        catalogs=[
+            {
+                "name": "research",
+                "catalogs": [
+                    {
+                        "name": "archive",
+                        "packages": [
+                            {
+                                "name": "shared-specs",
+                                "path": "downloads/shared-specs",
+                                "syncTarget": "resources",
+                                "sources": [
+                                    {
+                                        "path": "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs",
+                                        "serviceType": "SharePoint",
+                                        "entityType": "Directory",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    )
+
+    class DummySharepointClient:
+        def get_from_weburl(self, _url: str):
+            class DummyFolder:
+                @property
+                def is_directory(self):
+                    return True
+
+                @property
+                def children(self):
+                    class DummyItem:
+                        path = "spec.xlsx"
+                        is_directory = False
+
+                        def to_dp(self):
+                            from sharedrive.models import DriveResource, DriveSource
+
+                            return DriveResource(
+                                name="spec.xlsx",
+                                path="downloads/shared-specs/spec.xlsx",
+                                sources=[
+                                    DriveSource(
+                                        path="https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/spec.xlsx",
+                                        serviceType="SharePoint",
+                                        entityType="File",
+                                    )
+                                ],
+                            )
+
+                    return [DummyItem()]
+
+            return DummyFolder()
+
+    summary = fetch_resource_metadata_in_descriptor(
+        descriptor=descriptor,
+        resource_name="research.archive.shared-specs",
+        dry_run=False,
+        log=lambda _message: None,
+        sharepoint_client_factory=lambda: DummySharepointClient(),
+    )
+
+    assert summary.changed is True
+    assert summary.resource_name == "shared-specs"
+    assert "spec.xlsx" in descriptor.read_text(encoding="utf-8")
+
+
+def test_fetch_resource_metadata_rejects_legacy_package_root_descriptor(tmp_path: Path) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    descriptor.write_text(
+        """
+resources:
+  - name: legacy-package
+    path: downloads/legacy
+    syncTarget: resources
+    sources:
+      - path: https://drive.google.com/drive/folders/folder123
+        serviceType: GoogleDrive
+        entityType: Directory
+""".strip(),
+        encoding="utf-8",
+    )
+
+    try:
+        fetch_resource_metadata_in_descriptor(
+            descriptor=descriptor,
+            resource_name="legacy-package",
+            dry_run=True,
+            log=lambda _message: None,
+        )
+    except ValueError as exc:
+        assert "data-package-catalog" in str(exc)
+        assert "packages:" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Expected legacy package-root descriptor validation failure")
 
 
 def test_resource_adapter_name_prefers_drive_service_over_legacy_adapter() -> None:

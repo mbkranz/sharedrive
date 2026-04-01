@@ -7,9 +7,12 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import urlparse
 
+from dplib.system import Model
+
 from sharedrive.clients.aws import check_s3_credentials, download_s3_url
 from sharedrive.helpers import resolve_default_descriptor
 from sharedrive.models import (
+    DriveCatalog,
     load_drive_descriptor,
     normalize_entity_type,
     normalize_service_type,
@@ -17,34 +20,39 @@ from sharedrive.models import (
 )
 
 LogFn = Callable[[str], None]
+Entry = Model | dict[str, Any]
 
 
-def load_descriptor(path: Path | str) -> list[dict[str, Any]]:
-    descriptor = load_drive_descriptor(path)
-    return descriptor.to_dict().get("resources", [])
+def load_descriptor(path: Path | str) -> DriveCatalog:
+    return load_drive_descriptor(path)
 
 
-def get_package_resources(
-    resource: dict[str, Any],
-    *,
-    create: bool = False,
-) -> list[dict[str, Any]]:
-    resources = resource.get("resources")
-    if resources is None:
-        if create:
-            resource["resources"] = []
-            return resource["resources"]
-        return []
-    if not isinstance(resources, list):
-        raise ValueError("Resource must contain a 'resources' array")
-    return resources
+def _contained_entries(container: Entry) -> list[Entry]:
+    entries: list[Entry] = []
+    if isinstance(container, dict):
+        for key in ("resources", "packages", "catalogs"):
+            values = container.get(key)
+            if not isinstance(values, list):
+                continue
+            entries.extend(value for value in values if isinstance(value, dict))
+        return entries
+
+    entries.extend(child for child in container.entity_children() if isinstance(child, Model))
+    return entries
+
+
+def _entry_to_dict(entry: Entry) -> dict[str, Any]:
+    return dict(entry) if isinstance(entry, dict) else entry.to_dict()
 
 
 def get_primary_source(
-    resource: dict[str, Any],
+    resource: Entry,
     *,
     create: bool = False,
 ) -> dict[str, Any] | None:
+    if not isinstance(resource, dict):
+        resource = resource.to_dict()
+
     sources = resource.get("sources")
     if sources is None:
         if create:
@@ -106,11 +114,12 @@ def source_entity_type(resource: Any) -> str | None:
     return None
 
 
-def resource_sync_target(resource: dict[str, Any]) -> str:
-    declared = resource.get("syncTarget")
+def resource_sync_target(resource: Entry) -> str:
+    resource_dict = _entry_to_dict(resource)
+    declared = resource_dict.get("syncTarget")
     if declared == "resources":
         return "resources"
-    return "resources" if isinstance(resource.get("resources"), list) else "path"
+    return "resources" if isinstance(resource_dict.get("resources"), list) else "path"
 
 
 @dataclass(slots=True)
@@ -144,9 +153,10 @@ def resource_source_url(resource: Any) -> str | None:
     return source_path(resource)
 
 
-def resource_output_path(resource: dict[str, Any], output_dir: Path) -> Path:
+def resource_output_path(resource: Entry, output_dir: Path) -> Path:
     """Resolve resource.path against output_dir unless path is absolute."""
-    path_value = resource.get("path")
+    resource_dict = _entry_to_dict(resource)
+    path_value = resource_dict.get("path")
     if not isinstance(path_value, str) or not path_value.strip():
         raise ValueError("Resource is missing required string field 'path'")
 
@@ -156,7 +166,7 @@ def resource_output_path(resource: dict[str, Any], output_dir: Path) -> Path:
     return output_dir / path
 
 
-def resource_output_paths(resource: dict[str, Any], output_dir: Path) -> list[Path]:
+def resource_output_paths(resource: Entry, output_dir: Path) -> list[Path]:
     """Resolve primary resource.path plus optional targets[] into local output paths."""
 
     def _resolve_local_path(path_value: str) -> Path:
@@ -166,7 +176,8 @@ def resource_output_paths(resource: dict[str, Any], output_dir: Path) -> list[Pa
         return output_dir / path
 
     paths: list[Path] = [resource_output_path(resource, output_dir)]
-    targets = resource.get("targets")
+    resource_dict = _entry_to_dict(resource)
+    targets = resource_dict.get("targets")
     if targets is None:
         return paths
 
@@ -268,17 +279,18 @@ def _default_googledrive_client_factory() -> Any:
 
 
 def _resource_selector_path(
-    resource: dict[str, Any],
+    resource: Entry,
     parent_selector_path: str | None = None,
 ) -> str:
-    resource_name = str(resource.get("name", "")).strip() or "resource"
+    resource_dict = _entry_to_dict(resource)
+    resource_name = str(resource_dict.get("name", "")).strip() or "resource"
     if parent_selector_path is None:
         return resource_name
     return f"{parent_selector_path}.{resource_name}"
 
 
 def _selected_adapter_names(
-    resources: Iterable[dict[str, Any]],
+    resources: Iterable[Entry],
     include: str | Iterable[str] = "all",
 ) -> list[str]:
     include_set = _normalize_include(include)
@@ -286,13 +298,13 @@ def _selected_adapter_names(
     seen: set[str] = set()
 
     def collect(
-        resource: dict[str, Any],
-        parent: dict[str, Any] | None = None,
+        resource: Entry,
+        parent: Entry | None = None,
         parent_selector_path: str | None = None,
     ) -> None:
         normalized = _inherit_resource_defaults(resource, parent=parent)
         selector_path = _resource_selector_path(normalized, parent_selector_path)
-        children = get_package_resources(normalized)
+        children = _contained_entries(resource)
 
         if children:
             parent_selected = _resource_matches_include(
@@ -301,14 +313,13 @@ def _selected_adapter_names(
                 selector_path=selector_path,
             )
             for child in children:
-                if isinstance(child, dict):
-                    child_resource = _inherit_resource_defaults(child, parent=normalized)
-                    if parent_selected or _resource_or_descendant_matches_include(
-                        child_resource,
-                        include_set,
-                        parent_selector_path=selector_path,
-                    ):
-                        collect(child, parent=normalized, parent_selector_path=selector_path)
+                child_resource = _inherit_resource_defaults(child, parent=normalized)
+                if parent_selected or _resource_or_descendant_matches_include(
+                    child_resource,
+                    include_set,
+                    parent_selector_path=selector_path,
+                ):
+                    collect(child, parent=normalized, parent_selector_path=selector_path)
             return
 
         source_url = resource_source_url(normalized)
@@ -326,25 +337,23 @@ def _selected_adapter_names(
             selected.append(adapter_name)
 
     for index, resource in enumerate(resources):
-        if not isinstance(resource, dict):
-            continue
-        normalized = dict(resource)
-        normalized.setdefault("name", f"resource[{index}]")
-        collect(normalized)
+        collect(resource)
 
     return selected
 
 
 def _inherit_resource_defaults(
-    resource: dict[str, Any],
+    resource: Entry,
     *,
-    parent: dict[str, Any] | None = None,
+    parent: Entry | None = None,
 ) -> dict[str, Any]:
-    normalized = dict(resource)
+    normalized = _entry_to_dict(resource)
     if parent is None:
         return normalized
 
-    parent_path = parent.get("path")
+    parent_dict = _entry_to_dict(parent)
+
+    parent_path = parent_dict.get("path")
     resource_path = normalized.get("path")
     if (
         isinstance(parent_path, str)
@@ -356,7 +365,7 @@ def _inherit_resource_defaults(
         if not child_path.is_absolute():
             normalized["path"] = (Path(parent_path.strip()) / child_path).as_posix()
 
-    parent_source = get_primary_source(parent)
+    parent_source = get_primary_source(parent_dict)
     child_source = get_primary_source(normalized, create=parent_source is not None)
     if parent_source is not None and child_source is not None:
         for field_name in ("serviceType", "entityType"):
@@ -366,7 +375,7 @@ def _inherit_resource_defaults(
                 child_source[field_name] = inherited_value
 
     for field_name in ("driveService", "x-adapter"):
-        inherited_value = parent.get(field_name)
+        inherited_value = parent_dict.get(field_name)
         current_value = normalized.get(field_name)
         if isinstance(inherited_value, str) and inherited_value.strip() and not current_value:
             normalized[field_name] = inherited_value
@@ -375,7 +384,7 @@ def _inherit_resource_defaults(
 
 
 def _resource_matches_include(
-    resource: dict[str, Any],
+    resource: Entry,
     include_set: set[str],
     *,
     selector_path: str | None = None,
@@ -383,10 +392,11 @@ def _resource_matches_include(
     if "all" in include_set:
         return True
 
-    resource_name = str(resource.get("name", "")).strip().lower()
+    resource_dict = _entry_to_dict(resource)
+    resource_name = str(resource_dict.get("name", "")).strip().lower()
     selector_key = (selector_path or resource_name).strip().lower()
-    source_url = resource_source_url(resource)
-    adapter_name = resource_adapter_name(resource, source_url)
+    source_url = resource_source_url(resource_dict)
+    adapter_name = resource_adapter_name(resource_dict, source_url)
     return (
         resource_name in include_set
         or selector_key in include_set
@@ -395,7 +405,7 @@ def _resource_matches_include(
 
 
 def _resource_or_descendant_matches_include(
-    resource: dict[str, Any],
+    resource: Entry,
     include_set: set[str],
     *,
     parent_selector_path: str | None = None,
@@ -404,9 +414,7 @@ def _resource_or_descendant_matches_include(
     if _resource_matches_include(resource, include_set, selector_path=selector_path):
         return True
 
-    for child in get_package_resources(resource):
-        if not isinstance(child, dict):
-            continue
+    for child in _contained_entries(resource):
         normalized_child = _inherit_resource_defaults(child, parent=resource)
         if _resource_or_descendant_matches_include(
             normalized_child,
@@ -596,8 +604,8 @@ def check_auth_for_descriptor(
     s3_auth_checker: Callable[[], None] | None = None,
 ) -> list[AuthCheckResult]:
     descriptor_path = Path(descriptor)
-    resources = load_descriptor(descriptor_path)
-    adapters = _selected_adapter_names(resources, include)
+    entries = _contained_entries(load_drive_descriptor(descriptor_path))
+    adapters = _selected_adapter_names(entries, include)
     return check_auth_for_adapters(
         adapters,
         sharepoint_client_factory=sharepoint_client_factory,
@@ -623,7 +631,7 @@ def download_from_descriptor(
     include_set = _normalize_include(include)
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
-    resources = load_descriptor(descriptor_path)
+    resources = _contained_entries(load_drive_descriptor(descriptor_path))
 
     summary = DownloadSummary(total_resources=len(resources))
     clients: dict[str, Any] = {}
@@ -650,24 +658,22 @@ def download_from_descriptor(
             return summary
 
     def fetch_resource(
-        resource: dict[str, Any],
-        parent: dict[str, Any] | None = None,
+        resource: Entry,
+        parent: Entry | None = None,
         parent_selector_path: str | None = None,
         selected_by_ancestor: bool = False,
     ) -> None:
         normalized = _inherit_resource_defaults(resource, parent=parent)
         selector_path = _resource_selector_path(normalized, parent_selector_path)
-        nested_resources = [
-            child for child in get_package_resources(normalized) if isinstance(child, dict)
-        ]
+        nested_entries = _contained_entries(resource)
 
-        if nested_resources:
+        if nested_entries:
             parent_selected = _resource_matches_include(
                 normalized,
                 include_set,
                 selector_path=selector_path,
             )
-            for child in nested_resources:
+            for child in nested_entries:
                 child_resource = _inherit_resource_defaults(child, parent=normalized)
                 if parent_selected or _resource_or_descendant_matches_include(
                     child_resource,
@@ -706,7 +712,7 @@ def download_from_descriptor(
             if (
                 adapter_name == "googledrive"
                 and entity_type in {"Directory", "Container"}
-                and not nested_resources
+                and not nested_entries
             ):
                 if "googledrive" not in clients:
                     factory = googledrive_client_factory or _default_googledrive_client_factory
@@ -727,7 +733,7 @@ def download_from_descriptor(
             if (
                 adapter_name == "sharepoint"
                 and entity_type in {"Directory", "Container"}
-                and not nested_resources
+                and not nested_entries
             ):
                 if "sharepoint" not in clients:
                     factory = sharepoint_client_factory or _default_sharepoint_client_factory
@@ -790,12 +796,7 @@ def download_from_descriptor(
             summary.failures += 1
 
     for index, resource in enumerate(resources):
-        if not isinstance(resource, dict):
-            emit(f"Warning, resource[{index}] is not an object")
-            summary.failures += 1
-            continue
-
-        normalized = dict(resource)
+        normalized = _entry_to_dict(resource)
         normalized.setdefault("name", f"resource[{index}]")
         if not _resource_or_descendant_matches_include(normalized, include_set):
             resource_name = normalized.get("name", f"resource[{index}]")
@@ -805,7 +806,7 @@ def download_from_descriptor(
             summary.skipped += 1
             continue
 
-        fetch_resource(normalized)
+        fetch_resource(resource)
 
     return summary
 
