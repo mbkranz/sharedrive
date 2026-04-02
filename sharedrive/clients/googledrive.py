@@ -647,6 +647,13 @@ class GDriveItem:
 
 
 class GDriveFile(GDriveItem, DriveFile):
+    def refresh(self, *, include_children: bool = True) -> "GDriveFile":
+        self.raw = self.client.get_file(
+            self.id,
+            fields="id,name,mimeType,parents,webViewLink",
+        )
+        return self
+
     def download(self, target_dir: str | Path) -> None:
         target = Path(target_dir)
         if target.is_dir():
@@ -663,6 +670,21 @@ class GDriveFile(GDriveItem, DriveFile):
 
 
 class GDriveFolder(GDriveItem, DriveFolder):
+    def refresh(self, *, include_children: bool = True) -> "GDriveFolder":
+        refreshed = self.client.get_file(
+            self.id,
+            fields="id,name,mimeType,parents,webViewLink",
+        )
+        if include_children:
+            refreshed["contents"] = self.client.list_folder_contents(
+                self.id,
+                recursive=False,
+            )
+        elif "contents" in self.raw:
+            refreshed["contents"] = self.raw["contents"]
+        self.raw = refreshed
+        return self
+
     @property
     def children(self) -> list[DriveItem]:
         contents = self.raw.get("contents")

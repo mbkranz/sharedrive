@@ -7,6 +7,9 @@ import yaml
 from sharedrive.actions.download import check_auth_for_descriptor, download_from_descriptor
 from sharedrive.actions.download import resource_adapter_name
 from sharedrive.actions.fetch import fetch_entity_metadata_in_descriptor, fetch_resource_metadata_in_descriptor
+from sharedrive.clients.googledrive import GDriveFile, GDriveFolder
+from sharedrive.clients.sharepoint import SharepointFile, SharepointFolder
+from sharedrive.item import DriveFile, DriveFolder
 
 
 def _write_catalog_descriptor(
@@ -28,6 +31,456 @@ def _write_catalog_descriptor(
         ),
         encoding="utf-8",
     )
+
+
+def test_drive_file_refresh_returns_self() -> None:
+    class DummyFile(DriveFile):
+        def __init__(self, *, item_id: str, name: str, path: str, source_url: str) -> None:
+            self._id = item_id
+            self._name = name
+            self._path = path
+            self._source_url = source_url
+
+        @property
+        def id(self) -> str:
+            return self._id
+
+        @property
+        def name(self) -> str:
+            return self._name
+
+        @property
+        def path(self) -> str:
+            return self._path
+
+        @property
+        def service_type(self) -> str:
+            return "GoogleDrive"
+
+        @property
+        def source_url(self) -> str:
+            return self._source_url
+
+        def download(self, target: Path | str) -> None:
+            raise NotImplementedError
+
+        def refresh(self, *, include_children: bool = True) -> "DummyFile":
+            return self
+
+    item = DummyFile(
+        item_id="file-1",
+        name="summary.csv",
+        path="summary.csv",
+        source_url="https://example.invalid/summary.csv",
+    )
+
+    assert item.refresh() is item
+
+
+def test_drive_folder_refresh_returns_self_and_preserves_children() -> None:
+    class DummyFile(DriveFile):
+        def __init__(self, *, item_id: str, name: str, path: str, source_url: str) -> None:
+            self._id = item_id
+            self._name = name
+            self._path = path
+            self._source_url = source_url
+
+        @property
+        def id(self) -> str:
+            return self._id
+
+        @property
+        def name(self) -> str:
+            return self._name
+
+        @property
+        def path(self) -> str:
+            return self._path
+
+        @property
+        def service_type(self) -> str:
+            return "GoogleDrive"
+
+        @property
+        def source_url(self) -> str:
+            return self._source_url
+
+        def download(self, target: Path | str) -> None:
+            raise NotImplementedError
+
+        def refresh(self, *, include_children: bool = True) -> "DummyFile":
+            return self
+
+    class DummyFolder(DriveFolder):
+        def __init__(self, *, item_id: str, name: str, path: str, children: list[DriveFile | DriveFolder]) -> None:
+            self._id = item_id
+            self._name = name
+            self._path = path
+            self._children = children
+
+        @property
+        def id(self) -> str:
+            return self._id
+
+        @property
+        def name(self) -> str:
+            return self._name
+
+        @property
+        def path(self) -> str:
+            return self._path
+
+        @property
+        def service_type(self) -> str:
+            return "GoogleDrive"
+
+        @property
+        def source_url(self) -> str:
+            return "https://drive.google.com/drive/folders/example"
+
+        @property
+        def children(self) -> list[DriveFile | DriveFolder]:
+            return self._children
+
+        def refresh(self, *, include_children: bool = True) -> "DummyFolder":
+            return self
+
+    nested_folder = DummyFolder(
+        item_id="folder-2",
+        name="nested",
+        path="nested",
+        children=[
+            DummyFile(
+                item_id="file-2",
+                name="detail.csv",
+                path="nested/detail.csv",
+                source_url="https://example.invalid/detail.csv",
+            )
+        ],
+    )
+    summary_file = DummyFile(
+        item_id="file-1",
+        name="summary.csv",
+        path="summary.csv",
+        source_url="https://example.invalid/summary.csv",
+    )
+
+    folder = DummyFolder(
+        item_id="folder-1",
+        name="folder",
+        path="folder",
+        children=[nested_folder, summary_file],
+    )
+
+    refreshed = folder.refresh()
+
+    assert refreshed is folder
+    assert folder.children == [
+        nested_folder,
+        summary_file,
+    ]
+
+
+def test_fetch_build_child_resources_flattens_runtime_items() -> None:
+    class DummyFile(DriveFile):
+        def __init__(self, *, item_id: str, name: str, path: str, source_url: str) -> None:
+            self._id = item_id
+            self._name = name
+            self._path = path
+            self._source_url = source_url
+
+        @property
+        def id(self) -> str:
+            return self._id
+
+        @property
+        def name(self) -> str:
+            return self._name
+
+        @property
+        def path(self) -> str:
+            return self._path
+
+        @property
+        def service_type(self) -> str:
+            return "GoogleDrive"
+
+        @property
+        def source_url(self) -> str:
+            return self._source_url
+
+        def download(self, target: Path | str) -> None:
+            raise NotImplementedError
+
+        def refresh(self, *, include_children: bool = True) -> "DummyFile":
+            return self
+
+    class DummyFolder(DriveFolder):
+        def __init__(self, *, item_id: str, name: str, path: str, children: list[DriveFile | DriveFolder]) -> None:
+            self._id = item_id
+            self._name = name
+            self._path = path
+            self._children = children
+
+        @property
+        def id(self) -> str:
+            return self._id
+
+        @property
+        def name(self) -> str:
+            return self._name
+
+        @property
+        def path(self) -> str:
+            return self._path
+
+        @property
+        def service_type(self) -> str:
+            return "GoogleDrive"
+
+        @property
+        def source_url(self) -> str:
+            return "https://drive.google.com/drive/folders/example"
+
+        @property
+        def children(self) -> list[DriveFile | DriveFolder]:
+            return self._children
+
+        def refresh(self, *, include_children: bool = True) -> "DummyFolder":
+            return self
+
+    folder = DummyFolder(
+        item_id="folder-1",
+        name="folder",
+        path="folder",
+        children=[
+            DummyFolder(
+                item_id="folder-2",
+                name="nested",
+                path="nested",
+                children=[
+                    DummyFile(
+                        item_id="file-2",
+                        name="detail.csv",
+                        path="nested/detail.csv",
+                        source_url="https://example.invalid/detail.csv",
+                    )
+                ],
+            ),
+            DummyFile(
+                item_id="file-1",
+                name="summary.csv",
+                path="summary.csv",
+                source_url="https://example.invalid/summary.csv",
+            ),
+        ],
+    )
+
+    from sharedrive.actions.fetch import _build_child_resources
+
+    resources = _build_child_resources(folder)
+
+    assert [resource["path"] for resource in resources] == [
+        "nested/detail.csv",
+        "summary.csv",
+    ]
+
+
+def test_gdrive_file_refresh_refreshes_metadata() -> None:
+    class DummyClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def get_file(self, file_id: str, *, fields: str):
+            self.calls.append((file_id, fields))
+            return {
+                "id": file_id,
+                "name": "renamed.csv",
+                "mimeType": "text/csv",
+                "webViewLink": "https://example.invalid/refreshed",
+                "relative_path": "nested/renamed.csv",
+            }
+
+        def _to_item(self, raw_metadata: dict, *, current_rel_path: str = "", scope_root: bool = False):
+            return GDriveFile(raw_metadata=raw_metadata, client=self, current_rel_path=current_rel_path, scope_root=scope_root)
+
+    client = DummyClient()
+    item = GDriveFile(
+        raw_metadata={
+            "id": "file-1",
+            "name": "summary.csv",
+            "mimeType": "text/csv",
+            "relative_path": "nested/summary.csv",
+            "webViewLink": "https://example.invalid/original",
+        },
+        client=client,
+        current_rel_path="",
+        scope_root=False,
+    )
+
+    refreshed = item.refresh()
+
+    assert isinstance(refreshed, GDriveFile)
+    assert refreshed is item
+    assert refreshed.name == "renamed.csv"
+    assert refreshed.path == "nested/renamed.csv"
+    assert client.calls == [
+        ("file-1", "id,name,mimeType,parents,webViewLink"),
+    ]
+
+
+def test_gdrive_folder_refresh_refreshes_children() -> None:
+    class DummyClient:
+        def __init__(self) -> None:
+            self.get_calls: list[tuple[str, str]] = []
+            self.list_calls: list[tuple[str, bool]] = []
+
+        def get_file(self, file_id: str, *, fields: str):
+            self.get_calls.append((file_id, fields))
+            return {
+                "id": file_id,
+                "name": "folder",
+                "mimeType": "application/vnd.google-apps.folder",
+                "relative_path": "folder",
+                "webViewLink": "https://example.invalid/folder",
+            }
+
+        def list_folder_contents(self, folder_id: str, *, recursive: bool = False):
+            self.list_calls.append((folder_id, recursive))
+            return [
+                {
+                    "id": "child-1",
+                    "name": "report.csv",
+                    "mimeType": "text/csv",
+                    "relative_path": "report.csv",
+                    "webViewLink": "https://example.invalid/report",
+                }
+            ]
+
+        def _to_item(self, raw_metadata: dict, *, current_rel_path: str = "", scope_root: bool = False):
+            if raw_metadata.get("mimeType") == "application/vnd.google-apps.folder":
+                return GDriveFolder(raw_metadata=raw_metadata, client=self, current_rel_path=current_rel_path, scope_root=scope_root)
+            return GDriveFile(raw_metadata=raw_metadata, client=self, current_rel_path=current_rel_path, scope_root=scope_root)
+
+    client = DummyClient()
+    item = GDriveFolder(
+        raw_metadata={
+            "id": "folder-1",
+            "name": "folder",
+            "mimeType": "application/vnd.google-apps.folder",
+            "relative_path": "folder",
+        },
+        client=client,
+        current_rel_path="",
+        scope_root=False,
+    )
+
+    refreshed = item.refresh()
+
+    assert refreshed is item
+    children = item.children
+    assert len(children) == 1
+    assert isinstance(children[0], GDriveFile)
+    assert children[0].path == "folder/report.csv"
+    assert client.get_calls == [("folder-1", "id,name,mimeType,parents,webViewLink")]
+    assert client.list_calls == [("folder-1", False)]
+
+
+def test_sharepoint_file_refresh_refreshes_metadata() -> None:
+    class DummyClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def get_item_metadata(self, drive: str, *, item_path=None, item_id=None, fields=None):
+            self.calls.append((drive, item_id))
+            return {
+                "id": item_id,
+                "name": "renamed.csv",
+                "file": {},
+                "parentReference": {"driveId": drive},
+                "webUrl": "https://example.invalid/refreshed",
+                "relative_path": "nested/renamed.csv",
+            }
+
+        def _to_item(self, raw_metadata: dict, *, current_rel_path: str = "", scope_root: bool = False):
+            return SharepointFile(raw_metadata=raw_metadata, client=self, current_rel_path=current_rel_path, scope_root=scope_root)
+
+    client = DummyClient()
+    item = SharepointFile(
+        raw_metadata={
+            "id": "file-1",
+            "name": "summary.csv",
+            "file": {},
+            "parentReference": {"driveId": "drive-1"},
+            "relative_path": "nested/summary.csv",
+            "webUrl": "https://example.invalid/original",
+        },
+        client=client,
+        current_rel_path="",
+        scope_root=False,
+    )
+
+    refreshed = item.refresh()
+
+    assert isinstance(refreshed, SharepointFile)
+    assert refreshed is item
+    assert refreshed.name == "renamed.csv"
+    assert refreshed.path == "nested/renamed.csv"
+    assert client.calls == [("drive-1", "file-1")]
+
+
+def test_sharepoint_folder_refresh_refreshes_children() -> None:
+    class DummyClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def get_item_metadata(self, drive: str, *, item_path=None, item_id=None, fields=None):
+            self.calls.append((drive, item_id))
+            return {
+                "id": item_id,
+                "name": "folder",
+                "folder": {"childCount": 1},
+                "parentReference": {"driveId": drive},
+                "relative_path": "folder",
+                "children": [
+                    {
+                        "id": "child-1",
+                        "name": "report.csv",
+                        "file": {},
+                        "parentReference": {"driveId": drive},
+                        "relative_path": "report.csv",
+                        "webUrl": "https://example.invalid/report",
+                    }
+                ],
+            }
+
+        def _to_item(self, raw_metadata: dict, *, current_rel_path: str = "", scope_root: bool = False):
+            if "folder" in raw_metadata:
+                return SharepointFolder(raw_metadata=raw_metadata, client=self, current_rel_path=current_rel_path, scope_root=scope_root)
+            return SharepointFile(raw_metadata=raw_metadata, client=self, current_rel_path=current_rel_path, scope_root=scope_root)
+
+    client = DummyClient()
+    item = SharepointFolder(
+        raw_metadata={
+            "id": "folder-1",
+            "name": "folder",
+            "folder": {"childCount": 1},
+            "parentReference": {"driveId": "drive-1"},
+            "relative_path": "folder",
+        },
+        client=client,
+        current_rel_path="",
+        scope_root=False,
+    )
+
+    refreshed = item.refresh()
+
+    assert refreshed is item
+    children = item.children
+    assert len(children) == 1
+    assert isinstance(children[0], SharepointFile)
+    assert children[0].path == "folder/report.csv"
+    assert client.calls == [("drive-1", "folder-1")]
 
 
 def _write_descriptor(path: Path) -> None:

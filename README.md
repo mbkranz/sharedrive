@@ -10,6 +10,8 @@ Experimental connectors and workflows for moving files across SharePoint, Google
 
 - `sharedrive/clients/sharepoint.py`: Microsoft Graph SharePoint client (`SharepointClient`)
 - `sharedrive/clients/googledrive.py`: Google Drive client (`GoogleDriveClient`)
+- `sharedrive/item.py`: runtime item abstractions for live remote files and folders
+- `sharedrive/models.py`: descriptor and metadata models for persisted catalog/package/resource state
 - `sharedrive/auth/microsoft.py`: SharePoint access-token strategies
 - `sharedrive/auth/settings.py`: Google and SharePoint auth settings/factories
 - `sharedrive/clients/aws.py`: S3 URL parsing/download helpers (cloudpathlib + boto3 fallback)
@@ -17,6 +19,24 @@ Experimental connectors and workflows for moving files across SharePoint, Google
 - `sharedrive/actions/sync.py`: reusable descriptor sync Python API for package resources
 - `sharedrive/cli.py`: Typer CLI (`sharedrive`)
 - `scripts/dev_adapters.py`: manual adapter smoke checks
+
+## Architecture
+
+`sharedrive` uses a layered adapter-oriented architecture.
+
+- Descriptor models in `sharedrive/models.py` represent persisted catalog metadata. They validate YAML/JSON descriptor files, normalize fields such as `serviceType` and `entityType`, and are the source of truth for what gets written back to disk.
+- Runtime items in `sharedrive/item.py` represent live remote files and folders. They are adapter-backed objects returned by service clients and expose runtime behavior such as `download()`, `refresh()`, `children`, and `iter_files()`.
+- Clients in `sharedrive/clients/*.py` translate provider APIs into runtime items. They own provider-specific HTTP calls, URL resolution, pagination, and item construction.
+- Action modules in `sharedrive/actions/*.py` orchestrate workflows across descriptors, clients, and runtime items. They load descriptors, select adapters, resolve runtime roots, traverse items, and save descriptor updates or materialize downloads.
+- The CLI in `sharedrive/cli.py` is the outer interface. It parses user input, resolves defaults, and delegates to action-layer workflows.
+
+The important separation is between persisted descriptor state and live runtime state:
+
+- Descriptor models describe what is stored.
+- Runtime items describe what is currently available from a remote service.
+- Actions translate between the two when workflows need both.
+
+This is why `sharedrive fetch ...` remains an action-layer descriptor update, while runtime items use `refresh()` to reload in-memory remote state.
 
 ## Setup
 
@@ -108,7 +128,7 @@ For CLI operators:
 - `sharedrive auth login microsoft` validates Microsoft auth directly using the configured mode
 - `sharedrive auth login sharepoint` validates SharePoint auth using the configured mode
 - `sharedrive auth check <descriptor>` includes SharePoint in descriptor-aware preflight checks
-- `sharedrive fetch ... --check-auth` validates SharePoint credentials before download when selected
+- `sharedrive download ... --check-auth` validates SharePoint credentials before downloading selected resources
 
 For Python API usage:
 
@@ -242,6 +262,25 @@ summary = download_from_descriptor(
 if not summary.ok:
   raise RuntimeError(f"Download failed for {summary.failures} resources")
 ```
+
+Runtime item API:
+
+```python
+from sharedrive.auth.google import default_drive_strategy
+from sharedrive.clients.googledrive import GoogleDriveClient
+
+client = GoogleDriveClient(credential_strategy=default_drive_strategy())
+item = client.get_from_weburl("https://drive.google.com/drive/folders/<id>")
+
+item.refresh()
+for child in item.children:
+  print(child.path)
+```
+
+Runtime items returned by service clients are live adapter-backed objects.
+Use `refresh()` to reload a file or folder from the backing service.
+For folders, `children` exposes the current immediate child items and `iter_files()` flattens nested files.
+Descriptor fetch remains an action-layer workflow: `sharedrive fetch ...` updates descriptor metadata, while runtime item refresh updates in-memory remote objects.
 
 ## Descriptor format
 

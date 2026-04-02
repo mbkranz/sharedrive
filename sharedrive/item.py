@@ -43,6 +43,11 @@ class DriveItem(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def refresh(self, *, include_children: bool = True) -> "DriveItem":
+        """Refresh this runtime item from its backing service."""
+        raise NotImplementedError
+
+    @abstractmethod
     def to_dp(self) -> DriveResource | DrivePackage:
         raise NotImplementedError
 
@@ -66,6 +71,9 @@ class DriveFile(DriveItem, ABC):
             format_str=format_str,
             drive_id=self.id,
         )
+
+    def refresh(self, *, include_children: bool = True) -> "DriveFile":
+        return self
 
 
 class DriveFolder(DriveItem, ABC):

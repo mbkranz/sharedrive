@@ -35,8 +35,16 @@ CLI_COMMANDS: list[tuple[str, list[str]]] = [
 
 API_MODULES = [
     {
-        "module": "sharedrive.descriptor",
-        "path": ROOT / "sharedrive" / "descriptor.py",
+        "module": "sharedrive.helpers",
+        "path": ROOT / "sharedrive" / "helpers.py",
+    },
+    {
+        "module": "sharedrive.models",
+        "path": ROOT / "sharedrive" / "models.py",
+    },
+    {
+        "module": "sharedrive.item",
+        "path": ROOT / "sharedrive" / "item.py",
     },
     {
         "module": "sharedrive.actions.add",

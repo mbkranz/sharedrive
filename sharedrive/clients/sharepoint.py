@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path, PurePosixPath
 import json
 import mimetypes
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlparse
 
@@ -10,6 +10,7 @@ from urllib.parse import unquote, urlparse
 import requests
 
 from sharedrive.exceptions import GraphApiDriveError, GraphApiSiteError
+from sharedrive.item import DriveFile, DriveFolder, DriveItem
 
 if TYPE_CHECKING:
     from sharedrive.auth.microsoft import MicrosoftTokenStrategy
@@ -366,8 +367,6 @@ class SharepointClient:
         if not item_metadata or 'id' not in item_metadata:
             raise FileNotFoundError(f"File not found at path: {file_path} in site: {site_name}")
             
-        item_id = item_metadata["id"]
-        
         item = {"metadata":item_metadata}
 
         if metadata_only:
@@ -474,8 +473,6 @@ class SharepointClient:
 
 
 __all__ = ["SharepointClient"]
-from sharedrive.item import DriveFile, DriveFolder, DriveItem
-from typing import TYPE_CHECKING, Any, Optional
 
 class SharepointItem:
     def __init__(
@@ -520,6 +517,14 @@ class SharepointItem:
 
 
 class SharepointFile(SharepointItem, DriveFile):
+    def refresh(self, *, include_children: bool = True) -> "SharepointFile":
+        drive_id = self.raw.get("parentReference", {}).get("driveId")
+        if not drive_id:
+            raise ValueError("Missing driveId in Sharepoint item metadata")
+
+        self.raw = self.client.get_item_metadata(drive_id, item_id=self.id)
+        return self
+
     def download(self, target_dir: str | Path) -> None:
         target = Path(target_dir)
         if target.is_dir():
@@ -550,6 +555,17 @@ class SharepointFile(SharepointItem, DriveFile):
 
 
 class SharepointFolder(SharepointItem, DriveFolder):
+    def refresh(self, *, include_children: bool = True) -> "SharepointFolder":
+        drive_id = self.raw.get("parentReference", {}).get("driveId")
+        if not drive_id:
+            raise ValueError("Missing driveId in SharePoint folder metadata")
+
+        refreshed = self.client.get_item_metadata(drive_id, item_id=self.id)
+        if not include_children and "children" in self.raw:
+            refreshed["children"] = self.raw["children"]
+        self.raw = refreshed
+        return self
+
     @property
     def children(self) -> list[DriveItem]:
         contents = self.raw.get("children")

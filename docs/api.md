@@ -2,65 +2,142 @@
 
 Auto-generated from source signatures and docstrings.
 
-## `sharedrive.descriptor`
+## `sharedrive.helpers`
 
 ### Constants
 
 - `DESCRIPTOR_DEFAULTS_FILE = Path('.sharedrive/sharedrive_set.json')`
-- `ENTITY_TYPE_ALIASES = {'file': 'File', 'directory': 'Directory', 'folder': 'Directory', 'container': 'Container'}`
-- `SERVICE_TYPE_ALIASES = {'googledrive': 'GoogleDrive', 'google-drive': 'GoogleDrive', 'google drive': 'GoogleDrive', 'sharepoint': 'SharePoint', 'share-point': 'SharePoint', 's3': 'S3'}`
-- `SYNC_TARGET_ALIASES = {'path': 'path', 'resource': 'resources', 'resources': 'resources'}`
 
 ### Functions
 
-- `def check_descriptor_exists(path: Path | str) -> bool`
-  - Return True when a descriptor file exists on disk.
-- `def get_primary_source(resource: dict[str, Any], *, create: bool = False) -> dict[str, Any] | None`
-  - Return the first source entry for a resource.
-- `def ensure_descriptor_exists(path: Path | str) -> Path`
-  - Return descriptor path when it exists, else raise FileNotFoundError.
 - `def descriptor_scope_key(descriptor: Path | str) -> str`
   - Return the stable key used for descriptor-scoped defaults.
-- `def get_descriptor_resources(document: dict[str, Any], *, create: bool = False) -> list[dict[str, Any]]`
-  - Return the top-level resources list, optionally initializing it.
-- `def get_resource_sources(resource: dict[str, Any], *, create: bool = False) -> list[dict[str, Any]]`
-  - Return normalized source entries for a resource.
-- `def get_package_resources(resource: dict[str, Any], *, create: bool = False) -> list[dict[str, Any]]`
-  - Return nested resources for a resource, optionally initializing them.
+- `def get_checked_out_entity() -> str | None`
+  - Return the currently checked-out entity dot-path, or None if no entity is active.
 - `def get_saved_params_for_descriptor(descriptor: Path | str | None = None) -> dict[str, Any]`
   - Return merged global and descriptor-scoped saved params.
-- `def load_descriptor(path: Path | str) -> list[dict[str, Any]]`
-  - Load a JSON/YAML descriptor and return the top-level resources list.
 - `def load_descriptor_defaults_store() -> dict[str, Any]`
   - Load persisted descriptor defaults for global and descriptor scopes.
-- `def load_descriptor_document(path: Path | str) -> dict[str, Any]`
-  - Load a JSON/YAML descriptor and return the full top-level document.
+- `def resolve_default_descriptor() -> Path`
+  - Return the first existing default descriptor path.
+- `def resolve_descriptor_path(descriptor: Path | str | None = None) -> Path`
+  - Resolve descriptor path from explicit input, saved defaults, or standard locations.
+- `def resolve_output_dir(output_dir: Path | str | None = None, *, descriptor: Path | str | None = None) -> Path`
+  - Resolve output_dir from explicit input, saved defaults, or the standard path.
+- `def save_descriptor_defaults_store(data: dict[str, Any]) -> None`
+  - Persist descriptor defaults store to disk.
+
+
+## `sharedrive.models`
+
+### Constants
+
+- `CATALOG_PROFILE = 'data-package-catalog'`
+- `ENTITY_TYPE_ALIASES = {'file': 'File', 'directory': 'Directory', 'folder': 'Directory', 'container': 'Container'}`
+- `SERVICE_TYPE_ALIASES = {'googledrive': 'GoogleDrive', 'google-drive': 'GoogleDrive', 'google drive': 'GoogleDrive', 'sharepoint': 'SharePoint', 'share-point': 'SharePoint', 's3': 'S3'}`
+
+### Functions
+
+- `def load_drive_descriptor(path: Path | str, *, create_if_missing: bool = False) -> DriveCatalog`
 - `def normalize_entity_type(entity_type: str) -> str`
   - Normalize source entity type to OpenMetadata-style class naming.
 - `def normalize_service_type(service_type: str) -> str`
-  - Normalize source service type to OpenMetadata enum spelling.
-  # normalize_sync_target(sync_target: str) is deprecated and ignored in the new resource model.
-- `def resolve_descriptor_path(descriptor: Path | str | None = None) -> Path`
-  - Resolve descriptor path from explicit input, saved defaults, or standard locations.
-- `def resolve_default_descriptor() -> Path`
-  - Return the first existing default descriptor path.
-- `def resolve_output_dir(output_dir: Path | str | None = None, *, descriptor: Path | str | None = None) -> Path`
-  - Resolve output_dir from explicit input, saved defaults, or the standard path.
-- `def save_descriptor_document(path: Path | str, document: dict[str, Any]) -> None`
-  - Persist a descriptor document as JSON or YAML based on file suffix.
-- `def save_descriptor_defaults_store(data: dict[str, Any]) -> None`
-  - Persist descriptor defaults store to disk.
-- `def resource_profile(resource: dict[str, Any]) -> str | None`
-  - Return the metadata profile declared for a resource, if any.
-  # resource_sync_target(resource: dict[str, Any]) and resource_syncs_to_resources(resource: dict[str, Any]) are deprecated and ignored in the new resource model.
-- `def service_type_adapter_name(service_type: str) -> str`
-  - Return the runtime adapter name for a canonical service type.
-- `def source_entity_type(resource: dict[str, Any]) -> str | None`
-  - Return the canonical entity type for a resource source, if declared.
-- `def source_path(resource: dict[str, Any]) -> str | None`
-  - Return the primary source locator path for a resource.
-- `def source_service_type(resource: dict[str, Any]) -> str | None`
-  - Return the canonical service type for a resource source.
+- `def save_drive_descriptor(path: Path | str, descriptor: DriveCatalog) -> None`
+
+### Classes
+
+#### `DriveDescriptor`
+- Fields:
+  - `profile: str`
+  - `resources: list[DriveResource]`
+  - `packages: list[DrivePackage]`
+  - `catalogs: list['DriveCatalog']`
+- Methods:
+  - `def to_dict(self)`
+  - `def get_entity_reference(self, selector: str) -> tuple[str, DriveResource | DrivePackage | 'DriveCatalog'] | None`
+  - `def get_resource_reference(self, selector: str) -> tuple[str, DriveResource | DrivePackage] | None`
+
+#### `DriveCatalog`
+- Fields:
+  - `profile: str`
+  - `resources: list[DriveResource]`
+  - `packages: list[DrivePackage]`
+  - `catalogs: list['DriveCatalog']`
+- Methods:
+  - `def to_dict(self)`
+  - `def get_entity_reference(self, selector: str) -> tuple[str, DriveResource | DrivePackage | 'DriveCatalog'] | None`
+  - `def get_resource_reference(self, selector: str) -> tuple[str, DriveResource | DrivePackage] | None`
+
+#### `DrivePackage`
+- Fields:
+  - `path: Optional[str]`
+  - `sources: list[DriveSource]`
+  - `drive_id: Optional[str]`
+  - `resources: list['DriveResource | DrivePackage']`
+  - `profile: Optional[str]`
+- Methods:
+  - `def primary_source(self) -> Optional[DriveSource]`
+  - `def source_path(self) -> Optional[str]`
+  - `def source_service_type(self) -> Optional[str]`
+  - `def source_entity_type(self) -> Optional[str]`
+  - `def to_dict(self)`
+  - `def is_package(self) -> bool`
+  - `def get_resource_reference(self, resource_selector: str) -> tuple[str, DriveResource | DrivePackage] | None`
+
+#### `DriveResource`
+- Fields:
+  - `sources: list[DriveSource]`
+  - `drive_id: Optional[str]`
+  - `profile: Optional[str]`
+- Methods:
+  - `def primary_source(self) -> Optional[DriveSource]`
+  - `def source_path(self) -> Optional[str]`
+  - `def source_service_type(self) -> Optional[str]`
+  - `def source_entity_type(self) -> Optional[str]`
+  - `def sync_target(self) -> str`
+    - Return the declared sync target for a resource.
+  - `def syncs_to_resources(self) -> bool`
+    - Return whether a resource syncs into nested resources.
+  - `def is_package(self) -> bool`
+  - `def to_dict(self)`
+  - `def from_drive_metadata(cls, *, name: str, path: str, service_type: str, entity_type: str, source_url: str, format_str: Optional[str] = None, mediatype: Optional[str] = None, drive_id: Optional[str] = None, profile: Optional[str] = None) -> 'DriveResource'`
+
+#### `DriveSource`
+- Fields:
+  - `serviceType: Optional[str]`
+  - `entityType: Optional[str]`
+
+
+## `sharedrive.item`
+
+### Classes
+
+#### `DriveFile`
+- Methods:
+  - `def is_directory(self) -> bool`
+  - `def to_dp(self) -> DriveResource`
+  - `def refresh(self, *, include_children: bool = True) -> 'DriveFile'`
+
+#### `DriveFolder`
+- Methods:
+  - `def is_directory(self) -> bool`
+  - `def children(self) -> list[DriveItem]`
+  - `def iter_files(self) -> Iterable[DriveFile]`
+  - `def download(self, target: Path | str) -> None`
+  - `def to_dp(self) -> DrivePackage`
+
+#### `DriveItem`
+- Methods:
+  - `def id(self) -> str`
+  - `def name(self) -> str`
+  - `def path(self) -> str`
+  - `def service_type(self) -> str`
+  - `def source_url(self) -> str`
+  - `def is_directory(self) -> bool`
+  - `def download(self, target: Path | str) -> None`
+  - `def refresh(self, *, include_children: bool = True) -> 'DriveItem'`
+    - Refresh this runtime item from its backing service.
+  - `def to_dp(self) -> DriveResource | DrivePackage`
 
 
 ## `sharedrive.actions.add`
@@ -95,13 +172,14 @@ Auto-generated from source signatures and docstrings.
   - Download resources from a descriptor using adapter-specific clients.
 - `def download_resources(descriptor: Path | str, include: str | Iterable[str] = 'all', output_dir: Path | str = Path('resources'), dry_run: bool = False, *, check_auth: bool = False, log: LogFn | None = print) -> DownloadSummary`
   - Convenience alias for download_from_descriptor.
-- `def resource_adapter_name(resource: dict[str, Any], source_url: str | None) -> str`
+- `def load_descriptor(path: Path | str) -> DriveCatalog`
+- `def resource_adapter_name(resource: Any, source_url: str | None) -> str`
   - Resolve runtime adapter name from source serviceType or fallback inference.
-- `def resource_output_path(resource: dict[str, Any], output_dir: Path) -> Path`
+- `def resource_output_path(resource: Entry, output_dir: Path) -> Path`
   - Resolve resource.path against output_dir unless path is absolute.
-- `def resource_output_paths(resource: dict[str, Any], output_dir: Path) -> list[Path]`
+- `def resource_output_paths(resource: Entry, output_dir: Path) -> list[Path]`
   - Resolve primary resource.path plus optional targets[] into local output paths.
-- `def resource_source_url(resource: dict[str, Any]) -> str | None`
+- `def resource_source_url(resource: Any) -> str | None`
   - Resolve the primary source locator for a resource.
 
 ### Classes
@@ -129,10 +207,11 @@ Auto-generated from source signatures and docstrings.
 
 ### Functions
 
+- `def fetch_entity_metadata_in_descriptor(descriptor: Path | str, entity_selector: str | None, *, dry_run: bool = False, depth: int = 0, log: LogFn | None = print, googledrive_client_factory: Callable[[], Any] | None = None, sharepoint_client_factory: Callable[[], Any] | None = None) -> list[FetchSummary]`
+  - Fetch remote metadata for one entity (package or catalog) in a descriptor.
 - `def fetch_resource_metadata_in_descriptor(descriptor: Path | str, resource_name: str, *, dry_run: bool = False, log: LogFn | None = print, googledrive_client_factory: Callable[[], Any] | None = None, sharepoint_client_factory: Callable[[], Any] | None = None) -> FetchSummary`
-  - Fetch metadata for one top-level resource into nested descriptor resources.
-- `def fetch_package_metadata_in_descriptor(descriptor: Path | str, package_name: str, *, dry_run: bool = False, log: LogFn | None = print, googledrive_client_factory: Callable[[], Any] | None = None, sharepoint_client_factory: Callable[[], Any] | None = None) -> FetchSummary`
   - Fetch metadata for one package resource into nested descriptor resources.
+- `def fetch_package_metadata_in_descriptor(descriptor: Path | str, package_name: str, *, dry_run: bool = False, log: LogFn | None = print, googledrive_client_factory: Callable[[], Any] | None = None, sharepoint_client_factory: Callable[[], Any] | None = None) -> FetchSummary`
 
 ### Classes
 
@@ -177,7 +256,8 @@ Auto-generated from source signatures and docstrings.
   - `def create_file(self, parent_folder_id: str, file_in_bytes: Optional[bytes] = None, mime_type: Optional[str] = None, name: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None, supports_all_drives: bool = True, **kwargs) -> Dict[str, Any]`
   - `def update_file(self, file_id: str, file_in_bytes_or_path: Optional[Union[str, bytes]] = None, mime_type: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]`
   - `def create_folder(self, parent_folder_id: str, name: str) -> Dict[str, Any]`
-  - `def get_from_weburl(self, web_url: str, fields: str = '*') -> Dict[str, Any]`
+  - `def get_from_weburl(self, web_url: str, fields: str = '*') -> 'GDriveItem'`
+    - Return metadata for a Google Drive file or folder given a web URL,
   - `def download_from_weburl(self, web_url: str, **kwargs) -> Union[bytes, str]`
   - `def export_from_weburl(self, web_url: str, mime_type: Optional[str] = None, **kwargs) -> Union[bytes, str]`
   - `def update_from_weburl(self, web_url: str, **kwargs) -> Dict[str, Any]`
@@ -339,24 +419,17 @@ Auto-generated from source signatures and docstrings.
   - `def list_site_drives(self, site_id: str) -> list[dict[str, Any]]`
   - `def get_drive_id(self, site_id, drive_name: str | None = None)`
     - Retrieves the default document drive associated with a SharePoint site.
-  - `def get_item_metadata(self, drive_id, itempath)`
-    - get item metadata based on relative file path within the drive
-  - `def get_item_by_id(self, drive_id: str, item_id: str) -> dict[str, Any]`
-  - `def list_item_children(self, drive_id: str, item_id: str) -> list[dict[str, Any]]`
+  - `def get_item_metadata(self, drive: str, *, item_path: str | None = None, item_id: str | None = None, fields: list[str] | None = None)`
+    - get item metadata based on relative file path or item id within the drive
   - `def resolve_weburl(self, url: str) -> dict[str, str]`
   - `def download_content(self, drive_id = None, item_id = None, download_url = None)`
     - takes in the components needed to download content --
-  - `def get_from_weburl(self, url)`
-    - Generic method to get a file or folder from a SharePoint URL.
-  - `def list_folder_files(self, drive_id: str, folder_id: str, *, recursive: bool = True) -> list[dict[str, Any]]`
-  - `def list_folder_files_from_weburl(self, url: str, *, recursive: bool = True) -> list[dict[str, Any]]`
-  - `def download_from_weburl(self, url, output_path, dry_run = True)`
+  - `def get_from_weburl(self, url: str) -> 'SharepointItem'`
+  - `def download(self, metadata, path)`
   - `def get_file(self, site_name, file_path, metadata_only = False)`
     - gets file item metadata and file
-  - `def get_folder(self, site_name: str, folder_path: str, depth: int = 0)`
+  - `def get_folder(self, site_name: str, path: str)`
     - Retrieve the contents of a folder, with optional recursion depth.
-  - `def get_folder_contents(self, site_name, path, recursive = False, metadata_only = True)`
-    - Lists all files in a given directory recursively with paths relative to the input directory.
   - `def upload_new_content(self, site_name, folder_path, local_file_path)`
     - [IN DEVELOPMENT] Uploads a file to a specified SharePoint folder with proper Content-Type.
   - `def update_content(self, site_name, folder_path, local_file_path, create_if_missing = False)`

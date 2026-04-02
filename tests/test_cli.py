@@ -539,21 +539,38 @@ def test_fetch_with_selector_arg_prepends_checked_out_entity(
     assert captured["entity_selector"] == "research.archive"
 
 
-def test_fetch_without_entity_and_without_selector_exits_with_error(
+def test_fetch_without_entity_and_without_selector_fetches_from_descriptor_root(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.chdir(tmp_path)
     descriptor = tmp_path / "resources" / "descriptor.yaml"
     descriptor.parent.mkdir(parents=True, exist_ok=True)
     _write_descriptor(descriptor)
+    captured: dict[str, object] = {}
+
+    def fake_fetch_entity_metadata_in_descriptor(**kwargs):
+        captured.update(kwargs)
+        return [
+            SimpleNamespace(
+                resource_name="census-package",
+                generated_resources=1,
+                dry_run=False,
+            )
+        ]
+
+    monkeypatch.setattr(
+        "sharedrive.cli.fetch_entity_metadata_in_descriptor",
+        fake_fetch_entity_metadata_in_descriptor,
+    )
 
     # Ensure no entity is checked out
     RUNNER.invoke(app, ["checkout", "resources/descriptor.yaml"], prog_name="sharedrive")
 
     result = RUNNER.invoke(app, ["fetch", "--descriptor", str(descriptor)], prog_name="sharedrive")
 
-    assert result.exit_code == 1
-    assert "entity is required" in result.output
+    assert result.exit_code == 0
+    assert captured["entity_selector"] is None
+    assert "Fetching all metadata" in result.output
 
 
 def test_removed_raw_adapter_commands_fail() -> None:

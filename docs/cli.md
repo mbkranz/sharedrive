@@ -17,11 +17,11 @@ Options:
 
 Commands:
   update    Update descriptor-root or resource properties using flag-style...
-  checkout  Activate a descriptor for later commands.
+  checkout  Activate a descriptor and optionally an entity within it for...
   set       Set reusable key/value parameters for sharedrive descriptor...
-  add       Add a resource entry to a descriptor.
-  fetch     Fetch remote metadata for one resource into the descriptor.
-  download  Download descriptor resources by adapter type or resource name...
+  add       Add a resource or package entry to a descriptor.
+  fetch     Fetch remote metadata for one selector into the descriptor.
+  download  Download resources from a selector in the descriptor.
   auth      Authentication helpers.
   clone     Clone descriptor state for new local variants.
 ```
@@ -218,12 +218,19 @@ Options:
 ## `sharedrive checkout --help`
 
 ```text
-Usage: sharedrive checkout [OPTIONS] DESCRIPTOR
+Usage: sharedrive checkout [OPTIONS] DESCRIPTOR [ENTITY]
 
-  Activate a descriptor for later commands.
+  Activate a descriptor and optionally an entity within it for later commands.
+
+  When an entity is checked out, ``fetch`` and ``download`` without a selector
+  argument operate on the whole entity.  A selector argument is then treated as
+  a path relative to the checked-out entity (e.g. ``fetch archive`` becomes
+  ``research.archive`` when ``research`` is checked out).
 
 Arguments:
   DESCRIPTOR  Descriptor path to activate for later commands.  [required]
+  [ENTITY]    Entity dot-path within the descriptor to set as the active scope
+              for fetch/download commands.
 
 Options:
   --help  Show this message and exit.
@@ -233,6 +240,18 @@ Options:
   ```bash
 
   sharedrive checkout resources/descriptor.yaml
+
+  ```
+
+  ```bash
+
+  sharedrive checkout resources/descriptor.yaml research
+
+  ```
+
+  ```bash
+
+  sharedrive checkout resources/descriptor.yaml research.archive
 
   ```
 ```
@@ -279,7 +298,7 @@ Options:
 ```text
 Usage: sharedrive add [OPTIONS] NAME
 
-  Add a resource entry to a descriptor.
+  Add a resource or package entry to a descriptor.
 
 Arguments:
   NAME  Resource name to store in the descriptor.  [required]
@@ -291,8 +310,9 @@ Options:
   --description TEXT   Optional resource description.
   --service-type TEXT  Source serviceType. If omitted, infer from source.
   --entity-type TEXT   Source entityType such as File, Directory, or Container.
-  --package           Treat as a package (creates a resource with nested resources).
-  --catalog           Treat as a catalog (alias for package, future extension).
+  --package            Treat as a package (creates a resource with nested
+                       resources).
+  --catalog            Treat as a catalog (alias for package, future extension).
   --profile TEXT       Optional metadata profile for the resource.
   --descriptor PATH    Descriptor file path. Defaults to the saved descriptor or
                        the first standard descriptor path.
@@ -316,9 +336,9 @@ Options:
 
   ```bash
 
-  sharedrive add census-docs --package --path downloads/census --source \
-  https://drive.google.com/drive/folders/<id> --service-type GoogleDrive \
-  --entity-type Directory
+  sharedrive add census-docs --path downloads/census --source
+  https://drive.google.com/drive/folders/<id> --service-type GoogleDrive
+  --entity-type Directory --sync-target resources
 
   ```
 ```
@@ -326,12 +346,15 @@ Options:
 ## `sharedrive fetch --help`
 
 ```text
-Usage: sharedrive fetch [OPTIONS] [RESOURCE_NAME]
+Usage: sharedrive fetch [OPTIONS] [ENTITY]
 
-  Fetch remote metadata for one resource into the descriptor.
+  Fetch remote metadata for one selector into the descriptor.
+
+  TODO(manage_todo_list): reconsider direct source-path fetch flow.
 
 Arguments:
-  [RESOURCE_NAME]  Top-level resource name whose metadata should be refreshed.
+  [ENTITY]  Entity or package dot-path to fetch. If omitted, uses the checked-
+            out entity.
 
 Options:
   --descriptor PATH         Descriptor file path. Defaults to the saved
@@ -343,6 +366,13 @@ Options:
   --help                    Show this message and exit.
 
   **Examples**
+
+  ```bash
+
+  sharedrive fetch # get metadata for the default selector in the checked-out
+  descriptor
+
+  ```
 
   ```bash
 
@@ -361,19 +391,18 @@ Options:
 ## `sharedrive download --help`
 
 ```text
-Usage: sharedrive download [OPTIONS] [DESCRIPTOR_ARG]
+Usage: sharedrive download [OPTIONS] [SELECTOR]
 
-  Download descriptor resources by adapter type or resource name filters.
+  Download resources from a selector in the descriptor.
+
+  TODO(manage_todo_list): reconsider direct source-path download flow.
 
 Arguments:
-  [DESCRIPTOR_ARG]  Descriptor file path. Defaults to the saved descriptor or
-                    the first standard descriptor path.
+  [SELECTOR]  Selector to download. If omitted, uses the checked-out descriptor.
 
 Options:
   --descriptor PATH         Descriptor file path. Defaults to the saved
                             descriptor or the first standard descriptor path.
-  -i, --include TEXT        Include adapter types and/or resource names. Repeat
-                            the option or pass a comma-separated list.
   --output-dir PATH         Base output directory for relative resource paths.
   --dry-run / --no-dry-run  Print actions without downloading.  [default: no-
                             dry-run]
@@ -386,21 +415,19 @@ Options:
 
   ```bash
 
-  sharedrive download resources/descriptor.yaml --dry-run
+  sharedrive download --dry-run
 
   ```
 
   ```bash
 
-  sharedrive download resources/descriptor.yaml --include s3 --include
-  sharepoint
+  sharedrive download my-package --descriptor resources/descriptor.yaml
 
   ```
 
   ```bash
 
-  sharedrive download resources/descriptor.yaml --include spec-workbook
-  --output-dir resources
+  sharedrive download my-package --output-dir resources
 
   ```
 ```

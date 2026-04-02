@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from sharedrive.actions.download import resource_adapter_name, resource_source_url
-from sharedrive.item import DriveFolder
+from sharedrive.item import DriveFolder, DriveItem
 from sharedrive.models import (
     DriveCatalog,
     DrivePackage,
@@ -32,13 +32,25 @@ def _iter_drive_leaf_items(item: Any) -> Iterable[Any]:
 
 
 def _build_child_resources(drive_item: Any) -> list[dict[str, Any]]:
-    """Build sorted resource dicts from all leaf (non-directory) items.
+    """Build sorted resource dicts from runtime leaf file items.
 
-    For concrete ``DriveFolder`` instances the ``iter_files`` method from
-    ``item.py`` is used so that the full adapter abstraction is exercised.
-    For lightweight test doubles (objects with ``is_directory`` / ``children``
-    but without ``iter_files``) the fallback tree-walker is used instead.
+    Runtime ``DriveItem`` instances are refreshed before traversal. Lightweight
+    test doubles that do not inherit from ``DriveItem`` are traversed
+    structurally without refresh support.
     """
+    if isinstance(drive_item, DriveItem):
+        refreshed_item = drive_item.refresh()
+        if isinstance(refreshed_item, DriveFolder):
+            leaf_items = list(refreshed_item.iter_files())
+        elif getattr(refreshed_item, "is_directory", False):
+            leaf_items = list(_iter_drive_leaf_items(refreshed_item))
+        else:
+            leaf_items = [refreshed_item]
+        return [
+            item.to_dp().to_dict()
+            for item in sorted(leaf_items, key=lambda i: str(getattr(i, "path", "") or ""))
+        ]
+
     if isinstance(drive_item, DriveFolder):
         leaf_items = list(drive_item.iter_files())
     else:
@@ -164,7 +176,7 @@ def _collect_packages_from_catalog(
 
 def fetch_entity_metadata_in_descriptor(
     descriptor: Path | str,
-    entity_selector: str,
+    entity_selector: str | None,
     *,
     dry_run: bool = False,
     depth: int = 0,
@@ -188,19 +200,25 @@ def fetch_entity_metadata_in_descriptor(
     The descriptor is saved once after all updates when ``dry_run`` is ``False``.
     """
     descriptor_path = Path(descriptor)
-    if not entity_selector.strip():
-        raise ValueError("entity_selector must be a non-empty string")
-
     descriptor_model = load_drive_descriptor(descriptor_path)
-    resolved = descriptor_model.get_entity_reference(entity_selector.strip())
-    if resolved is None:
-        raise ValueError(f"Entity '{entity_selector}' was not found in descriptor.")
 
-    entity_path, entity = resolved
+    if entity_selector:
+        entity_selector = entity_selector.strip()
+    else:
+        entity_selector = ""
+
+    if not entity_selector:
+        entity_path = ""
+        entity: DriveCatalog | DrivePackage | DriveResource = descriptor_model
+    else:
+        resolved = descriptor_model.get_entity_reference(entity_selector)
+        if resolved is None:
+            raise ValueError(f"Entity '{entity_selector}' was not found in descriptor.")
+        entity_path, entity = resolved
 
     if isinstance(entity, DriveResource) and not isinstance(entity, DrivePackage):
         raise ValueError(
-            f"Entity '{entity_path}' is a standalone resource. "
+            f"Entity '{entity_path or entity_selector}' is a standalone resource. "
             "Only packages (syncTarget: resources) and catalogs support fetch."
         )
 

@@ -16,7 +16,6 @@ from sharedrive.actions.fetch import fetch_entity_metadata_in_descriptor
 from sharedrive.helpers import (
     DESCRIPTOR_DEFAULTS_FILE,
     get_checked_out_entity,
-    get_saved_params_for_descriptor,
     load_descriptor_defaults_store,
     resolve_descriptor_path,
     resolve_output_dir,
@@ -848,28 +847,21 @@ def fetch(
     """
     _load_env_file(env_file)
     descriptor_path = resolve_descriptor_path(descriptor)
-
     _exit_if_descriptor_missing(descriptor_path)
-
-    # Resolve the effective selector from the argument and the checked-out entity.
-    # The checked-out entity (set via `sharedrive checkout DESCRIPTOR ENTITY`) acts
-    # as the current scope:
-    #   - No selector arg → operate on the whole checked-out entity.
-    #   - Selector arg    → treat it as a path relative to the checked-out entity.
-    #   - No entity and no selector arg → error.
     checked_out_entity = get_checked_out_entity()
     if entity is None:
         if checked_out_entity:
             entity_name = checked_out_entity
         else:
-            typer.echo(
-                "Error: an entity is required. Pass it as an argument or check out an entity with "
-                "'sharedrive checkout DESCRIPTOR ENTITY'.",
-                err=True,
-            )
-            raise typer.Exit(code=1)
+            entity_name = None
     else:
         entity_name = f"{checked_out_entity}.{entity}" if checked_out_entity else entity
+
+
+    if entity_name is not None:
+        typer.echo(f"Fetching metadata in {descriptor_path} for selector '{entity_name}'...")
+    else:
+        typer.echo(f"Fetching all metadata in {descriptor_path}")
 
     try:
         summaries = fetch_entity_metadata_in_descriptor(
@@ -885,14 +877,13 @@ def fetch(
         raise typer.Exit(code=1) from exc
 
     if not summaries:
-        typer.echo(f"No fetchable packages found for '{entity_name}'.")
+        typer.echo("No fetchable entities found.")
         return
     for summary in summaries:
         action = "Would fetch" if summary.dry_run else "Fetched"
         typer.echo(
             f"{action} metadata for {summary.generated_resources} resource(s) into '{summary.resource_name}' in {descriptor_path}."
         )
-
 
 @app.command(
     "download",
