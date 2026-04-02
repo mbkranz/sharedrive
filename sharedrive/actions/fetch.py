@@ -13,6 +13,7 @@ from sharedrive.models import (
     load_drive_descriptor,
     save_drive_descriptor,
 )
+from sharedrive.registry import build_service_registry
 
 LogFn = Callable[[str], None]
 
@@ -39,7 +40,7 @@ def _build_child_resources(drive_item: Any) -> list[dict[str, Any]]:
     structurally without refresh support.
     """
     if isinstance(drive_item, DriveItem):
-        refreshed_item = drive_item.refresh()
+        refreshed_item = drive_item.refresh_tree()
         if isinstance(refreshed_item, DriveFolder):
             leaf_items = list(refreshed_item.iter_files())
         elif getattr(refreshed_item, "is_directory", False):
@@ -77,31 +78,19 @@ def _fetch_from_adapter(
 ) -> list[dict[str, Any]]:
     adapter_name = resource_adapter_name(resource, source_url)
 
-    if adapter_name == "googledrive":
-        if googledrive_client_factory is None:
-            from sharedrive.auth.google import default_drive_strategy
-            from sharedrive.clients.googledrive import GoogleDriveClient
-            client = GoogleDriveClient(credential_strategy=default_drive_strategy())
-        else:
-            client = googledrive_client_factory()
-
-        drive_item = client.get_from_weburl(source_url)
-        return _build_child_resources(drive_item)
-
-    elif adapter_name == "sharepoint":
-        if sharepoint_client_factory is None:
-            from sharedrive.auth.settings import make_sharepoint_client_from_microsoft_auth
-            client = make_sharepoint_client_from_microsoft_auth()
-        else:
-            client = sharepoint_client_factory()
-
-        drive_item = client.get_from_weburl(source_url)
-        return _build_child_resources(drive_item)
-
-    else:
+    registry = build_service_registry(
+        googledrive_client_factory=googledrive_client_factory,
+        sharepoint_client_factory=sharepoint_client_factory,
+    )
+    adapter = registry.get(adapter_name)
+    if adapter is None or adapter.build_client is None:
         raise NotImplementedError(
             f"fetch is not implemented for adapter '{adapter_name}'."
         )
+
+    client = adapter.build_client()
+    drive_item = client.get_from_weburl(source_url)
+    return _build_child_resources(drive_item)
 
 
 def _fetch_one_package(

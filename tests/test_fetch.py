@@ -181,6 +181,121 @@ def test_drive_folder_refresh_returns_self_and_preserves_children() -> None:
     ]
 
 
+def test_drive_folder_refresh_tree_refreshes_descendants() -> None:
+    class DummyFile(DriveFile):
+        def __init__(self, *, item_id: str, name: str, path: str, source_url: str, calls: list[str]) -> None:
+            self._id = item_id
+            self._name = name
+            self._path = path
+            self._source_url = source_url
+            self._calls = calls
+
+        @property
+        def id(self) -> str:
+            return self._id
+
+        @property
+        def name(self) -> str:
+            return self._name
+
+        @property
+        def path(self) -> str:
+            return self._path
+
+        @property
+        def service_type(self) -> str:
+            return "GoogleDrive"
+
+        @property
+        def source_url(self) -> str:
+            return self._source_url
+
+        def download(self, target: Path | str) -> None:
+            raise NotImplementedError
+
+        def refresh(self, *, include_children: bool = True) -> "DummyFile":
+            self._calls.append(f"file:{self.path}")
+            return self
+
+    class DummyFolder(DriveFolder):
+        def __init__(self, *, item_id: str, name: str, path: str, children: list[DriveFile | DriveFolder], calls: list[str]) -> None:
+            self._id = item_id
+            self._name = name
+            self._path = path
+            self._children = children
+            self._calls = calls
+
+        @property
+        def id(self) -> str:
+            return self._id
+
+        @property
+        def name(self) -> str:
+            return self._name
+
+        @property
+        def path(self) -> str:
+            return self._path
+
+        @property
+        def service_type(self) -> str:
+            return "GoogleDrive"
+
+        @property
+        def source_url(self) -> str:
+            return "https://drive.google.com/drive/folders/example"
+
+        @property
+        def children(self) -> list[DriveFile | DriveFolder]:
+            return self._children
+
+        def refresh(self, *, include_children: bool = True) -> "DummyFolder":
+            self._calls.append(f"folder:{self.path}")
+            return self
+
+    calls: list[str] = []
+    folder = DummyFolder(
+        item_id="folder-1",
+        name="folder",
+        path="folder",
+        calls=calls,
+        children=[
+            DummyFolder(
+                item_id="folder-2",
+                name="nested",
+                path="nested",
+                calls=calls,
+                children=[
+                    DummyFile(
+                        item_id="file-2",
+                        name="detail.csv",
+                        path="nested/detail.csv",
+                        source_url="https://example.invalid/detail.csv",
+                        calls=calls,
+                    )
+                ],
+            ),
+            DummyFile(
+                item_id="file-1",
+                name="summary.csv",
+                path="summary.csv",
+                source_url="https://example.invalid/summary.csv",
+                calls=calls,
+            ),
+        ],
+    )
+
+    refreshed = folder.refresh_tree()
+
+    assert refreshed is folder
+    assert calls == [
+        "folder:folder",
+        "folder:nested",
+        "file:nested/detail.csv",
+        "file:summary.csv",
+    ]
+
+
 def test_fetch_build_child_resources_flattens_runtime_items() -> None:
     class DummyFile(DriveFile):
         def __init__(self, *, item_id: str, name: str, path: str, source_url: str) -> None:

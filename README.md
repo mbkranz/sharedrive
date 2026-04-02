@@ -275,10 +275,13 @@ item = client.get_from_weburl("https://drive.google.com/drive/folders/<id>")
 item.refresh()
 for child in item.children:
   print(child.path)
+
+item.refresh_tree()
 ```
 
 Runtime items returned by service clients are live adapter-backed objects.
 Use `refresh()` to reload a file or folder from the backing service.
+Use `refresh_tree()` when you want a folder and its descendants refreshed recursively before traversal.
 For folders, `children` exposes the current immediate child items and `iter_files()` flattens nested files.
 Descriptor fetch remains an action-layer workflow: `sharedrive fetch ...` updates descriptor metadata, while runtime item refresh updates in-memory remote objects.
 

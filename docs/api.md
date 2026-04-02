@@ -123,6 +123,7 @@ Auto-generated from source signatures and docstrings.
   - `def is_directory(self) -> bool`
   - `def children(self) -> list[DriveItem]`
   - `def iter_files(self) -> Iterable[DriveFile]`
+  - `def refresh_tree(self) -> 'DriveFolder'`
   - `def download(self, target: Path | str) -> None`
   - `def to_dp(self) -> DrivePackage`
 
@@ -137,6 +138,8 @@ Auto-generated from source signatures and docstrings.
   - `def download(self, target: Path | str) -> None`
   - `def refresh(self, *, include_children: bool = True) -> 'DriveItem'`
     - Refresh this runtime item from its backing service.
+  - `def refresh_tree(self) -> 'DriveItem'`
+    - Recursively refresh this runtime item and any descendant items.
   - `def to_dp(self) -> DriveResource | DrivePackage`
 
 

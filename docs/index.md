@@ -69,9 +69,11 @@ item = client.get_from_weburl("https://drive.google.com/drive/folders/<id>")
 item.refresh()
 for child in item.children:
     print(child.path)
+
+item.refresh_tree()
 ```
 
-Runtime items use `refresh()` to reload remote state in memory. Descriptor metadata updates remain action-level operations such as `fetch_entity_metadata_in_descriptor()`.
+Runtime items use `refresh()` to reload remote state in memory and `refresh_tree()` to hydrate an entire folder subtree before traversal. Descriptor metadata updates remain action-level operations such as `fetch_entity_metadata_in_descriptor()`.
 
 ## Docs site
 

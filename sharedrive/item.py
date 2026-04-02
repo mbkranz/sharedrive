@@ -47,6 +47,10 @@ class DriveItem(ABC):
         """Refresh this runtime item from its backing service."""
         raise NotImplementedError
 
+    def refresh_tree(self) -> "DriveItem":
+        """Recursively refresh this runtime item and any descendant items."""
+        return self.refresh(include_children=True)
+
     @abstractmethod
     def to_dp(self) -> DriveResource | DrivePackage:
         raise NotImplementedError
@@ -92,6 +96,15 @@ class DriveFolder(DriveItem, ABC):
                 yield from cast("DriveFolder", child).iter_files()
                 continue
             yield cast(DriveFile, child)
+
+    def refresh_tree(self) -> "DriveFolder":
+        self.refresh(include_children=True)
+        for child in self.children:
+            if child.is_directory:
+                cast("DriveFolder", child).refresh_tree()
+                continue
+            child.refresh()
+        return self
 
     def download(self, target: Path | str) -> None:
         target_root = Path(target)
