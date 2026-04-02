@@ -13,18 +13,7 @@ def load_descriptor_defaults_store() -> dict[str, Any]:
     """Load persisted descriptor defaults for global and descriptor scopes."""
     if not DESCRIPTOR_DEFAULTS_FILE.exists():
         return {"global": {}, "descriptors": {}}
-
-    try:
-        data = json.loads(DESCRIPTOR_DEFAULTS_FILE.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {"global": {}, "descriptors": {}}
-
-    if not isinstance(data, dict):
-        return {"global": {}, "descriptors": {}}
-    if not isinstance(data.get("global"), dict):
-        data["global"] = {}
-    if not isinstance(data.get("descriptors"), dict):
-        data["descriptors"] = {}
+    data = json.loads(DESCRIPTOR_DEFAULTS_FILE.read_text(encoding="utf-8"))
     return data
 
 
