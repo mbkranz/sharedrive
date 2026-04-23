@@ -170,8 +170,6 @@ def fetch_entity_metadata_in_descriptor(
     dry_run: bool = False,
     depth: int = 0,
     log: LogFn | None = print,
-    googledrive_client_factory: Callable[[], Any] | None = None,
-    sharepoint_client_factory: Callable[[], Any] | None = None,
 ) -> list[FetchSummary]:
     """Fetch remote metadata for one entity (package or catalog) in a descriptor.
 
@@ -210,11 +208,6 @@ def fetch_entity_metadata_in_descriptor(
             f"Entity '{entity_path or entity_selector}' is a standalone resource. "
             "Only packages (syncTarget: resources) and catalogs support fetch."
         )
-
-    client_kwargs: dict[str, Any] = dict(
-        googledrive_client_factory=googledrive_client_factory,
-        sharepoint_client_factory=sharepoint_client_factory,
-    )
 
     if isinstance(entity, DrivePackage):
         resolved_name = str(entity.name or entity_selector).strip() or entity_selector
