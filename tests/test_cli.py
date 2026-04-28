@@ -217,18 +217,14 @@ def test_auth_login_gdrive_uses_user_oauth_settings(
 ) -> None:
     captured: dict[str, object] = {}
 
-    class DummyStrategy:
-        def build(self):
-            captured["build_called"] = True
-            return object()
-
     class DummyConfig:
         def __init__(self, **kwargs):
             captured.update(kwargs)
             self.oauth_token_path = kwargs.get("oauth_token_path")
 
-        def to_strategy(self):
-            return DummyStrategy()
+        def to_auth(self):
+            captured["build_called"] = True
+            return object()
 
     monkeypatch.setattr("sharedrive.auth.settings.GoogleAuthConfig", DummyConfig)
 
@@ -261,19 +257,15 @@ def test_auth_login_gdrive_uses_user_oauth_settings(
 def test_auth_login_sharepoint_uses_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
-    class DummyStrategy:
-        def build(self):
-            captured["build_called"] = True
-            return "token"
-
     class DummyConfig:
         def __init__(self, **kwargs):
             captured.update(kwargs)
             self.auth_mode = SimpleNamespace(value=kwargs.get("auth_mode", "app_only"))
             self.host_url = kwargs.get("host_url", "norc.sharepoint.com")
 
-        def to_strategy(self):
-            return DummyStrategy()
+        def to_auth(self):
+            captured["build_called"] = True
+            return object()
 
     monkeypatch.setattr("sharedrive.auth.settings.MicrosoftAuthConfig", DummyConfig)
     monkeypatch.setattr(
@@ -307,19 +299,15 @@ def test_auth_login_sharepoint_uses_settings(monkeypatch: pytest.MonkeyPatch) ->
 def test_auth_login_microsoft_uses_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
-    class DummyStrategy:
-        def build(self):
-            captured["build_called"] = True
-            return "token"
-
     class DummyConfig:
         def __init__(self, **kwargs):
             captured.update(kwargs)
             self.auth_mode = SimpleNamespace(value=kwargs.get("auth_mode", "app_only"))
             self.host_url = kwargs.get("host_url", "norc.sharepoint.com")
 
-        def to_strategy(self):
-            return DummyStrategy()
+        def to_auth(self):
+            captured["build_called"] = True
+            return object()
 
     monkeypatch.setattr("sharedrive.auth.settings.MicrosoftAuthConfig", DummyConfig)
     monkeypatch.setattr(

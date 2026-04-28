@@ -6,11 +6,7 @@ import pytest
 from google.oauth2.credentials import Credentials as UserCredentials
 
 from sharedrive.auth.google import (
-    AdcStrategy,
-    ChainedStrategy,
-    ServiceAccountStrategy,
-    UserOAuthStrategy,
-    default_drive_strategy,
+    GoogleAuth,
     normalize_google_scopes,
 )
 from sharedrive.auth.token_store import JsonTokenStore
@@ -43,19 +39,6 @@ class DummyStore:
         self.saved.append(creds)
 
 
-class FailStrategy:
-    def build(self):
-        raise GoogleAuthError("nope")
-
-
-class SuccessStrategy:
-    def __init__(self, creds):
-        self.creds = creds
-
-    def build(self):
-        return self.creds
-
-
 def test_normalize_google_scopes_supports_none_string_and_sequence() -> None:
     assert normalize_google_scopes(None) == ["https://www.googleapis.com/auth/drive"]
     assert normalize_google_scopes("scope-a") == ["scope-a"]
@@ -65,15 +48,13 @@ def test_normalize_google_scopes_supports_none_string_and_sequence() -> None:
     ]
 
 
-def test_default_drive_strategy_selects_expected_strategy_types() -> None:
-    assert isinstance(default_drive_strategy(), AdcStrategy)
-    assert isinstance(
-        default_drive_strategy(credentials_path="service-account.json"),
-        ServiceAccountStrategy,
-    )
+def test_google_auth_init_stores_credentials() -> None:
+    creds = DummyCreds(valid=True)
+    auth = GoogleAuth(creds)
+    assert auth.credentials is creds
 
 
-def test_adc_strategy_error_mentions_sharedrive_user_oauth(
+def test_google_auth_from_adc_error_mentions_sharedrive_user_oauth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -82,7 +63,18 @@ def test_adc_strategy_error_mentions_sharedrive_user_oauth(
     )
 
     with pytest.raises(GoogleAuthError, match="sharedrive auth login gdrive"):
-        AdcStrategy().build()
+        GoogleAuth.from_adc()
+
+
+def test_google_auth_from_service_account_raises_on_bad_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "sharedrive.auth.google.service_account.Credentials.from_service_account_file",
+        lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError("no file")),
+    )
+    with pytest.raises(GoogleAuthError, match="Failed to load service account"):
+        GoogleAuth.from_service_account("nonexistent.json")
 
 
 def test_json_token_store_round_trip(tmp_path: Path) -> None:
@@ -107,37 +99,39 @@ def test_json_token_store_round_trip(tmp_path: Path) -> None:
     assert loaded.client_id == "client-id"
 
 
-def test_user_oauth_strategy_returns_valid_stored_credentials() -> None:
+def test_google_auth_from_user_oauth_returns_valid_stored_credentials() -> None:
     creds = DummyCreds(valid=True)
     store = DummyStore(creds)
-    strategy = UserOAuthStrategy(
+
+    auth = GoogleAuth.from_user_oauth(
         client_secrets_path="oauth.json",
         scopes=["scope-a"],
         token_store=store,
     )
 
-    assert strategy.build() is creds
+    assert auth.credentials is creds
     assert store.saved == []
 
 
-def test_user_oauth_strategy_refreshes_expired_credentials() -> None:
+def test_google_auth_from_user_oauth_refreshes_expired_credentials() -> None:
     creds = DummyCreds(valid=False, token=None)
     creds.refresh_token = "refresh-token"
     store = DummyStore(creds)
-    strategy = UserOAuthStrategy(
+
+    auth = GoogleAuth.from_user_oauth(
         client_secrets_path="oauth.json",
         scopes=["scope-a"],
         token_store=store,
     )
 
-    result = strategy.build()
-
-    assert result is creds
+    assert auth.credentials is creds
     assert creds.refresh_count == 1
     assert store.saved == [creds]
 
 
-def test_user_oauth_strategy_runs_flow_when_store_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_google_auth_from_user_oauth_runs_flow_when_store_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     issued_creds = DummyCreds(valid=True)
     store = DummyStore()
 
@@ -151,25 +145,29 @@ def test_user_oauth_strategy_runs_flow_when_store_missing(monkeypatch: pytest.Mo
         lambda path, scopes: DummyFlow(),
     )
 
-    strategy = UserOAuthStrategy(
+    auth = GoogleAuth.from_user_oauth(
         client_secrets_path="oauth.json",
         scopes=["scope-a"],
         token_store=store,
     )
 
-    assert strategy.build() is issued_creds
+    assert auth.credentials is issued_creds
     assert store.saved == [issued_creds]
 
 
-def test_chained_strategy_returns_first_successful_credentials() -> None:
-    creds = DummyCreds(valid=True)
-    strategy = ChainedStrategy([FailStrategy(), SuccessStrategy(creds)])
+def test_google_auth_ensure_valid_refreshes_expired_token() -> None:
+    creds = DummyCreds(valid=False, token=None)
+    auth = GoogleAuth(creds)
 
-    assert strategy.build() is creds
+    auth.ensure_valid()
+
+    assert creds.refresh_count == 1
 
 
-def test_chained_strategy_raises_when_all_fail() -> None:
-    strategy = ChainedStrategy([FailStrategy(), FailStrategy()])
+def test_google_auth_ensure_valid_skips_refresh_when_token_valid() -> None:
+    creds = DummyCreds(valid=True, token="good-token")
+    auth = GoogleAuth(creds)
 
-    with pytest.raises(GoogleAuthError):
-        strategy.build()
+    auth.ensure_valid()
+
+    assert creds.refresh_count == 0

@@ -3,13 +3,11 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from sharedrive.auth.microsoft import MicrosoftAuth
 from sharedrive.auth.settings import (
     MicrosoftAuthConfig,
     MicrosoftAuthMode,
-    make_sharepoint_client_from_microsoft_auth,
-    make_sharepoint_client_from_settings,
 )
-from sharedrive.auth.microsoft import AppOnlyStrategy, DelegatedStrategy
 
 
 def _clear_sharepoint_auth_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -35,10 +33,7 @@ def test_sharepoint_auth_config_defaults_to_app_only(monkeypatch: pytest.MonkeyP
         _env_file=None,
     )
 
-    strategy = config.to_strategy()
-
     assert config.auth_mode == MicrosoftAuthMode.APP_ONLY
-    assert isinstance(strategy, AppOnlyStrategy)
 
 
 def test_sharepoint_auth_config_normalizes_scope_string(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -65,79 +60,55 @@ def test_sharepoint_auth_config_requires_secret_for_app_only(monkeypatch: pytest
         )
 
 
-def test_sharepoint_auth_config_builds_delegated_strategy(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sharepoint_auth_config_to_auth_returns_microsoft_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _clear_sharepoint_auth_env(monkeypatch)
+
+    class DummyApp:
+        def acquire_token_for_client(self, scopes):
+            return {"access_token": "app-token"}
+
+    monkeypatch.setattr(
+        "sharedrive.auth.microsoft.msal.ConfidentialClientApplication",
+        lambda **kwargs: DummyApp(),
+    )
+
+    config = MicrosoftAuthConfig(
+        tenant_id="tenant",
+        client_id="client",
+        client_secret="secret",
+        host_url="tenant.sharepoint.com",
+        _env_file=None,
+    )
+    auth = config.to_auth()
+
+    assert isinstance(auth, MicrosoftAuth)
+    assert auth.access_token == "app-token"
+
+
+def test_sharepoint_auth_config_to_auth_delegated(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_sharepoint_auth_env(monkeypatch)
+
+    class DummyApp:
+        def get_accounts(self):
+            return []
+
+        def acquire_token_interactive(self, scopes):
+            return {"access_token": "delegated-token"}
+
+    monkeypatch.setattr(
+        "sharedrive.auth.microsoft.msal.PublicClientApplication",
+        lambda client_id, authority: DummyApp(),
+    )
+
     config = MicrosoftAuthConfig(
         tenant_id="tenant",
         client_id="client",
         auth_mode=MicrosoftAuthMode.DELEGATED,
         _env_file=None,
     )
+    auth = config.to_auth()
 
-    strategy = config.to_strategy()
-
-    assert isinstance(strategy, DelegatedStrategy)
-
-
-def test_make_sharepoint_client_from_settings_uses_strategy(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_sharepoint_auth_env(monkeypatch)
-    captured: dict[str, object] = {}
-
-    class DummyClient:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr("sharedrive.clients.sharepoint.SharepointClient", DummyClient)
-
-    config = MicrosoftAuthConfig(
-        tenant_id="tenant",
-        client_id="client",
-        client_secret="secret",
-        host_url="tenant.sharepoint.com",
-        _env_file=None,
-    )
-    make_sharepoint_client_from_microsoft_auth(config)
-
-    assert str(captured["host_url"]) == "tenant.sharepoint.com"
-    assert isinstance(captured["token_strategy"], AppOnlyStrategy)
-
-
-def test_make_sharepoint_client_from_settings_is_compatibility_alias(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _clear_sharepoint_auth_env(monkeypatch)
-    captured: dict[str, object] = {}
-
-    class DummyClient:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr("sharedrive.clients.sharepoint.SharepointClient", DummyClient)
-
-    config = MicrosoftAuthConfig(
-        tenant_id="tenant",
-        client_id="client",
-        client_secret="secret",
-        host_url="tenant.sharepoint.com",
-        _env_file=None,
-    )
-    make_sharepoint_client_from_settings(config)
-
-    assert str(captured["host_url"]) == "tenant.sharepoint.com"
-    assert isinstance(captured["token_strategy"], AppOnlyStrategy)
-
-
-def test_sharepoint_auth_config_aliases_microsoft_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_sharepoint_auth_env(monkeypatch)
-
-    from sharedrive.auth.settings import SharepointAuthConfig, SharepointAuthMode
-
-    config = SharepointAuthConfig(
-        tenant_id="tenant",
-        client_id="client",
-        client_secret="secret",
-        _env_file=None,
-    )
-
-    assert isinstance(config, MicrosoftAuthConfig)
-    assert SharepointAuthMode is MicrosoftAuthMode
+    assert isinstance(auth, MicrosoftAuth)
+    assert auth.access_token == "delegated-token"

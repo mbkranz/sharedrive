@@ -3,12 +3,10 @@ from __future__ import annotations
 import pytest
 
 from sharedrive.auth.microsoft import (
-    AppOnlyStrategy,
     DEFAULT_MICROSOFT_GRAPH_SCOPES,
-    DelegatedStrategy,
+    MicrosoftAuth,
     normalize_microsoft_scopes,
 )
-from sharedrive.auth.sharepoint import normalize_sharepoint_scopes
 from sharedrive.exceptions import GraphAuthError
 
 
@@ -18,11 +16,12 @@ def test_normalize_microsoft_scopes_supports_none_string_and_sequence() -> None:
     assert normalize_microsoft_scopes(["scope-a", "scope-b"]) == ["scope-a", "scope-b"]
 
 
-def test_sharepoint_scope_normalizer_is_compatibility_alias() -> None:
-    assert normalize_sharepoint_scopes("scope-a, scope-b") == ["scope-a", "scope-b"]
+def test_microsoft_auth_init_stores_token() -> None:
+    auth = MicrosoftAuth("my-token")
+    assert auth.access_token == "my-token"
 
 
-def test_delegated_strategy_uses_interactive_flow_when_no_cached_account(
+def test_microsoft_auth_from_delegated_uses_interactive_flow_when_no_cached_account(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, object] = {}
@@ -40,13 +39,15 @@ def test_delegated_strategy_uses_interactive_flow_when_no_cached_account(
         lambda client_id, authority: DummyApp(),
     )
 
-    strategy = DelegatedStrategy(tenant_id="tenant", client_id="client", scopes=["scope-a"])
+    auth = MicrosoftAuth.from_delegated(tenant_id="tenant", client_id="client", scopes=["scope-a"])
 
-    assert strategy.build() == "delegated-token"
+    assert auth.access_token == "delegated-token"
     assert captured["scopes"] == ["scope-a"]
 
 
-def test_app_only_strategy_uses_confidential_client(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_microsoft_auth_from_app_only_uses_confidential_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, object] = {}
 
     class DummyApp:
@@ -59,19 +60,21 @@ def test_app_only_strategy_uses_confidential_client(monkeypatch: pytest.MonkeyPa
         lambda **kwargs: DummyApp(),
     )
 
-    strategy = AppOnlyStrategy(
+    auth = MicrosoftAuth.from_app_only(
         tenant_id="tenant",
         client_id="client",
         client_secret="secret",
         scopes=["scope-a"],
     )
 
-    assert strategy.build() == "app-token"
+    assert auth.access_token == "app-token"
     assert captured["scopes"] == ["scope-a"]
 
 
-def test_app_only_strategy_requires_secret() -> None:
-    strategy = AppOnlyStrategy(tenant_id="tenant", client_id="client", client_secret=None)
-
+def test_microsoft_auth_from_app_only_requires_secret() -> None:
     with pytest.raises(GraphAuthError):
-        strategy.build()
+        MicrosoftAuth.from_app_only(
+            tenant_id="tenant",
+            client_id="client",
+            client_secret="",
+        )

@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 import google.auth
 from google.auth.credentials import Credentials
@@ -10,8 +9,10 @@ from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-from sharedrive.auth.base import CredentialStrategy, TokenStore
 from sharedrive.exceptions import GoogleAuthError
+
+if TYPE_CHECKING:
+    from sharedrive.auth.token_store import TokenStore
 
 DEFAULT_DRIVE_SCOPES = ("https://www.googleapis.com/auth/drive",)
 DEFAULT_DRIVE_READONLY_SCOPES = (
@@ -32,19 +33,45 @@ def normalize_google_scopes(
     return normalized or list(default)
 
 
-@dataclass(slots=True)
-class AdcStrategy(CredentialStrategy):
-    scopes: Sequence[str] | str | None = None
+class GoogleAuth:
+    """Google credential holder with named constructors for each auth mode.
 
-    def build(self) -> Credentials:
-        normalized_scopes = normalize_google_scopes(self.scopes)
+    The primary entry points are the ``from_*`` class methods. The
+    ``__init__`` constructor accepts a raw :class:`~google.auth.credentials.Credentials`
+    object and acts as a low-level escape hatch (e.g. for tests).
+
+    Usage::
+
+        # Application Default Credentials (default for most deployments)
+        auth = GoogleAuth.from_adc()
+
+        # Service account JSON key file
+        auth = GoogleAuth.from_service_account("path/to/key.json")
+
+        # Interactive OAuth (installed-app flow)
+        auth = GoogleAuth.from_user_oauth("path/to/client_secrets.json")
+
+        # Read mode + scopes from environment variables / .env file
+        auth = GoogleAuth.from_settings()
+    """
+
+    def __init__(self, credentials: Credentials) -> None:
+        """Low-level escape hatch: supply raw credentials directly."""
+        self._creds = credentials
+
+    # ------------------------------------------------------------------
+    # Named constructors
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_adc(cls, scopes: Sequence[str] | str | None = None) -> "GoogleAuth":
+        """Build from Application Default Credentials (``gcloud auth application-default login``)."""
+        normalized_scopes = normalize_google_scopes(scopes)
         try:
             creds, _project = google.auth.default(scopes=normalized_scopes)
-            if getattr(creds, "requires_scopes", False) and hasattr(
-                creds, "with_scopes"
-            ):
+            if getattr(creds, "requires_scopes", False) and hasattr(creds, "with_scopes"):
                 creds = creds.with_scopes(normalized_scopes)
-            return creds
+            return cls(creds)
         except Exception as exc:
             raise GoogleAuthError(
                 "Failed to load Application Default Credentials: "
@@ -53,97 +80,107 @@ class AdcStrategy(CredentialStrategy):
                 "and run 'sharedrive auth login gdrive'."
             ) from exc
 
-
-@dataclass(slots=True)
-class ServiceAccountStrategy(CredentialStrategy):
-    credentials_path: str | Path
-    scopes: Sequence[str] | str | None = None
-
-    def build(self) -> Credentials:
-        normalized_scopes = normalize_google_scopes(self.scopes)
+    @classmethod
+    def from_service_account(
+        cls,
+        credentials_path: str | Path,
+        scopes: Sequence[str] | str | None = None,
+    ) -> "GoogleAuth":
+        """Build from a service account JSON key file."""
+        normalized_scopes = normalize_google_scopes(scopes)
         try:
-            return service_account.Credentials.from_service_account_file(
-                str(self.credentials_path),
+            creds = service_account.Credentials.from_service_account_file(
+                str(credentials_path),
                 scopes=normalized_scopes,
             )
+            return cls(creds)
         except Exception as exc:
             raise GoogleAuthError(
-                f"Failed to load service account credentials from {self.credentials_path}: {exc}"
+                f"Failed to load service account credentials from {credentials_path}: {exc}"
             ) from exc
 
+    @classmethod
+    def from_user_oauth(
+        cls,
+        client_secrets_path: str | Path,
+        scopes: Sequence[str] | str | None = None,
+        token_store: TokenStore | None = None,
+        use_local_server: bool = True,
+    ) -> "GoogleAuth":
+        """Build via the OAuth installed-app flow.
 
-@dataclass(slots=True)
-class UserOAuthStrategy(CredentialStrategy):
-    client_secrets_path: str | Path
-    scopes: Sequence[str] | str | None = None
-    token_store: TokenStore | None = None
-    use_local_server: bool = True
-
-    def build(self) -> Credentials:
-        normalized_scopes = normalize_google_scopes(self.scopes)
-        creds = self.token_store.load() if self.token_store else None
+        If *token_store* is supplied, a cached token is loaded first and the
+        flow is only triggered when no valid (or refreshable) token exists.
+        """
+        normalized_scopes = normalize_google_scopes(scopes)
+        creds = token_store.load() if token_store else None
 
         try:
             if creds and creds.valid:
-                return creds
+                return cls(creds)
 
             if creds and getattr(creds, "expired", False):
                 creds.refresh(Request())
-                if self.token_store:
-                    self.token_store.save(creds)
-                return creds
+                if token_store:
+                    token_store.save(creds)
+                return cls(creds)
 
             flow = InstalledAppFlow.from_client_secrets_file(
-                str(self.client_secrets_path),
+                str(client_secrets_path),
                 normalized_scopes,
             )
-            if self.use_local_server:
-                creds = flow.run_local_server(port=0)
-            else:
-                creds = flow.run_console()
+            creds = flow.run_local_server(port=0) if use_local_server else flow.run_console()
 
-            if self.token_store:
-                self.token_store.save(creds)
-            return creds
+            if token_store:
+                token_store.save(creds)
+            return cls(creds)
         except Exception as exc:
             raise GoogleAuthError(f"Failed during user OAuth flow: {exc}") from exc
 
+    @classmethod
+    def from_settings(cls, config: object | None = None) -> "GoogleAuth":
+        """Build from environment variables or a :class:`~sharedrive.auth.settings.GoogleAuthConfig`.
 
-@dataclass(slots=True)
-class ChainedStrategy(CredentialStrategy):
-    strategies: Sequence[CredentialStrategy]
+        When *config* is ``None`` the settings are read from the environment
+        (and any ``.env`` file in the working directory).
+        """
+        from sharedrive.auth.settings import GoogleAuthConfig
 
-    def build(self) -> Credentials:
-        errors: list[str] = []
-        for strategy in self.strategies:
-            try:
-                return strategy.build()
-            except Exception as exc:
-                errors.append(f"{strategy.__class__.__name__}: {exc}")
+        resolved: GoogleAuthConfig = config if config is not None else GoogleAuthConfig()  # type: ignore[assignment]
+        return resolved.to_auth()
 
-        details = "; ".join(errors) if errors else "No strategies were provided."
-        raise GoogleAuthError(f"All credential strategies failed. Details: {details}")
+    # ------------------------------------------------------------------
+    # Runtime helpers
+    # ------------------------------------------------------------------
 
+    @property
+    def credentials(self) -> Credentials:
+        """The underlying :class:`~google.auth.credentials.Credentials` object."""
+        return self._creds
 
-def default_drive_strategy(
-    credentials_path: str | Path | None = None,
-    scopes: Sequence[str] | str | None = None,
-) -> CredentialStrategy:
-    if credentials_path:
-        return ServiceAccountStrategy(
-            credentials_path=credentials_path,
-            scopes=normalize_google_scopes(scopes),
-        )
-    return AdcStrategy(scopes=normalize_google_scopes(scopes))
+    def ensure_valid(self) -> None:
+        """Refresh the credential token if it has expired.
+
+        Raises :class:`~sharedrive.exceptions.GoogleAuthError` when the
+        credentials cannot be refreshed.
+        """
+        if self._creds.valid and self._creds.token:
+            return
+
+        try:
+            self._creds.refresh(Request())
+        except Exception as exc:
+            raise GoogleAuthError(
+                f"Failed to refresh Google credentials: {exc}"
+            ) from exc
+
+        if not self._creds.valid or not self._creds.token:
+            raise GoogleAuthError("Credentials are missing a valid access token.")
 
 
 __all__ = [
-    "AdcStrategy",
-    "ChainedStrategy",
     "DEFAULT_DRIVE_READONLY_SCOPES",
     "DEFAULT_DRIVE_SCOPES",
-    "ServiceAccountStrategy",
-    "UserOAuthStrategy",
-    "default_drive_strategy",
+    "GoogleAuth",
     "normalize_google_scopes",
 ]

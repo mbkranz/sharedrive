@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 from google.auth.credentials import Credentials
 from google.oauth2.credentials import Credentials as UserCredentials
 
 from sharedrive.exceptions import GoogleAuthError
+
+
+@runtime_checkable
+class TokenStore(Protocol):
+    def load(self) -> Credentials | None:
+        ...
+
+    def save(self, creds: Credentials) -> None:
+        ...
 
 
 class JsonTokenStore:
@@ -35,4 +45,4 @@ class JsonTokenStore:
         self.path.write_text(creds.to_json(), encoding="utf-8")
 
 
-__all__ = ["JsonTokenStore"]
+__all__ = ["JsonTokenStore", "TokenStore"]

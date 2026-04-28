@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from sharedrive.auth.google import GoogleAuth
 from sharedrive.clients.googledrive import FOLDER_MIME, GoogleBaseClient, GoogleDriveClient
 from sharedrive.exceptions import GoogleDriveError
 
@@ -18,16 +19,6 @@ class DummyCreds:
         self.refresh_calls += 1
         self.valid = True
         self.token = "refreshed-token"
-
-
-class DummyStrategy:
-    def __init__(self, creds) -> None:
-        self.creds = creds
-        self.build_calls = 0
-
-    def build(self):
-        self.build_calls += 1
-        return self.creds
 
 
 class DummyResponse:
@@ -68,28 +59,22 @@ class DummyGoogleClient(GoogleBaseClient):
     pass
 
 
-def test_client_uses_explicit_strategy() -> None:
+def test_client_uses_explicit_auth() -> None:
     creds = DummyCreds(valid=True)
-    strategy = DummyStrategy(creds)
+    auth = GoogleAuth(creds)
 
-    client = GoogleDriveClient(credential_strategy=strategy)
+    client = GoogleDriveClient(auth=auth)
 
-    assert client._creds is creds
-    assert strategy.build_calls == 1
+    assert client._auth is auth
+    assert client._auth.credentials is creds
 
 
-def test_client_legacy_constructor_uses_default_strategy(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_client_uses_credentials_escape_hatch() -> None:
     creds = DummyCreds(valid=True)
-    strategy = DummyStrategy(creds)
 
-    monkeypatch.setattr("sharedrive.clients.googledrive.default_drive_strategy", lambda **kwargs: strategy)
+    client = GoogleDriveClient(credentials=creds)
 
-    client = GoogleDriveClient(credentials_path="service-account.json", scope=["scope-a"])
-
-    assert client._creds is creds
-    assert strategy.build_calls == 1
+    assert client._auth.credentials is creds
 
 
 def test_request_refreshes_credentials_before_call() -> None:
@@ -151,9 +136,16 @@ def test_extract_id_from_url_supports_spreadsheets() -> None:
     )
 
 
-def test_google_base_client_requires_credentials_or_strategy() -> None:
+def test_google_base_client_requires_auth_or_credentials() -> None:
     with pytest.raises(ValueError):
         DummyGoogleClient()
+
+
+def test_google_base_client_rejects_both_auth_and_credentials() -> None:
+    creds = DummyCreds(valid=True)
+    auth = GoogleAuth(creds)
+    with pytest.raises(ValueError):
+        DummyGoogleClient(auth=auth, credentials=creds)
 
 
 def test_google_base_client_uses_generic_google_api_error() -> None:

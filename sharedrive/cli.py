@@ -159,9 +159,10 @@ def _load_env_file(env_file: Optional[Path]) -> None:
 
 
 def _make_sharepoint_client() -> SharepointClient:
-    from sharedrive.auth.settings import make_sharepoint_client_from_microsoft_auth
+    from sharedrive.auth.settings import MicrosoftAuthConfig
 
-    return make_sharepoint_client_from_microsoft_auth()
+    config = MicrosoftAuthConfig()
+    return SharepointClient(auth=config.to_auth(), host_url=config.host_url)
 
 
 def _run_microsoft_login(
@@ -183,7 +184,7 @@ def _run_microsoft_login(
         config_kwargs["scopes"] = scope
 
     config = MicrosoftAuthConfig(**config_kwargs)
-    config.to_strategy().build()
+    config.to_auth()
     typer.echo(
         f"Microsoft login succeeded using {config.auth_mode.value} mode for {config.host_url}"
     )
@@ -192,30 +193,31 @@ def _run_microsoft_login(
 def _make_gdrive_client(
     credentials_path: Optional[str], scope: Optional[list[str]] = None
 ) -> GoogleDriveClient:
-    from sharedrive.auth.google import default_drive_strategy
+    from sharedrive.auth.google import GoogleAuth
     from sharedrive.clients.googledrive import GoogleDriveClient
 
     if not credentials_path and _has_google_settings_configured():
         return _make_gdrive_client_from_settings(scope)
 
-    path = credentials_path or os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
-    return GoogleDriveClient(
-        credential_strategy=default_drive_strategy(credentials_path=path, scopes=scope)
-    )
+    if credentials_path:
+        auth = GoogleAuth.from_service_account(credentials_path, scopes=scope)
+    else:
+        path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+        auth = GoogleAuth.from_service_account(path, scopes=scope) if path else GoogleAuth.from_adc(scopes=scope)
+    return GoogleDriveClient(auth=auth)
 
 
 def _make_gdrive_client_from_settings(
     scope: Optional[list[str]] = None,
 ) -> GoogleDriveClient:
-    from sharedrive.auth.settings import (
-        GoogleAuthConfig,
-        make_google_drive_client_from_settings,
-    )
+    from sharedrive.auth.google import GoogleAuth
+    from sharedrive.auth.settings import GoogleAuthConfig
+    from sharedrive.clients.googledrive import GoogleDriveClient
 
     if scope is None:
-        return make_google_drive_client_from_settings()
+        return GoogleDriveClient(auth=GoogleAuth.from_settings())
 
-    return make_google_drive_client_from_settings(GoogleAuthConfig(scopes=scope))
+    return GoogleDriveClient(auth=GoogleAuth.from_settings(GoogleAuthConfig(scopes=scope)))
 
 
 def _has_google_settings_configured() -> bool:
@@ -1116,7 +1118,7 @@ def auth_login_gdrive(
         config_kwargs["scopes"] = scope
 
     config = GoogleAuthConfig(**config_kwargs)
-    config.to_strategy().build()
+    config.to_auth()
 
     if config.oauth_token_path is not None:
         typer.echo(

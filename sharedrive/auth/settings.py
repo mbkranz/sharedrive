@@ -8,17 +8,13 @@ from dotenv import find_dotenv
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from sharedrive.auth.base import CredentialStrategy
 from sharedrive.auth.google import (
     DEFAULT_DRIVE_SCOPES,
-    AdcStrategy,
-    ServiceAccountStrategy,
-    UserOAuthStrategy,
+    GoogleAuth,
 )
 from sharedrive.auth.microsoft import (
-    AppOnlyStrategy,
     DEFAULT_MICROSOFT_GRAPH_SCOPES,
-    DelegatedStrategy,
+    MicrosoftAuth,
     normalize_microsoft_scopes,
 )
 from sharedrive.auth.token_store import JsonTokenStore
@@ -101,12 +97,13 @@ class GoogleAuthConfig(BaseSettings):
 
         return self
 
-    def to_strategy(self) -> CredentialStrategy:
+    def to_auth(self) -> GoogleAuth:
+        """Return a :class:`~sharedrive.auth.google.GoogleAuth` for this configuration."""
         if self.auth_mode == GoogleAuthMode.ADC:
-            return AdcStrategy(scopes=self.scopes)
+            return GoogleAuth.from_adc(scopes=self.scopes)
 
         if self.auth_mode == GoogleAuthMode.SERVICE_ACCOUNT:
-            return ServiceAccountStrategy(
+            return GoogleAuth.from_service_account(
                 credentials_path=self.service_account_credentials,
                 scopes=self.scopes,
             )
@@ -116,7 +113,7 @@ class GoogleAuthConfig(BaseSettings):
             if self.oauth_token_path is not None
             else None
         )
-        return UserOAuthStrategy(
+        return GoogleAuth.from_user_oauth(
             client_secrets_path=self.oauth_client_secrets,
             scopes=self.scopes,
             token_store=token_store,
@@ -192,15 +189,16 @@ class MicrosoftAuthConfig(BaseSettings):
 
         return self
 
-    def to_strategy(self) -> AppOnlyStrategy | DelegatedStrategy:
+    def to_auth(self) -> MicrosoftAuth:
+        """Return a :class:`~sharedrive.auth.microsoft.MicrosoftAuth` for this configuration."""
         if self.auth_mode == MicrosoftAuthMode.DELEGATED:
-            return DelegatedStrategy(
+            return MicrosoftAuth.from_delegated(
                 tenant_id=self.tenant_id,
                 client_id=self.client_id,
                 scopes=self.scopes,
             )
 
-        return AppOnlyStrategy(
+        return MicrosoftAuth.from_app_only(
             tenant_id=self.tenant_id,
             client_id=self.client_id,
             client_secret=self.client_secret.get_secret_value()
@@ -210,42 +208,9 @@ class MicrosoftAuthConfig(BaseSettings):
         )
 
 
-SharepointAuthMode = MicrosoftAuthMode
-SharepointAuthConfig = MicrosoftAuthConfig
-
-
-def make_google_drive_client_from_settings(
-    config: GoogleAuthConfig | None = None,
-):
-    from sharedrive.clients.googledrive import GoogleDriveClient
-
-    resolved_config = config or GoogleAuthConfig()
-    return GoogleDriveClient(credential_strategy=resolved_config.to_strategy())
-
-
-def make_sharepoint_client_from_microsoft_auth(
-    config: MicrosoftAuthConfig | None = None,
-):
-    from sharedrive.clients.sharepoint import SharepointClient
-
-    resolved_config = config or MicrosoftAuthConfig()
-    return SharepointClient(
-        host_url=resolved_config.host_url,
-        token_strategy=resolved_config.to_strategy(),
-    )
-
-
-make_sharepoint_client_from_settings = make_sharepoint_client_from_microsoft_auth
-
-
 __all__ = [
     "GoogleAuthConfig",
     "GoogleAuthMode",
     "MicrosoftAuthConfig",
     "MicrosoftAuthMode",
-    "SharepointAuthConfig",
-    "SharepointAuthMode",
-    "make_google_drive_client_from_settings",
-    "make_sharepoint_client_from_microsoft_auth",
-    "make_sharepoint_client_from_settings",
 ]

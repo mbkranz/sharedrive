@@ -13,7 +13,7 @@ from sharedrive.exceptions import GraphApiDriveError, GraphApiSiteError
 from sharedrive.item import DriveFile, DriveFolder, DriveItem
 
 if TYPE_CHECKING:
-    from sharedrive.auth.microsoft import MicrosoftTokenStrategy
+    from sharedrive.auth.microsoft import MicrosoftAuth
 
 
 class SharepointClient:
@@ -25,52 +25,24 @@ class SharepointClient:
 
     def __init__(
         self,
-        tenant_id=None,
-        client_id=None,
-        client_secret=None,
-        host_url="norc.sharepoint.com",
-        scope=None,
-        user_delegated_access=False,
+        auth: "MicrosoftAuth | None" = None,
+        host_url: str = "norc.sharepoint.com",
         *,
-        token_strategy: MicrosoftTokenStrategy | None = None,
         access_token: str | None = None,
     ):
-
         self.host_url = host_url or "norc.sharepoint.com"
-        self.tenant_id = tenant_id
-        self.scope = scope or ["https://graph.microsoft.com/.default"]
-        self.client_id = client_id
-        self.client_secret = client_secret
 
-        if access_token is not None and token_strategy is not None:
-            raise ValueError("Provide either access_token or token_strategy, not both.")
+        if auth is not None and access_token is not None:
+            raise ValueError("Provide either auth or access_token, not both.")
 
-        if access_token is None:
-            if token_strategy is not None:
-                access_token = token_strategy.build()
-            else:
-                from sharedrive.auth.microsoft import AppOnlyStrategy, DelegatedStrategy
-
-                if not tenant_id or not client_id:
-                    raise ValueError(
-                        "SharepointClient requires either token_strategy/access_token or tenant_id/client_id."
-                    )
-
-                strategy = (
-                    DelegatedStrategy(
-                        tenant_id=tenant_id, client_id=client_id, scopes=self.scope
-                    )
-                    if user_delegated_access
-                    else AppOnlyStrategy(
-                        tenant_id=tenant_id,
-                        client_id=client_id,
-                        client_secret=client_secret,
-                        scopes=self.scope,
-                    )
-                )
-                access_token = strategy.build()
-
-        self.access_token = access_token
+        if access_token is not None:
+            self.access_token = access_token
+        elif auth is not None:
+            self.access_token = auth.access_token
+        else:
+            raise ValueError(
+                "SharepointClient requires either auth or access_token."
+            )
 
         self.auth_header = {"Authorization": f"Bearer {self.access_token}"}
 

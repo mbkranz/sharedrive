@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from sharedrive.auth.microsoft import MicrosoftAuth
 from sharedrive.clients.sharepoint import SharepointClient
 from sharedrive.exceptions import GraphApiDriveError
 
@@ -28,6 +29,25 @@ class DummyResponse:
 
     def json(self) -> dict[str, str]:
         return {"status": "ok"}
+
+
+def test_sharepoint_client_accepts_microsoft_auth() -> None:
+    auth = MicrosoftAuth("my-bearer-token")
+    client = SharepointClient(auth=auth, host_url="contoso.sharepoint.com")
+
+    assert client.access_token == "my-bearer-token"
+    assert client.host_url == "contoso.sharepoint.com"
+
+
+def test_sharepoint_client_rejects_both_auth_and_access_token() -> None:
+    auth = MicrosoftAuth("token")
+    with pytest.raises(ValueError, match="either auth or access_token"):
+        SharepointClient(auth=auth, access_token="token")
+
+
+def test_sharepoint_client_requires_auth_or_access_token() -> None:
+    with pytest.raises(ValueError):
+        SharepointClient()
 
 
 def test_download_content_requires_identifiers_or_download_url() -> None:

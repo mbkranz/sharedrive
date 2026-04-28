@@ -4,16 +4,14 @@ import json
 import re
 from enum import Enum
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, Literal, Optional, Sequence, Union
+from typing import Any, Dict, Literal, Optional, Union
 
 import requests
 from google.auth.credentials import Credentials
-from google.auth.transport.requests import Request
 from sharedrive.item import DriveFile, DriveFolder, DriveItem
 
-from sharedrive.auth.base import CredentialStrategy
-from sharedrive.auth.google import default_drive_strategy, normalize_google_scopes
-from sharedrive.exceptions import GoogleApiError, GoogleAuthError, GoogleDriveError
+from sharedrive.auth.google import GoogleAuth
+from sharedrive.exceptions import GoogleApiError, GoogleDriveError
 
 
 class GoogleBaseClient:
@@ -23,8 +21,8 @@ class GoogleBaseClient:
 
     def __init__(
         self,
+        auth: GoogleAuth | None = None,
         *,
-        credential_strategy: CredentialStrategy | None = None,
         credentials: Credentials | None = None,
         session: requests.Session | None = None,
         timeout: int = 120,
@@ -32,47 +30,22 @@ class GoogleBaseClient:
         self.session = session or requests.Session()
         self.timeout = timeout
 
-        if credentials is not None and credential_strategy is not None:
-            raise ValueError(
-                "Provide either credentials or credential_strategy, not both."
-            )
-
-        self._credential_strategy = credential_strategy
+        if auth is not None and credentials is not None:
+            raise ValueError("Provide either auth or credentials, not both.")
 
         if credentials is not None:
-            self._creds = credentials
-        elif self._credential_strategy is not None:
-            self._creds = self._credential_strategy.build()
+            self._auth = GoogleAuth(credentials)
+        elif auth is not None:
+            self._auth = auth
         else:
             raise ValueError(
-                "GoogleBaseClient requires either credentials or credential_strategy."
+                "GoogleBaseClient requires either auth or credentials."
             )
-
-    def _ensure_valid_credentials(self) -> None:
-        if self._creds.valid and self._creds.token:
-            return
-
-        try:
-            self._creds.refresh(Request())
-        except Exception as refresh_error:
-            if self._credential_strategy is None:
-                raise GoogleAuthError(
-                    f"Failed to refresh Google credentials: {refresh_error}"
-                ) from refresh_error
-            try:
-                self._creds = self._credential_strategy.build()
-            except Exception as build_error:
-                raise GoogleAuthError(
-                    f"Failed to obtain valid Google credentials: {build_error}"
-                ) from build_error
-
-        if not self._creds.valid or not self._creds.token:
-            raise GoogleAuthError("Credentials are missing a valid access token.")
 
     @property
     def _hdrs(self) -> dict[str, str]:
-        self._ensure_valid_credentials()
-        return {"Authorization": f"Bearer {self._creds.token}"}
+        self._auth.ensure_valid()
+        return {"Authorization": f"Bearer {self._auth.credentials.token}"}
 
     def _request(self, method: str, url: str, **kwargs) -> requests.Response:
         headers = kwargs.pop("headers", {})
@@ -170,34 +143,31 @@ class GoogleDriveClient(GoogleBaseClient):
     Minimal Google Drive client (ID-first) with read/write and full export coverage for Google-native files.
     Uses ADC (google-auth). Works with My Drive and Shared Drives.
 
-    For local dev with a service account, use:
-        1. gcloud auth application-default login --impersonate-service-account <service-account-email>
-        2. Or set the GOOGLE_APPLICATION_CREDENTIALS env var to point to a service account JSON key file.
+    Instantiate via a :class:`~sharedrive.auth.google.GoogleAuth` object::
+
+        auth = GoogleAuth.from_adc()
+        client = GoogleDriveClient(auth)
+
+        # Or using environment-variable config:
+        client = GoogleDriveClient(GoogleAuth.from_settings())
+
+    The *credentials* keyword argument is a low-level escape hatch kept for
+    tests only; prefer :class:`~sharedrive.auth.google.GoogleAuth` in all
+    production code.
     """
 
     api_error_cls = GoogleDriveError
 
     def __init__(
         self,
-        credentials_path: str | None = None,
-        scope: Sequence[str] | str | None = None,
+        auth: GoogleAuth | None = None,
         *,
-        credential_strategy: CredentialStrategy | None = None,
         credentials: Credentials | None = None,
         session: requests.Session | None = None,
         timeout: int = 120,
     ):
-        self.scopes = normalize_google_scopes(scope)
-        self._credentials_path = credentials_path
-        resolved_strategy = credential_strategy
-        if credentials is None and resolved_strategy is None:
-            resolved_strategy = default_drive_strategy(
-                credentials_path=credentials_path,
-                scopes=self.scopes,
-            )
-
         super().__init__(
-            credential_strategy=resolved_strategy,
+            auth=auth,
             credentials=credentials,
             session=session,
             timeout=timeout,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Sequence
 
 import msal
@@ -31,55 +30,99 @@ def _extract_access_token(result: dict[str, object]) -> str:
     raise GraphAuthError(f"Token error: {result.get('error_description')}")
 
 
-@dataclass(slots=True)
-class MicrosoftTokenStrategy:
-    tenant_id: str
-    client_id: str
-    scopes: Sequence[str] | str | None = None
+class MicrosoftAuth:
+    """Microsoft access-token holder with named constructors for each auth mode.
 
-    @property
-    def normalized_scopes(self) -> list[str]:
-        return normalize_microsoft_scopes(self.scopes)
+    The primary entry points are the ``from_*`` class methods. The
+    ``__init__`` constructor accepts a raw access token string and acts as a
+    low-level escape hatch (e.g. for tests).
 
+    Usage::
 
-@dataclass(slots=True)
-class DelegatedStrategy(MicrosoftTokenStrategy):
-    def build(self) -> str:
-        authority = f"https://login.microsoftonline.com/{self.tenant_id}"
-        app = msal.PublicClientApplication(self.client_id, authority=authority)
-        accounts = app.get_accounts()
-        if accounts:
-            result = app.acquire_token_silent(self.normalized_scopes, account=accounts[0])
-            if result and "access_token" in result:
-                return _extract_access_token(result)
-        result = app.acquire_token_interactive(scopes=self.normalized_scopes)
-        return _extract_access_token(result)
+        # App-only (client credentials) – most common for server-side automation
+        auth = MicrosoftAuth.from_app_only(tenant_id, client_id, client_secret)
 
+        # Delegated (interactive browser login)
+        auth = MicrosoftAuth.from_delegated(tenant_id, client_id)
 
-@dataclass(slots=True)
-class AppOnlyStrategy(MicrosoftTokenStrategy):
-    client_secret: str | None = None
+        # Read mode + credentials from environment variables / .env file
+        auth = MicrosoftAuth.from_settings()
+    """
 
-    def build(self) -> str:
-        if not self.client_secret:
+    def __init__(self, access_token: str) -> None:
+        """Low-level escape hatch: supply a raw access token directly."""
+        self._access_token = access_token
+
+    # ------------------------------------------------------------------
+    # Named constructors
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_app_only(
+        cls,
+        tenant_id: str,
+        client_id: str,
+        client_secret: str,
+        scopes: Sequence[str] | str | None = None,
+    ) -> "MicrosoftAuth":
+        """Build using client-credential (app-only) flow via MSAL."""
+        if not client_secret:
             raise GraphAuthError(
-                "AZURE_CLIENT_SECRET is required for Microsoft app_only mode."
+                "client_secret is required for Microsoft app_only mode."
             )
-
-        authority = f"https://login.microsoftonline.com/{self.tenant_id}"
+        normalized_scopes = normalize_microsoft_scopes(scopes)
+        authority = f"https://login.microsoftonline.com/{tenant_id}"
         app = msal.ConfidentialClientApplication(
-            client_id=self.client_id,
-            client_credential=self.client_secret,
+            client_id=client_id,
+            client_credential=client_secret,
             authority=authority,
         )
-        result = app.acquire_token_for_client(scopes=self.normalized_scopes)
-        return _extract_access_token(result)
+        result = app.acquire_token_for_client(scopes=normalized_scopes)
+        return cls(_extract_access_token(result))
+
+    @classmethod
+    def from_delegated(
+        cls,
+        tenant_id: str,
+        client_id: str,
+        scopes: Sequence[str] | str | None = None,
+    ) -> "MicrosoftAuth":
+        """Build using interactive delegated (user) flow via MSAL."""
+        normalized_scopes = normalize_microsoft_scopes(scopes)
+        authority = f"https://login.microsoftonline.com/{tenant_id}"
+        app = msal.PublicClientApplication(client_id, authority=authority)
+        accounts = app.get_accounts()
+        if accounts:
+            result = app.acquire_token_silent(normalized_scopes, account=accounts[0])
+            if result and "access_token" in result:
+                return cls(_extract_access_token(result))
+        result = app.acquire_token_interactive(scopes=normalized_scopes)
+        return cls(_extract_access_token(result))
+
+    @classmethod
+    def from_settings(cls, config: object | None = None) -> "MicrosoftAuth":
+        """Build from environment variables or a :class:`~sharedrive.auth.settings.MicrosoftAuthConfig`.
+
+        When *config* is ``None`` the settings are read from the environment
+        (and any ``.env`` file in the working directory).
+        """
+        from sharedrive.auth.settings import MicrosoftAuthConfig
+
+        resolved: MicrosoftAuthConfig = config if config is not None else MicrosoftAuthConfig()  # type: ignore[assignment]
+        return resolved.to_auth()
+
+    # ------------------------------------------------------------------
+    # Runtime helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def access_token(self) -> str:
+        """The raw Bearer access token string."""
+        return self._access_token
 
 
 __all__ = [
-    "AppOnlyStrategy",
     "DEFAULT_MICROSOFT_GRAPH_SCOPES",
-    "DelegatedStrategy",
-    "MicrosoftTokenStrategy",
+    "MicrosoftAuth",
     "normalize_microsoft_scopes",
 ]
