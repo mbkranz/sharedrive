@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from sharedrive.actions.download import resource_adapter_name, resource_source_url
-from sharedrive.item import DriveFolder, DriveItem
+from sharedrive.clients.base import DriveFile, DriveFolder, DriveItem
 from sharedrive.models import (
     DriveCatalog,
     DrivePackage,
@@ -106,6 +106,7 @@ def _catalog_name_from_item(item: Any) -> str:
         return Path(item_path).name or item_path
     return "catalog"
 
+
 def _catalog_entry_from_item(item: Any) -> dict[str, Any]:
     entry: dict[str, Any] = {
         "name": _catalog_name_from_item(item),
@@ -147,45 +148,68 @@ def _build_catalog_children(
     return resources, catalogs
 
 
-
 def _fetch_entity(
-    entity,
-    catalog,
+    entity: DrivePackage | DriveCatalog,
+    entity_name: str,
     *,
     dry_run: bool = False,
     log: LogFn | None = print,
 ) -> FetchSummary:
-    """Fetch direct child metadata into a source-backed catalog."""
-    
-    sources = getattr(entity, "sources", [])
-    for source in sources:
-        source_url = resource_source_url(source)
-        if source_url:
-            break
+    """Fetch remote metadata into a package or source-backed catalog.
 
+    For a ``DrivePackage`` the remote folder's full file listing is fetched and
+    stored in ``entity.resources`` (leaf files only).
+
+    For a ``DriveCatalog`` the immediate children (files and sub-folders) are
+    fetched: files become ``resources`` and sub-folders become ``catalogs``.
+    The catalog's ``packages`` list is cleared because they have been
+    superseded by the fetched structure.
+
+    Mutates ``entity`` in-place when ``dry_run`` is ``False``. The caller is
+    responsible for saving the descriptor afterwards.
+    """
+    source_url = resource_source_url(entity)
     if not source_url:
-        raise ValueError(f"Catalog '{catalog_name}' has no identifiable source URL.")
+        raise ValueError(f"Entity '{entity_name}' has no identifiable source URL.")
 
-    resources, catalogs = _build_catalog_children(
-        _fetch_from_adapter(resource=catalog, source_url=source_url)
-    )
-    generated_entries = len(resources) + len(catalogs)
+    drive_item = _fetch_from_adapter(resource=entity, source_url=source_url)
 
-    if log is not None:
-        verb = "Would fetch" if dry_run else "Fetched"
-        log(
-            f"{verb} metadata for {generated_entries} child entr"
-            f"{'y' if generated_entries == 1 else 'ies'} into catalog '{catalog_name}'."
-        )
+    if isinstance(entity, DrivePackage):
+        child_resources = _build_child_resources(drive_item)
+        generated = len(child_resources)
 
-    if not dry_run:
-        catalog.resources = [DriveResource.model_validate(item) for item in resources]
-        catalog.catalogs = [DriveCatalog.model_validate(item) for item in catalogs]
-        catalog.packages = []
+        if log is not None:
+            verb = "Would fetch" if dry_run else "Fetched"
+            log(
+                f"{verb} metadata for {generated} resource(s) into package '{entity_name}'."
+            )
+
+        if not dry_run:
+            entity.resources = [
+                DrivePackage.model_validate(item)
+                if isinstance(item.get("resources"), list)
+                else DriveResource.model_validate(item)
+                for item in child_resources
+            ]
+    else:
+        resources, catalogs = _build_catalog_children(drive_item)
+        generated = len(resources) + len(catalogs)
+
+        if log is not None:
+            verb = "Would fetch" if dry_run else "Fetched"
+            log(
+                f"{verb} metadata for {generated} child entr"
+                f"{'y' if generated == 1 else 'ies'} into catalog '{entity_name}'."
+            )
+
+        if not dry_run:
+            entity.resources = [DriveResource.model_validate(item) for item in resources]
+            entity.catalogs = [DriveCatalog.model_validate(item) for item in catalogs]
+            entity.packages = []
 
     return FetchSummary(
-        resource_name=catalog_name,
-        generated_resources=generated_entries,
+        resource_name=entity_name,
+        generated_resources=generated,
         dry_run=dry_run,
         changed=not dry_run,
     )
@@ -227,7 +251,46 @@ def _collect_fetchable_entities_from_catalog(
     return result
 
 
-def fetch_entity_metadata(
+def fetch_resource_metadata_in_descriptor(
+    descriptor: Path | str,
+    resource_name: str,
+    *,
+    dry_run: bool = False,
+    log: LogFn | None = print,
+) -> FetchSummary:
+    """Fetch remote folder metadata for a single named package in a descriptor.
+
+    Resolves the package identified by ``resource_name`` (dot-path selector),
+    fetches its remote folder's file listing, and stores the results in the
+    package's ``resources`` list.
+
+    The descriptor is saved when ``dry_run`` is ``False``.
+
+    Raises ``ValueError`` if the selector does not resolve to a
+    ``DrivePackage``.
+    """
+    descriptor_path = Path(descriptor)
+    descriptor_model = load_drive_descriptor(descriptor_path)
+
+    resolved = descriptor_model.get_entity_reference(resource_name)
+    if resolved is None:
+        raise ValueError(f"Resource '{resource_name}' was not found in descriptor.")
+    entity_path, entity = resolved
+
+    if not isinstance(entity, DrivePackage):
+        raise ValueError(
+            f"Resource '{entity_path or resource_name}' does not use syncTarget 'resources'. "
+            "Only packages (syncTarget: resources) support fetch."
+        )
+
+    resolved_name = str(entity.name or resource_name).strip() or resource_name
+    summary = _fetch_entity(entity, resolved_name, dry_run=dry_run, log=log)
+    if not dry_run:
+        save_drive_descriptor(descriptor_path, descriptor_model)
+    return summary
+
+
+def fetch_entity_metadata_in_descriptor(
     descriptor: Path | str,
     entity_selector: str | None,
     *,
@@ -241,31 +304,51 @@ def fetch_entity_metadata(
 
     - ``DrivePackage``: fetch the remote folder's file listing into the
       package's nested resources.  Returns a list with one ``FetchSummary``.
-    - ``DriveCatalog``: fetch the catalog's own source when present. Otherwise
-      fetch immediate child packages and source-backed sub-catalogs. With the
-      default ``depth=0`` only the immediate level is considered; increase
-      ``depth`` to recurse into non-source-backed nested catalogs. Returns a
-      flat list of ``FetchSummary``.
+    - ``DriveCatalog`` with a source URL: fetch the catalog's direct children
+      (files → resources, sub-folders → catalogs). Returns a list with one
+      ``FetchSummary``.
+    - ``DriveCatalog`` without its own source: collect and fetch immediate
+      child packages and source-backed sub-catalogs. With the default
+      ``depth=0`` only the immediate level is considered; increase ``depth``
+      to recurse into non-source-backed nested catalogs. Returns a flat list
+      of ``FetchSummary``.
     - Standalone ``DriveResource``: raises ``ValueError`` (leaf resources do
       not have a remote listing to fetch).
+    - Empty / ``None`` selector: uses the root descriptor catalog as the
+      starting point.
 
-    The descriptor is saved once after all updates when ``dry_run`` is ``False``.
+    The descriptor is saved once after all updates when ``dry_run`` is
+    ``False``.
     """
     descriptor_path = Path(descriptor)
     descriptor_model = load_drive_descriptor(descriptor_path)
-    entity_selector = entity_selector or ""
-    entity = descriptor_model.get_entity_reference(entity_selector)
+
+    entity_selector = (entity_selector or "").strip()
+    if not entity_selector:
+        entity_path = ""
+        entity: DriveCatalog | DrivePackage | DriveResource = descriptor_model
+    else:
+        resolved = descriptor_model.get_entity_reference(entity_selector)
+        if resolved is None:
+            raise ValueError(f"Entity '{entity_selector}' was not found in descriptor.")
+        entity_path, entity = resolved
+
+    if isinstance(entity, DriveResource) and not isinstance(entity, DrivePackage):
+        raise ValueError(
+            f"Entity '{entity_path or entity_selector}' is a standalone resource. "
+            "Only packages (syncTarget: resources) and catalogs support fetch."
+        )
 
     if isinstance(entity, DrivePackage):
         resolved_name = str(entity.name or entity_selector).strip() or entity_selector
-        summary = _fetch_one_package(entity, resolved_name, dry_run=dry_run, log=log)
+        summary = _fetch_entity(entity, resolved_name, dry_run=dry_run, log=log)
         if not dry_run:
             save_drive_descriptor(descriptor_path, descriptor_model)
         return [summary]
 
     if resource_source_url(entity):
         resolved_name = str(entity.name or entity_selector).strip() or entity_selector
-        summary = _fetch_one_catalog(entity, resolved_name, dry_run=dry_run, log=log)
+        summary = _fetch_entity(entity, resolved_name, dry_run=dry_run, log=log)
         if not dry_run:
             save_drive_descriptor(descriptor_path, descriptor_model)
         return [summary]
@@ -277,14 +360,7 @@ def fetch_entity_metadata(
     summaries: list[FetchSummary] = []
     for child_path, child_entity in fetchable_entities:
         resolved_name = str(child_entity.name or child_path).strip() or child_path
-        if isinstance(child_entity, DrivePackage):
-            summary = _fetch_one_package(
-                child_entity, resolved_name, dry_run=dry_run, log=log
-            )
-        else:
-            summary = _fetch_one_catalog(
-                child_entity, resolved_name, dry_run=dry_run, log=log
-            )
+        summary = _fetch_entity(child_entity, resolved_name, dry_run=dry_run, log=log)
         summaries.append(summary)
 
     if not dry_run and summaries:
@@ -292,7 +368,13 @@ def fetch_entity_metadata(
     return summaries
 
 
+# Backward-compatible alias used by the CLI and any external callers.
+fetch_entity_metadata = fetch_entity_metadata_in_descriptor
+
 
 __all__ = [
-    "FetchSummary"
+    "FetchSummary",
+    "fetch_entity_metadata",
+    "fetch_entity_metadata_in_descriptor",
+    "fetch_resource_metadata_in_descriptor",
 ]

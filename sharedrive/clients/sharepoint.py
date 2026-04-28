@@ -10,7 +10,7 @@ from urllib.parse import unquote, urlparse
 import requests
 
 from sharedrive.exceptions import GraphApiDriveError, GraphApiSiteError
-from sharedrive.item import DriveFile, DriveFolder, DriveItem
+from sharedrive.clients.base import DriveFile, DriveFolder, DriveItem
 
 if TYPE_CHECKING:
     from sharedrive.auth.microsoft import MicrosoftAuth
