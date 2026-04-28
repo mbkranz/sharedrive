@@ -104,12 +104,12 @@ def build_service_registry(
         # When a factory override is provided, calling it IS the auth check.
         # Otherwise, use the class-level check_auth which validates credentials
         # without constructing a full client.
-        gdrive_check: Callable[[], Any] | None = googledrive_client_factory or (
+        gdrive_auth_check: Callable[[], Any] | None = googledrive_client_factory or (
             getattr(gdrive_cls, "check_auth", None) if gdrive_cls is not None else None
         )
         result["googledrive"] = ServiceAdapter(
             build_client=gdrive_build,
-            check_auth=gdrive_check,
+            check_auth=gdrive_auth_check,
             auth_methods=list(getattr(gdrive_cls, "auth_methods", []))
             if gdrive_cls is not None
             else [],
@@ -120,12 +120,12 @@ def build_service_registry(
         sp_build = sharepoint_client_factory or (
             sp_cls.build_default if sp_cls is not None else None
         )
-        sp_check: Callable[[], Any] | None = sharepoint_client_factory or (
+        sp_auth_check: Callable[[], Any] | None = sharepoint_client_factory or (
             getattr(sp_cls, "check_auth", None) if sp_cls is not None else None
         )
         result["sharepoint"] = ServiceAdapter(
             build_client=sp_build,
-            check_auth=sp_check,
+            check_auth=sp_auth_check,
             auth_methods=list(getattr(sp_cls, "auth_methods", []))
             if sp_cls is not None
             else [],

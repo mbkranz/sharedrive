@@ -199,7 +199,6 @@ class GoogleDriveClient(GoogleBaseClient):
     :class:`~sharedrive.registry.ServiceAdapter` for it.
     """
 
-    auth_methods: ClassVar[list[str]] = ["adc", "service_account", "user_oauth"]
     api_error_cls = GoogleDriveError
 
     def __init__(
@@ -216,25 +215,6 @@ class GoogleDriveClient(GoogleBaseClient):
             session=session,
             timeout=timeout,
         )
-
-    @classmethod
-    def build_default(cls) -> "GoogleDriveClient":
-        """Construct from environment variables / settings.
-
-        Reads ``GOOGLE_AUTH_MODE`` (and associated credential paths) from the
-        environment or a ``.env`` file via
-        :class:`~sharedrive.auth.settings.GoogleAuthConfig`.
-        """
-        return cls(auth=GoogleAuth.from_settings())
-
-    @classmethod
-    def check_auth(cls) -> None:
-        """Validate that Google credentials are available.
-
-        Raises :class:`~sharedrive.exceptions.GoogleAuthError` if the
-        credentials configured in the environment are missing or invalid.
-        """
-        GoogleAuth.from_settings()
 
     @staticmethod
     def _is_google_workspace_file(file_mime_type: str) -> bool:
