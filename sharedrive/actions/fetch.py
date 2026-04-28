@@ -106,7 +106,6 @@ def _catalog_name_from_item(item: Any) -> str:
         return Path(item_path).name or item_path
     return "catalog"
 
-
 def _catalog_entry_from_item(item: Any) -> dict[str, Any]:
     entry: dict[str, Any] = {
         "name": _catalog_name_from_item(item),
@@ -131,7 +130,7 @@ def _build_catalog_children(
         direct_children = _sorted_drive_items(
             drive_item.refresh(include_children=True).children
         )
-    elif isinstance(drive_item, DriveItem):
+    elif isinstance(drive_item, DriveFile):
         direct_children = [drive_item.refresh(include_children=False)]
     elif getattr(drive_item, "is_directory", False):
         direct_children = _sorted_drive_items(getattr(drive_item, "children", []))
@@ -148,57 +147,22 @@ def _build_catalog_children(
     return resources, catalogs
 
 
-def _fetch_one_package(
-    package: DrivePackage,
-    package_name: str,
-    *,
-    dry_run: bool = False,
-    log: LogFn | None = print,
-) -> FetchSummary:
-    """Fetch remote folder metadata into a package's resources list.
 
-    Mutates ``package.resources`` in-place when ``dry_run`` is ``False``.
-    The caller is responsible for saving the descriptor afterwards.
-    """
-    source_url = resource_source_url(package)
-    if not source_url:
-        raise ValueError(f"Package '{package_name}' has no identifiable source URL.")
-
-    child_resources = _build_child_resources(
-        _fetch_from_adapter(resource=package, source_url=source_url)
-    )
-
-    if log is not None:
-        verb = "Would fetch" if dry_run else "Fetched"
-        log(
-            f"{verb} metadata for {len(child_resources)} resource(s) into package '{package_name}'."
-        )
-
-    if not dry_run:
-        package.resources = [
-            DrivePackage.model_validate(item)
-            if isinstance(item.get("resources"), list)
-            else DriveResource.model_validate(item)
-            for item in child_resources
-        ]
-
-    return FetchSummary(
-        resource_name=package_name,
-        generated_resources=len(child_resources),
-        dry_run=dry_run,
-        changed=not dry_run,
-    )
-
-
-def _fetch_one_catalog(
-    catalog: DriveCatalog,
-    catalog_name: str,
+def _fetch_entity(
+    entity,
+    catalog,
     *,
     dry_run: bool = False,
     log: LogFn | None = print,
 ) -> FetchSummary:
     """Fetch direct child metadata into a source-backed catalog."""
-    source_url = resource_source_url(catalog)
+    
+    sources = getattr(entity, "sources", [])
+    for source in sources:
+        source_url = resource_source_url(source)
+        if source_url:
+            break
+
     if not source_url:
         raise ValueError(f"Catalog '{catalog_name}' has no identifiable source URL.")
 
@@ -289,26 +253,8 @@ def fetch_entity_metadata(
     """
     descriptor_path = Path(descriptor)
     descriptor_model = load_drive_descriptor(descriptor_path)
-
-    if entity_selector:
-        entity_selector = entity_selector.strip()
-    else:
-        entity_selector = ""
-
-    if not entity_selector:
-        entity_path = ""
-        entity: DriveCatalog | DrivePackage | DriveResource = descriptor_model
-    else:
-        resolved = descriptor_model.get_entity_reference(entity_selector)
-        if resolved is None:
-            raise ValueError(f"Entity '{entity_selector}' was not found in descriptor.")
-        entity_path, entity = resolved
-
-    if isinstance(entity, DriveResource) and not isinstance(entity, DrivePackage):
-        raise ValueError(
-            f"Entity '{entity_path or entity_selector}' is a standalone resource. "
-            "Only packages (syncTarget: resources) and catalogs support fetch."
-        )
+    entity_selector = entity_selector or ""
+    entity = descriptor_model.get_entity_reference(entity_selector)
 
     if isinstance(entity, DrivePackage):
         resolved_name = str(entity.name or entity_selector).strip() or entity_selector

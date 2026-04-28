@@ -8,10 +8,10 @@ from typing import Any, Dict, Literal, Optional, Union
 
 import requests
 from google.auth.credentials import Credentials
-from sharedrive.item import DriveFile, DriveFolder, DriveItem
 
-from sharedrive.auth.google import GoogleAuth
-from sharedrive.exceptions import GoogleApiError, GoogleDriveError
+from .base import DriveItem
+from ..auth.google import GoogleAuth
+from ..exceptions import GoogleApiError, GoogleDriveError
 
 
 class GoogleBaseClient:
@@ -21,26 +21,18 @@ class GoogleBaseClient:
 
     def __init__(
         self,
-        auth: GoogleAuth | None = None,
+        auth: GoogleAuth | Credentials,
         *,
-        credentials: Credentials | None = None,
         session: requests.Session | None = None,
         timeout: int = 120,
     ) -> None:
         self.session = session or requests.Session()
         self.timeout = timeout
 
-        if auth is not None and credentials is not None:
+        if auth is None:
             raise ValueError("Provide either auth or credentials, not both.")
 
-        if credentials is not None:
-            self._auth = GoogleAuth(credentials)
-        elif auth is not None:
-            self._auth = auth
-        else:
-            raise ValueError(
-                "GoogleBaseClient requires either auth or credentials."
-            )
+        self._auth = auth
 
     @property
     def _hdrs(self) -> dict[str, str]:
