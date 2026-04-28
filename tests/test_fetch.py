@@ -18,7 +18,6 @@ from sharedrive.clients.googledrive import GDriveItem
 from sharedrive.clients.sharepoint import SharepointItem
 from sharedrive.item import DriveFile, DriveFolder
 from sharedrive.models import DriveResource
-from sharedrive.registry import ServiceAdapter
 
 
 def _write_catalog_descriptor(
@@ -42,23 +41,74 @@ def _write_catalog_descriptor(
     )
 
 
+def _make_fake_provider(googledrive_factory=None, sharepoint_factory=None):
+    """Return a fake ``get_provider`` callable for use with monkeypatch.
+
+    The returned function maps adapter names to minimal stub classes whose
+    ``build_default()`` returns the object produced by the corresponding
+    factory, and whose ``check_auth()`` calls the factory (so a raising factory
+    doubles as a failing auth check).
+    """
+    from sharedrive.registry import get_provider as _real
+
+    def fake_get_provider(name):
+        if name == "googledrive" and googledrive_factory is not None:
+
+            class _FakeGDrive:
+                @classmethod
+                def build_default(cls):
+                    return googledrive_factory()
+
+                @classmethod
+                def check_auth(cls):
+                    googledrive_factory()
+
+            return _FakeGDrive
+
+        if name == "sharepoint" and sharepoint_factory is not None:
+
+            class _FakeSP:
+                @classmethod
+                def build_default(cls):
+                    return sharepoint_factory()
+
+                @classmethod
+                def check_auth(cls):
+                    sharepoint_factory()
+
+            return _FakeSP
+
+        return _real(name)
+
+    return fake_get_provider
+
+
 def _patch_fetch_registry(
     monkeypatch: pytest.MonkeyPatch,
     *,
     googledrive_factory=None,
     sharepoint_factory=None,
 ) -> None:
-    def fake_build_service_registry():
-        registry: dict[str, ServiceAdapter] = {}
-        if googledrive_factory is not None:
-            registry["googledrive"] = ServiceAdapter(build_client=googledrive_factory)
-        if sharepoint_factory is not None:
-            registry["sharepoint"] = ServiceAdapter(build_client=sharepoint_factory)
-        return registry
-
-    monkeypatch.setattr(
-        "sharedrive.actions.fetch.build_service_registry", fake_build_service_registry
+    """Patch ``get_provider`` inside fetch.py for unit tests."""
+    fake = _make_fake_provider(
+        googledrive_factory=googledrive_factory,
+        sharepoint_factory=sharepoint_factory,
     )
+    monkeypatch.setattr("sharedrive.actions.fetch.get_provider", fake)
+
+
+def _patch_download_client(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    googledrive_factory=None,
+    sharepoint_factory=None,
+) -> None:
+    """Patch ``get_provider`` inside download.py for unit tests."""
+    fake = _make_fake_provider(
+        googledrive_factory=googledrive_factory,
+        sharepoint_factory=sharepoint_factory,
+    )
+    monkeypatch.setattr("sharedrive.actions.download.get_provider", fake)
 
 
 def test_drive_file_refresh_returns_self() -> None:
@@ -752,6 +802,7 @@ def _write_descriptor(path: Path) -> None:
 
 
 def test_check_auth_for_descriptor_limits_checks_to_selected_adapters(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
@@ -762,18 +813,11 @@ def test_check_auth_for_descriptor_limits_checks_to_selected_adapters(
         calls.append("sharepoint")
         return object()
 
-    def unexpected_gdrive_factory():
-        raise AssertionError("Google Drive auth check should not run")
-
-    def unexpected_s3_check() -> None:
-        raise AssertionError("S3 auth check should not run")
+    _patch_download_client(monkeypatch, sharepoint_factory=sharepoint_factory)
 
     results = check_auth_for_descriptor(
         descriptor,
         include=["sharepoint"],
-        sharepoint_client_factory=sharepoint_factory,
-        googledrive_client_factory=unexpected_gdrive_factory,
-        s3_auth_checker=unexpected_s3_check,
     )
 
     assert calls == ["sharepoint"]
@@ -782,6 +826,7 @@ def test_check_auth_for_descriptor_limits_checks_to_selected_adapters(
 
 
 def test_fetch_from_descriptor_check_auth_stops_before_download_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
@@ -791,6 +836,8 @@ def test_fetch_from_descriptor_check_auth_stops_before_download_on_failure(
     def failing_sharepoint_factory():
         raise RuntimeError("missing Azure tenant")
 
+    _patch_download_client(monkeypatch, sharepoint_factory=failing_sharepoint_factory)
+
     summary = download_from_descriptor(
         descriptor,
         include=["sharepoint"],
@@ -798,8 +845,6 @@ def test_fetch_from_descriptor_check_auth_stops_before_download_on_failure(
         dry_run=False,
         check_auth=True,
         log=messages.append,
-        sharepoint_client_factory=failing_sharepoint_factory,
-        googledrive_client_factory=lambda: object(),
     )
 
     assert summary.ok is False
@@ -810,6 +855,7 @@ def test_fetch_from_descriptor_check_auth_stops_before_download_on_failure(
 
 
 def test_fetch_from_descriptor_check_auth_allows_download_when_ready(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
@@ -839,6 +885,8 @@ def test_fetch_from_descriptor_check_auth_allows_download_when_ready(
 
     client = DummyDriveClient()
 
+    _patch_download_client(monkeypatch, googledrive_factory=lambda: client)
+
     summary = download_from_descriptor(
         descriptor,
         include=["googledrive"],
@@ -846,7 +894,6 @@ def test_fetch_from_descriptor_check_auth_allows_download_when_ready(
         dry_run=False,
         check_auth=True,
         log=lambda _message: None,
-        googledrive_client_factory=lambda: client,
     )
 
     output_path = tmp_path / "resources" / "downloads" / "export.csv"
@@ -859,6 +906,7 @@ def test_fetch_from_descriptor_check_auth_allows_download_when_ready(
 
 
 def test_fetch_from_descriptor_materializes_google_drive_directory_resources(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
@@ -918,13 +966,14 @@ def test_fetch_from_descriptor_materializes_google_drive_directory_resources(
 
     client = DummyDriveClient()
 
+    _patch_download_client(monkeypatch, googledrive_factory=lambda: client)
+
     summary = download_from_descriptor(
         descriptor,
         include=["googledrive"],
         output_dir=tmp_path / "resources",
         dry_run=False,
         log=lambda _message: None,
-        googledrive_client_factory=lambda: client,
     )
 
     summary_path = tmp_path / "resources" / "downloads" / "census" / "summary.csv"
@@ -945,6 +994,7 @@ def test_fetch_from_descriptor_materializes_google_drive_directory_resources(
 
 
 def test_fetch_from_descriptor_materializes_google_drive_directory_path_target(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
@@ -1001,13 +1051,14 @@ def test_fetch_from_descriptor_materializes_google_drive_directory_path_target(
 
     client = DummyDriveClient()
 
+    _patch_download_client(monkeypatch, googledrive_factory=lambda: client)
+
     summary = download_from_descriptor(
         descriptor,
         include=["googledrive"],
         output_dir=tmp_path / "resources",
         dry_run=False,
         log=lambda _message: None,
-        googledrive_client_factory=lambda: client,
     )
 
     assert summary.ok is True
@@ -1037,7 +1088,9 @@ def test_fetch_from_descriptor_materializes_google_drive_directory_path_target(
     ]
 
 
-def test_fetch_from_descriptor_fetches_nested_package_resources(tmp_path: Path) -> None:
+def test_fetch_from_descriptor_fetches_nested_package_resources(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
         descriptor,
@@ -1091,13 +1144,14 @@ def test_fetch_from_descriptor_fetches_nested_package_resources(tmp_path: Path) 
 
     client = DummyDriveClient()
 
+    _patch_download_client(monkeypatch, googledrive_factory=lambda: client)
+
     summary = download_from_descriptor(
         descriptor,
         include=["selected-export"],
         output_dir=tmp_path / "resources",
         dry_run=False,
         log=lambda _message: None,
-        googledrive_client_factory=lambda: client,
     )
 
     output_path = tmp_path / "resources" / "downloads" / "analytics" / "export.csv"
@@ -1109,7 +1163,9 @@ def test_fetch_from_descriptor_fetches_nested_package_resources(tmp_path: Path) 
     assert output_path.read_text(encoding="utf-8") == "nested-ok"
 
 
-def test_fetch_from_descriptor_matches_nested_dot_path_include(tmp_path: Path) -> None:
+def test_fetch_from_descriptor_matches_nested_dot_path_include(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
         descriptor,
@@ -1174,13 +1230,14 @@ def test_fetch_from_descriptor_matches_nested_dot_path_include(tmp_path: Path) -
 
     client = DummyDriveClient()
 
+    _patch_download_client(monkeypatch, googledrive_factory=lambda: client)
+
     summary = download_from_descriptor(
         descriptor,
         include=["analytics-docs.selected-export"],
         output_dir=tmp_path / "resources",
         dry_run=False,
         log=lambda _message: None,
-        googledrive_client_factory=lambda: client,
     )
 
     output_path = tmp_path / "resources" / "downloads" / "analytics" / "export.csv"
@@ -1191,7 +1248,9 @@ def test_fetch_from_descriptor_matches_nested_dot_path_include(tmp_path: Path) -
     ]
 
 
-def test_fetch_from_descriptor_matches_top_level_package_name(tmp_path: Path) -> None:
+def test_fetch_from_descriptor_matches_top_level_package_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
         descriptor,
@@ -1245,13 +1304,14 @@ def test_fetch_from_descriptor_matches_top_level_package_name(tmp_path: Path) ->
 
     client = DummyDriveClient()
 
+    _patch_download_client(monkeypatch, googledrive_factory=lambda: client)
+
     summary = download_from_descriptor(
         descriptor,
         include=["analytics-docs"],
         output_dir=tmp_path / "resources",
         dry_run=False,
         log=lambda _message: None,
-        googledrive_client_factory=lambda: client,
     )
 
     output_path = tmp_path / "resources" / "downloads" / "analytics" / "export.csv"
@@ -1263,6 +1323,7 @@ def test_fetch_from_descriptor_matches_top_level_package_name(tmp_path: Path) ->
 
 
 def test_download_from_descriptor_matches_nested_catalog_package_name(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
@@ -1328,13 +1389,14 @@ def test_download_from_descriptor_matches_nested_catalog_package_name(
 
     client = DummyDriveClient()
 
+    _patch_download_client(monkeypatch, googledrive_factory=lambda: client)
+
     summary = download_from_descriptor(
         descriptor,
         include=["research.archive.analytics-docs"],
         output_dir=tmp_path / "resources",
         dry_run=False,
         log=lambda _message: None,
-        googledrive_client_factory=lambda: client,
     )
 
     output_path = tmp_path / "resources" / "downloads" / "analytics" / "export.csv"
@@ -1346,6 +1408,7 @@ def test_download_from_descriptor_matches_nested_catalog_package_name(
 
 
 def test_download_from_descriptor_selecting_catalog_includes_nested_package_resources(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
@@ -1411,13 +1474,14 @@ def test_download_from_descriptor_selecting_catalog_includes_nested_package_reso
 
     client = DummyDriveClient()
 
+    _patch_download_client(monkeypatch, googledrive_factory=lambda: client)
+
     summary = download_from_descriptor(
         descriptor,
         include=["research"],
         output_dir=tmp_path / "resources",
         dry_run=False,
         log=lambda _message: None,
-        googledrive_client_factory=lambda: client,
     )
 
     output_path = tmp_path / "resources" / "downloads" / "analytics" / "export.csv"
