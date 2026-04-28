@@ -47,7 +47,7 @@ def _build_child_resources(drive_item: Any) -> list[dict[str, Any]]:
         else:
             leaf_items = [refreshed_item]
         return [
-            item.to_dp().to_dict()
+            item.to_resource().to_dict()
             for item in sorted(
                 leaf_items, key=lambda i: str(getattr(i, "path", "") or "")
             )
@@ -59,7 +59,7 @@ def _build_child_resources(drive_item: Any) -> list[dict[str, Any]]:
     else:
         leaf_items = [drive_item]
     return [
-        item.to_dp().to_dict()
+        item.to_resource().to_dict()
         for item in sorted(leaf_items, key=lambda i: str(getattr(i, "path", "") or ""))
     ]
 
@@ -145,7 +145,7 @@ def _build_catalog_children(
         if getattr(child, "is_directory", False):
             catalogs.append(_catalog_entry_from_item(child))
             continue
-        resources.append(child.to_dp().to_dict())
+        resources.append(child.to_resource().to_dict())
     return resources, catalogs
 
 

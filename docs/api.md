@@ -115,7 +115,9 @@ Auto-generated from source signatures and docstrings.
 #### `DriveFile`
 - Methods:
   - `def is_directory(self) -> bool`
-  - `def to_dp(self) -> DriveResource`
+  - `def to_source(self) -> DriveSource`
+  - `def to_resource(self) -> DriveResource`
+  - `def to_dp(self) -> DriveResource` *(deprecated alias for `to_resource`)*
   - `def refresh(self, *, include_children: bool = True) -> 'DriveFile'`
 
 #### `DriveFolder`
@@ -125,7 +127,9 @@ Auto-generated from source signatures and docstrings.
   - `def iter_files(self) -> Iterable[DriveFile]`
   - `def refresh_tree(self) -> 'DriveFolder'`
   - `def download(self, target: Path | str) -> None`
-  - `def to_dp(self) -> DrivePackage`
+  - `def to_source(self) -> DriveSource`
+  - `def to_resource(self) -> DrivePackage`
+  - `def to_dp(self) -> DrivePackage` *(deprecated alias for `to_resource`)*
 
 #### `DriveItem`
 - Methods:
@@ -140,7 +144,11 @@ Auto-generated from source signatures and docstrings.
     - Refresh this runtime item from its backing service.
   - `def refresh_tree(self) -> 'DriveItem'`
     - Recursively refresh this runtime item and any descendant items.
-  - `def to_dp(self) -> DriveResource | DrivePackage`
+  - `def to_source(self) -> DriveSource`
+    - Convert to a `DriveSource` remote pointer (url, serviceType, entityType only).
+  - `def to_resource(self) -> DriveResource | DrivePackage | DriveCatalog`
+    - Convert to a descriptor resource, package, or catalog entry.
+  - `def to_dp(self) -> DriveResource | DrivePackage` *(deprecated alias for `to_resource`)*
 
 
 ## `sharedrive.actions.add`

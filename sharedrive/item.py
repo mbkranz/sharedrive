@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Iterable
 
-from sharedrive.models import DrivePackage, DriveResource
+from sharedrive.models import DriveCatalog, DrivePackage, DriveResource, DriveSource
 
 
 class DriveItem(ABC):
@@ -109,12 +109,33 @@ class DriveItem(ABC):
             "Concrete subclasses must override download()."
         )
 
-    def to_dp(self) -> DriveResource | DrivePackage:
-        """Convert to a DataPackage descriptor resource or package.
+    def to_source(self) -> DriveSource:
+        """Convert to a :class:`~sharedrive.models.DriveSource` remote pointer.
 
-        Files become a :class:`~sharedrive.models.DriveResource`; directories
-        become a :class:`~sharedrive.models.DrivePackage` whose nested
-        ``resources`` list contains the converted children.
+        Returns the minimal remote-pointer form of this item: just the URL,
+        service type, and entity type.  Use this when you only need to record
+        *where* this item lives, without the full descriptor metadata (name,
+        path, format, driveId, …) that :meth:`to_resource` produces.
+        """
+        entity_type = "Directory" if self.is_directory else "File"
+        return DriveSource(
+            path=self.source_url,
+            serviceType=self.service_type,
+            entityType=entity_type,
+        )
+
+    def to_resource(self) -> DriveResource | DrivePackage | DriveCatalog:
+        """Convert to a descriptor resource, package, or catalog entry.
+
+        - Files → :class:`~sharedrive.models.DriveResource` (leaf entry with
+          name, path, format, driveId, and a :class:`~sharedrive.models.DriveSource`
+          pointing back to the remote item).
+        - Directories → :class:`~sharedrive.models.DrivePackage` with a
+          ``sources`` list and a nested ``resources`` list built from direct
+          children.  The return type union includes
+          :class:`~sharedrive.models.DriveCatalog` to accommodate subclasses or
+          future service adapters that override this method to produce a catalog
+          entry instead.
         """
         if not self.is_directory:
             format_str = None
@@ -140,8 +161,16 @@ class DriveItem(ABC):
                     "entityType": "Directory",
                 }
             ],
-            resources=[child.to_dp() for child in self.children],
+            resources=[child.to_resource() for child in self.children],
         )
+
+    def to_dp(self) -> DriveResource | DrivePackage:
+        """Deprecated alias for :meth:`to_resource`.
+
+        .. deprecated::
+            Use :meth:`to_resource` instead.
+        """
+        return self.to_resource()
 
 
 class DriveFile(DriveItem, ABC):

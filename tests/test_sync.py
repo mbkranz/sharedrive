@@ -75,7 +75,7 @@ def test_fetch_resource_metadata_in_descriptor_writes_nested_resources(
                     self.service_type = "GoogleDrive"
                     self.source_url = f"https://drive.google.com/open?id={n}"
 
-                def to_dp(self):
+                def to_resource(self):
                     from sharedrive.models import DriveResource, DriveSource
 
                     return DriveResource(
@@ -153,7 +153,7 @@ def test_fetch_resource_metadata_in_descriptor_dry_run_does_not_write(
                     self.service_type = "GoogleDrive"
                     self.source_url = f"https://drive.google.com/open?id={n}"
 
-                def to_dp(self):
+                def to_resource(self):
                     from sharedrive.models import DriveResource, DriveSource
 
                     return DriveResource(

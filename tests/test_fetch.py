@@ -1485,7 +1485,7 @@ def test_fetch_resource_metadata_supports_sharepoint_directory(
                         def source_url(self):
                             return "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/spec.xlsx"
 
-                        def to_dp(self):
+                        def to_resource(self):
                             from sharedrive.models import DriveSource, DriveResource
 
                             return DriveResource(
@@ -1525,7 +1525,7 @@ def test_fetch_resource_metadata_supports_sharepoint_directory(
                         def source_url(self):
                             return "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/nested/detail.csv"
 
-                        def to_dp(self):
+                        def to_resource(self):
                             from sharedrive.models import DriveSource, DriveResource
 
                             return DriveResource(
@@ -1612,7 +1612,7 @@ def test_fetch_resource_metadata_resolves_nested_catalog_package_selector(
                         path = "spec.xlsx"
                         is_directory = False
 
-                        def to_dp(self):
+                        def to_resource(self):
                             from sharedrive.models import DriveResource, DriveSource
 
                             return DriveResource(
@@ -1780,7 +1780,7 @@ def test_fetch_entity_metadata_fetches_all_packages_in_catalog(
                 path = "report.csv"
                 is_directory = False
 
-                def to_dp(self):
+                def to_resource(self):
                     from sharedrive.models import DriveResource, DriveSource
 
                     return DriveResource(
@@ -1867,7 +1867,7 @@ def test_fetch_entity_metadata_dry_run_does_not_write_catalog(
                 path = "report.csv"
                 is_directory = False
 
-                def to_dp(self):
+                def to_resource(self):
                     from sharedrive.models import DriveResource, DriveSource
 
                     return DriveResource(
@@ -1945,7 +1945,7 @@ def test_fetch_entity_metadata_fetches_source_backed_catalog_children(
                 service_type = "GoogleDrive"
                 source_url = "https://drive.google.com/open?id=report"
 
-                def to_dp(self):
+                def to_resource(self):
                     from sharedrive.models import DriveResource, DriveSource
 
                     return DriveResource(
@@ -2030,7 +2030,7 @@ def test_fetch_entity_metadata_from_root_fetches_immediate_source_backed_catalog
                 service_type = "GoogleDrive"
                 source_url = "https://drive.google.com/open?id=report"
 
-                def to_dp(self):
+                def to_resource(self):
                     from sharedrive.models import DriveResource, DriveSource
 
                     return DriveResource(
@@ -2125,7 +2125,7 @@ def test_fetch_entity_metadata_with_depth_recurses_sub_catalogs(
                 path = "file.csv"
                 is_directory = False
 
-                def to_dp(self):
+                def to_resource(self):
                     from sharedrive.models import DriveResource, DriveSource
 
                     return DriveResource(
