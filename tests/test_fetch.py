@@ -2058,9 +2058,7 @@ def test_fetch_entity_metadata_raises_for_standalone_resource(tmp_path: Path) ->
 # ---------------------------------------------------------------------------
 
 
-def test_merge_fetched_preserves_existing_resource_metadata(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_merge_fetched_preserves_existing_resource_metadata() -> None:
     """Existing resources whose source path matches a fetched item keep their metadata."""
     from sharedrive.actions.fetch import _merge_fetched_into_existing
     from sharedrive.models import DriveResource, DriveSource
@@ -2104,9 +2102,7 @@ def test_merge_fetched_preserves_existing_resource_metadata(
     assert item.path == "custom/path/report.csv"
 
 
-def test_merge_fetched_adds_new_items(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_merge_fetched_adds_new_items() -> None:
     """Items in the fetched set whose source path has no existing match are added."""
     from sharedrive.actions.fetch import _merge_fetched_into_existing
     from sharedrive.models import DriveResource, DriveSource
@@ -2155,9 +2151,7 @@ def test_merge_fetched_adds_new_items(
     assert merged[1].name == "new-file.csv"
 
 
-def test_merge_fetched_drops_removed_items(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_merge_fetched_drops_removed_items() -> None:
     """Items present in existing but absent from the fetched set are dropped."""
     from sharedrive.actions.fetch import _merge_fetched_into_existing
     from sharedrive.models import DriveResource, DriveSource
