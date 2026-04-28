@@ -203,7 +203,10 @@ def _make_gdrive_client(
         auth = GoogleAuth.from_service_account(credentials_path, scopes=scope)
     else:
         path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
-        auth = GoogleAuth.from_service_account(path, scopes=scope) if path else GoogleAuth.from_adc(scopes=scope)
+        if path:
+            auth = GoogleAuth.from_service_account(path, scopes=scope)
+        else:
+            auth = GoogleAuth.from_adc(scopes=scope)
     return GoogleDriveClient(auth=auth)
 
 
