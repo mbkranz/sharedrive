@@ -43,7 +43,9 @@ def _contained_entries(container: Entry) -> list[Entry]:
             entries.extend(value for value in values if isinstance(value, dict))
         return entries
 
-    entries.extend(child for child in container.entity_children() if isinstance(child, Model))
+    entries.extend(
+        child for child in container.entity_children() if isinstance(child, Model)
+    )
     return entries
 
 
@@ -52,9 +54,7 @@ def _entry_to_dict(entry: Entry) -> dict[str, Any]:
 
 
 def get_primary_source(
-    resource: Entry,
-    *,
-    create: bool = False,
+    resource: Entry, *, create: bool = False
 ) -> dict[str, Any] | None:
     if not isinstance(resource, dict):
         resource = resource.to_dict()
@@ -140,6 +140,7 @@ class DownloadSummary:
     def ok(self) -> bool:
         return self.failures == 0
 
+
 @dataclass(slots=True)
 class AuthCheckResult:
     adapter: str
@@ -147,11 +148,7 @@ class AuthCheckResult:
     message: str
 
     def to_dict(self) -> dict[str, str | bool]:
-        return {
-            "adapter": self.adapter,
-            "ok": self.ok,
-            "message": self.message,
-        }
+        return {"adapter": self.adapter, "ok": self.ok, "message": self.message}
 
 
 def resource_source_url(resource: Any) -> str | None:
@@ -230,11 +227,14 @@ def resource_adapter_name(resource: Any, source_url: str | None) -> str:
     if service_type is not None:
         return service_type_adapter_name(service_type)
 
-    adapter = resource.get("driveService")
+    # Convert to dict before calling .get() because dplib Model instances expose
+    # ``to_dict()`` rather than the mapping API.
+    resource_dict = _entry_to_dict(resource)
+    adapter = resource_dict.get("driveService")
     if isinstance(adapter, str) and adapter.strip():
         return service_type_adapter_name(adapter.strip())
 
-    legacy_adapter = resource.get("x-adapter")
+    legacy_adapter = resource_dict.get("x-adapter")
     if isinstance(legacy_adapter, str) and legacy_adapter.strip():
         return legacy_adapter.strip().lower()
 
@@ -268,27 +268,25 @@ def _normalize_include(include: str | Iterable[str]) -> set[str]:
     return normalized or {"all"}
 
 
-def _download_sharepoint_item(*, client: Any, source_url: str, output_path: Path) -> None:
+def _download_sharepoint_item(
+    *, client: Any, source_url: str, output_path: Path
+) -> None:
     item = client.get_from_weburl(source_url)
     item.download(str(output_path))
 
 
-def _download_googledrive_item(*, client: Any, source_url: str, output_path: Path) -> None:
+def _download_googledrive_item(
+    *, client: Any, source_url: str, output_path: Path
+) -> None:
     item = client.get_from_weburl(source_url)
     item.download(str(output_path))
 
 
 def _download_s3_item(
-    *,
-    source_url: str,
-    output_path: Path,
-    use_cloudpathlib: bool,
+    *, source_url: str, output_path: Path, use_cloudpathlib: bool
 ) -> None:
     result = download_s3_url(
-        source_url,
-        output_path,
-        dry_run=False,
-        use_cloudpathlib=use_cloudpathlib,
+        source_url, output_path, dry_run=False, use_cloudpathlib=use_cloudpathlib
     )
     if result is None:
         raise RuntimeError("S3 download returned no output path")
@@ -322,9 +320,7 @@ def _build_download_adapter_registry(
         ),
         "s3": (
             service_registry["s3"],
-            DownloadAdapter(
-                download_item=_download_s3_item,
-            ),
+            DownloadAdapter(download_item=_download_s3_item),
         ),
     }
 
@@ -344,8 +340,7 @@ def _get_download_client(
 
 
 def _resource_selector_path(
-    resource: Entry,
-    parent_selector_path: str | None = None,
+    resource: Entry, parent_selector_path: str | None = None
 ) -> str:
     resource_dict = _entry_to_dict(resource)
     resource_name = str(resource_dict.get("name", "")).strip() or "resource"
@@ -355,8 +350,7 @@ def _resource_selector_path(
 
 
 def _selected_adapter_names(
-    resources: Iterable[Entry],
-    include: str | Iterable[str] = "all",
+    resources: Iterable[Entry], include: str | Iterable[str] = "all"
 ) -> list[str]:
     include_set = _normalize_include(include)
     selected: list[str] = []
@@ -373,27 +367,23 @@ def _selected_adapter_names(
 
         if children:
             parent_selected = _resource_matches_include(
-                normalized,
-                include_set,
-                selector_path=selector_path,
+                normalized, include_set, selector_path=selector_path
             )
             for child in children:
                 child_resource = _inherit_resource_defaults(child, parent=normalized)
                 if parent_selected or _resource_or_descendant_matches_include(
-                    child_resource,
-                    include_set,
-                    parent_selector_path=selector_path,
+                    child_resource, include_set, parent_selector_path=selector_path
                 ):
-                    collect(child, parent=normalized, parent_selector_path=selector_path)
+                    collect(
+                        child, parent=normalized, parent_selector_path=selector_path
+                    )
             return
 
         source_url = resource_source_url(normalized)
         adapter_name = resource_adapter_name(normalized, source_url)
 
         if not _resource_matches_include(
-            normalized,
-            include_set,
-            selector_path=selector_path,
+            normalized, include_set, selector_path=selector_path
         ):
             return
 
@@ -408,9 +398,7 @@ def _selected_adapter_names(
 
 
 def _inherit_resource_defaults(
-    resource: Entry,
-    *,
-    parent: Entry | None = None,
+    resource: Entry, *, parent: Entry | None = None
 ) -> dict[str, Any]:
     normalized = _entry_to_dict(resource)
     if parent is None:
@@ -436,23 +424,28 @@ def _inherit_resource_defaults(
         for field_name in ("serviceType", "entityType"):
             inherited_value = parent_source.get(field_name)
             current_value = child_source.get(field_name)
-            if isinstance(inherited_value, str) and inherited_value.strip() and not current_value:
+            if (
+                isinstance(inherited_value, str)
+                and inherited_value.strip()
+                and not current_value
+            ):
                 child_source[field_name] = inherited_value
 
     for field_name in ("driveService", "x-adapter"):
         inherited_value = parent_dict.get(field_name)
         current_value = normalized.get(field_name)
-        if isinstance(inherited_value, str) and inherited_value.strip() and not current_value:
+        if (
+            isinstance(inherited_value, str)
+            and inherited_value.strip()
+            and not current_value
+        ):
             normalized[field_name] = inherited_value
 
     return normalized
 
 
 def _resource_matches_include(
-    resource: Entry,
-    include_set: set[str],
-    *,
-    selector_path: str | None = None,
+    resource: Entry, include_set: set[str], *, selector_path: str | None = None
 ) -> bool:
     if "all" in include_set:
         return True
@@ -470,10 +463,7 @@ def _resource_matches_include(
 
 
 def _resource_or_descendant_matches_include(
-    resource: Entry,
-    include_set: set[str],
-    *,
-    parent_selector_path: str | None = None,
+    resource: Entry, include_set: set[str], *, parent_selector_path: str | None = None
 ) -> bool:
     selector_path = _resource_selector_path(resource, parent_selector_path)
     if _resource_matches_include(resource, include_set, selector_path=selector_path):
@@ -482,9 +472,7 @@ def _resource_or_descendant_matches_include(
     for child in _contained_entries(resource):
         normalized_child = _inherit_resource_defaults(child, parent=resource)
         if _resource_or_descendant_matches_include(
-            normalized_child,
-            include_set,
-            parent_selector_path=selector_path,
+            normalized_child, include_set, parent_selector_path=selector_path
         ):
             return True
 
@@ -540,6 +528,7 @@ def _download_googledrive_directory(
         for destination in destinations[1:]:
             destination.parent.mkdir(parents=True, exist_ok=True)
             import shutil
+
             shutil.copy2(primary_destination, destination)
 
         downloaded += len(destinations)
@@ -582,6 +571,7 @@ def _download_sharepoint_directory(
         for destination in destinations[1:]:
             destination.parent.mkdir(parents=True, exist_ok=True)
             import shutil
+
             shutil.copy2(primary_destination, destination)
 
         downloaded += len(destinations)
@@ -635,9 +625,7 @@ def check_auth_for_adapters(
             }.get(adapter_name, f"Adapter '{adapter_name}' authentication failed")
             results.append(
                 AuthCheckResult(
-                    adapter=adapter_name,
-                    ok=False,
-                    message=f"{prefix}: {exc}",
+                    adapter=adapter_name, ok=False, message=f"{prefix}: {exc}"
                 )
             )
 
@@ -722,16 +710,16 @@ def download_from_descriptor(
 
         if nested_entries:
             parent_selected = _resource_matches_include(
-                normalized,
-                include_set,
-                selector_path=selector_path,
+                normalized, include_set, selector_path=selector_path
             )
             for child in nested_entries:
                 child_resource = _inherit_resource_defaults(child, parent=normalized)
-                if parent_selected or _resource_or_descendant_matches_include(
-                    child_resource,
-                    include_set,
-                    parent_selector_path=selector_path,
+                if (
+                    selected_by_ancestor
+                    or parent_selected
+                    or _resource_or_descendant_matches_include(
+                        child_resource, include_set, parent_selector_path=selector_path
+                    )
                 ):
                     fetch_resource(
                         child,
@@ -746,9 +734,7 @@ def download_from_descriptor(
         adapter_name = resource_adapter_name(normalized, source_url)
 
         if not selected_by_ancestor and not _resource_matches_include(
-            normalized,
-            include_set,
-            selector_path=selector_path,
+            normalized, include_set, selector_path=selector_path
         ):
             return
         if not source_url:
@@ -774,11 +760,11 @@ def download_from_descriptor(
                 and not nested_entries
             ):
                 client = _get_download_client(
-                    adapter_name,
-                    registry=registry,
-                    clients=clients,
+                    adapter_name, registry=registry, clients=clients
                 )
-                output_roots = output_paths if sync_target == "resources" else [output_path]
+                output_roots = (
+                    output_paths if sync_target == "resources" else [output_path]
+                )
                 downloaded, dry_run_actions = download_adapter.download_directory(
                     normalized,
                     output_roots=output_roots,
@@ -807,14 +793,10 @@ def download_from_descriptor(
 
             if service_adapter is not None and service_adapter.build_client is not None:
                 client = _get_download_client(
-                    adapter_name,
-                    registry=registry,
-                    clients=clients,
+                    adapter_name, registry=registry, clients=clients
                 )
                 download_adapter.download_item(
-                    client=client,
-                    source_url=source_url,
-                    output_path=output_path,
+                    client=client, source_url=source_url, output_path=output_path
                 )
             else:
                 download_adapter.download_item(
@@ -866,6 +848,8 @@ def download_resources(
         check_auth=check_auth,
         log=log,
     )
+
+
 __all__ = [
     "AuthCheckResult",
     "check_auth_for_adapters",

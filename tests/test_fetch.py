@@ -2,14 +2,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
-from sharedrive.actions.download import check_auth_for_descriptor, download_from_descriptor
+from sharedrive.actions.download import (
+    check_auth_for_descriptor,
+    download_from_descriptor,
+)
 from sharedrive.actions.download import resource_adapter_name
-from sharedrive.actions.fetch import fetch_entity_metadata_in_descriptor, fetch_resource_metadata_in_descriptor
+from sharedrive.actions.fetch import (
+    fetch_entity_metadata_in_descriptor,
+    fetch_resource_metadata_in_descriptor,
+)
 from sharedrive.clients.googledrive import GDriveFile, GDriveFolder
 from sharedrive.clients.sharepoint import SharepointFile, SharepointFolder
 from sharedrive.item import DriveFile, DriveFolder
+from sharedrive.models import DriveResource
+from sharedrive.registry import ServiceAdapter
 
 
 def _write_catalog_descriptor(
@@ -33,9 +42,30 @@ def _write_catalog_descriptor(
     )
 
 
+def _patch_fetch_registry(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    googledrive_factory=None,
+    sharepoint_factory=None,
+) -> None:
+    def fake_build_service_registry():
+        registry: dict[str, ServiceAdapter] = {}
+        if googledrive_factory is not None:
+            registry["googledrive"] = ServiceAdapter(build_client=googledrive_factory)
+        if sharepoint_factory is not None:
+            registry["sharepoint"] = ServiceAdapter(build_client=sharepoint_factory)
+        return registry
+
+    monkeypatch.setattr(
+        "sharedrive.actions.fetch.build_service_registry", fake_build_service_registry
+    )
+
+
 def test_drive_file_refresh_returns_self() -> None:
     class DummyFile(DriveFile):
-        def __init__(self, *, item_id: str, name: str, path: str, source_url: str) -> None:
+        def __init__(
+            self, *, item_id: str, name: str, path: str, source_url: str
+        ) -> None:
             self._id = item_id
             self._name = name
             self._path = path
@@ -79,7 +109,9 @@ def test_drive_file_refresh_returns_self() -> None:
 
 def test_drive_folder_refresh_returns_self_and_preserves_children() -> None:
     class DummyFile(DriveFile):
-        def __init__(self, *, item_id: str, name: str, path: str, source_url: str) -> None:
+        def __init__(
+            self, *, item_id: str, name: str, path: str, source_url: str
+        ) -> None:
             self._id = item_id
             self._name = name
             self._path = path
@@ -112,7 +144,14 @@ def test_drive_folder_refresh_returns_self_and_preserves_children() -> None:
             return self
 
     class DummyFolder(DriveFolder):
-        def __init__(self, *, item_id: str, name: str, path: str, children: list[DriveFile | DriveFolder]) -> None:
+        def __init__(
+            self,
+            *,
+            item_id: str,
+            name: str,
+            path: str,
+            children: list[DriveFile | DriveFolder],
+        ) -> None:
             self._id = item_id
             self._name = name
             self._path = path
@@ -175,15 +214,20 @@ def test_drive_folder_refresh_returns_self_and_preserves_children() -> None:
     refreshed = folder.refresh()
 
     assert refreshed is folder
-    assert folder.children == [
-        nested_folder,
-        summary_file,
-    ]
+    assert folder.children == [nested_folder, summary_file]
 
 
 def test_drive_folder_refresh_tree_refreshes_descendants() -> None:
     class DummyFile(DriveFile):
-        def __init__(self, *, item_id: str, name: str, path: str, source_url: str, calls: list[str]) -> None:
+        def __init__(
+            self,
+            *,
+            item_id: str,
+            name: str,
+            path: str,
+            source_url: str,
+            calls: list[str],
+        ) -> None:
             self._id = item_id
             self._name = name
             self._path = path
@@ -218,7 +262,15 @@ def test_drive_folder_refresh_tree_refreshes_descendants() -> None:
             return self
 
     class DummyFolder(DriveFolder):
-        def __init__(self, *, item_id: str, name: str, path: str, children: list[DriveFile | DriveFolder], calls: list[str]) -> None:
+        def __init__(
+            self,
+            *,
+            item_id: str,
+            name: str,
+            path: str,
+            children: list[DriveFile | DriveFolder],
+            calls: list[str],
+        ) -> None:
             self._id = item_id
             self._name = name
             self._path = path
@@ -298,7 +350,9 @@ def test_drive_folder_refresh_tree_refreshes_descendants() -> None:
 
 def test_fetch_build_child_resources_flattens_runtime_items() -> None:
     class DummyFile(DriveFile):
-        def __init__(self, *, item_id: str, name: str, path: str, source_url: str) -> None:
+        def __init__(
+            self, *, item_id: str, name: str, path: str, source_url: str
+        ) -> None:
             self._id = item_id
             self._name = name
             self._path = path
@@ -331,7 +385,14 @@ def test_fetch_build_child_resources_flattens_runtime_items() -> None:
             return self
 
     class DummyFolder(DriveFolder):
-        def __init__(self, *, item_id: str, name: str, path: str, children: list[DriveFile | DriveFolder]) -> None:
+        def __init__(
+            self,
+            *,
+            item_id: str,
+            name: str,
+            path: str,
+            children: list[DriveFile | DriveFolder],
+        ) -> None:
             self._id = item_id
             self._name = name
             self._path = path
@@ -416,8 +477,19 @@ def test_gdrive_file_refresh_refreshes_metadata() -> None:
                 "relative_path": "nested/renamed.csv",
             }
 
-        def _to_item(self, raw_metadata: dict, *, current_rel_path: str = "", scope_root: bool = False):
-            return GDriveFile(raw_metadata=raw_metadata, client=self, current_rel_path=current_rel_path, scope_root=scope_root)
+        def _to_item(
+            self,
+            raw_metadata: dict,
+            *,
+            current_rel_path: str = "",
+            scope_root: bool = False,
+        ):
+            return GDriveFile(
+                raw_metadata=raw_metadata,
+                client=self,
+                current_rel_path=current_rel_path,
+                scope_root=scope_root,
+            )
 
     client = DummyClient()
     item = GDriveFile(
@@ -439,9 +511,7 @@ def test_gdrive_file_refresh_refreshes_metadata() -> None:
     assert refreshed is item
     assert refreshed.name == "renamed.csv"
     assert refreshed.path == "nested/renamed.csv"
-    assert client.calls == [
-        ("file-1", "id,name,mimeType,parents,webViewLink"),
-    ]
+    assert client.calls == [("file-1", "id,name,mimeType,parents,webViewLink")]
 
 
 def test_gdrive_folder_refresh_refreshes_children() -> None:
@@ -472,10 +542,26 @@ def test_gdrive_folder_refresh_refreshes_children() -> None:
                 }
             ]
 
-        def _to_item(self, raw_metadata: dict, *, current_rel_path: str = "", scope_root: bool = False):
+        def _to_item(
+            self,
+            raw_metadata: dict,
+            *,
+            current_rel_path: str = "",
+            scope_root: bool = False,
+        ):
             if raw_metadata.get("mimeType") == "application/vnd.google-apps.folder":
-                return GDriveFolder(raw_metadata=raw_metadata, client=self, current_rel_path=current_rel_path, scope_root=scope_root)
-            return GDriveFile(raw_metadata=raw_metadata, client=self, current_rel_path=current_rel_path, scope_root=scope_root)
+                return GDriveFolder(
+                    raw_metadata=raw_metadata,
+                    client=self,
+                    current_rel_path=current_rel_path,
+                    scope_root=scope_root,
+                )
+            return GDriveFile(
+                raw_metadata=raw_metadata,
+                client=self,
+                current_rel_path=current_rel_path,
+                scope_root=scope_root,
+            )
 
     client = DummyClient()
     item = GDriveFolder(
@@ -506,7 +592,9 @@ def test_sharepoint_file_refresh_refreshes_metadata() -> None:
         def __init__(self) -> None:
             self.calls: list[tuple[str, str]] = []
 
-        def get_item_metadata(self, drive: str, *, item_path=None, item_id=None, fields=None):
+        def get_item_metadata(
+            self, drive: str, *, item_path=None, item_id=None, fields=None
+        ):
             self.calls.append((drive, item_id))
             return {
                 "id": item_id,
@@ -517,8 +605,19 @@ def test_sharepoint_file_refresh_refreshes_metadata() -> None:
                 "relative_path": "nested/renamed.csv",
             }
 
-        def _to_item(self, raw_metadata: dict, *, current_rel_path: str = "", scope_root: bool = False):
-            return SharepointFile(raw_metadata=raw_metadata, client=self, current_rel_path=current_rel_path, scope_root=scope_root)
+        def _to_item(
+            self,
+            raw_metadata: dict,
+            *,
+            current_rel_path: str = "",
+            scope_root: bool = False,
+        ):
+            return SharepointFile(
+                raw_metadata=raw_metadata,
+                client=self,
+                current_rel_path=current_rel_path,
+                scope_root=scope_root,
+            )
 
     client = DummyClient()
     item = SharepointFile(
@@ -549,7 +648,9 @@ def test_sharepoint_folder_refresh_refreshes_children() -> None:
         def __init__(self) -> None:
             self.calls: list[tuple[str, str]] = []
 
-        def get_item_metadata(self, drive: str, *, item_path=None, item_id=None, fields=None):
+        def get_item_metadata(
+            self, drive: str, *, item_path=None, item_id=None, fields=None
+        ):
             self.calls.append((drive, item_id))
             return {
                 "id": item_id,
@@ -569,10 +670,26 @@ def test_sharepoint_folder_refresh_refreshes_children() -> None:
                 ],
             }
 
-        def _to_item(self, raw_metadata: dict, *, current_rel_path: str = "", scope_root: bool = False):
+        def _to_item(
+            self,
+            raw_metadata: dict,
+            *,
+            current_rel_path: str = "",
+            scope_root: bool = False,
+        ):
             if "folder" in raw_metadata:
-                return SharepointFolder(raw_metadata=raw_metadata, client=self, current_rel_path=current_rel_path, scope_root=scope_root)
-            return SharepointFile(raw_metadata=raw_metadata, client=self, current_rel_path=current_rel_path, scope_root=scope_root)
+                return SharepointFolder(
+                    raw_metadata=raw_metadata,
+                    client=self,
+                    current_rel_path=current_rel_path,
+                    scope_root=scope_root,
+                )
+            return SharepointFile(
+                raw_metadata=raw_metadata,
+                client=self,
+                current_rel_path=current_rel_path,
+                scope_root=scope_root,
+            )
 
     client = DummyClient()
     item = SharepointFolder(
@@ -642,7 +759,9 @@ def _write_descriptor(path: Path) -> None:
     )
 
 
-def test_check_auth_for_descriptor_limits_checks_to_selected_adapters(tmp_path: Path) -> None:
+def test_check_auth_for_descriptor_limits_checks_to_selected_adapters(
+    tmp_path: Path,
+) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(descriptor)
     calls: list[str] = []
@@ -698,7 +817,9 @@ def test_fetch_from_descriptor_check_auth_stops_before_download_on_failure(
     assert not (tmp_path / "resources" / "downloads" / "spec.xlsx").exists()
 
 
-def test_fetch_from_descriptor_check_auth_allows_download_when_ready(tmp_path: Path) -> None:
+def test_fetch_from_descriptor_check_auth_allows_download_when_ready(
+    tmp_path: Path,
+) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(descriptor)
 
@@ -711,14 +832,17 @@ def test_fetch_from_descriptor_check_auth_allows_download_when_ready(tmp_path: P
 
         def get_from_weburl(self, url: str) -> None:
             calls = self.calls
+
             class DummyFileItem:
                 @property
                 def is_directory(self) -> bool:
                     return False
+
                 def download(self, target_path: str) -> None:
                     calls.append((url, target_path))
                     Path(target_path).parent.mkdir(parents=True, exist_ok=True)
                     Path(target_path).write_text("ok", encoding="utf-8")
+
             return DummyFileItem()
 
     client = DummyDriveClient()
@@ -737,15 +861,14 @@ def test_fetch_from_descriptor_check_auth_allows_download_when_ready(tmp_path: P
     assert summary.ok is True
     assert summary.downloaded == 1
     assert client.calls == [
-        (
-            "https://docs.google.com/spreadsheets/d/test-sheet/edit",
-            str(output_path),
-        )
+        ("https://docs.google.com/spreadsheets/d/test-sheet/edit", str(output_path))
     ]
     assert output_path.read_text(encoding="utf-8") == "ok"
 
 
-def test_fetch_from_descriptor_materializes_google_drive_directory_resources(tmp_path: Path) -> None:
+def test_fetch_from_descriptor_materializes_google_drive_directory_resources(
+    tmp_path: Path,
+) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
         descriptor,
@@ -813,7 +936,9 @@ def test_fetch_from_descriptor_materializes_google_drive_directory_resources(tmp
     )
 
     summary_path = tmp_path / "resources" / "downloads" / "census" / "summary.csv"
-    detail_path = tmp_path / "resources" / "downloads" / "census" / "nested" / "detail.csv"
+    detail_path = (
+        tmp_path / "resources" / "downloads" / "census" / "nested" / "detail.csv"
+    )
     assert summary.ok is True
     assert summary.downloaded == 2
     assert client.list_calls == [
@@ -827,7 +952,9 @@ def test_fetch_from_descriptor_materializes_google_drive_directory_resources(tmp
     assert detail_path.read_text(encoding="utf-8") == "sheet-2"
 
 
-def test_fetch_from_descriptor_materializes_google_drive_directory_path_target(tmp_path: Path) -> None:
+def test_fetch_from_descriptor_materializes_google_drive_directory_path_target(
+    tmp_path: Path,
+) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
         descriptor,
@@ -896,11 +1023,24 @@ def test_fetch_from_descriptor_materializes_google_drive_directory_path_target(t
     assert client.download_calls == [
         (
             "file-1",
-            str(tmp_path / "resources" / "downloads" / "term-proposal-documents" / "summary.csv"),
+            str(
+                tmp_path
+                / "resources"
+                / "downloads"
+                / "term-proposal-documents"
+                / "summary.csv"
+            ),
         ),
         (
             "file-2",
-            str(tmp_path / "resources" / "downloads" / "term-proposal-documents" / "nested" / "detail.csv"),
+            str(
+                tmp_path
+                / "resources"
+                / "downloads"
+                / "term-proposal-documents"
+                / "nested"
+                / "detail.csv"
+            ),
         ),
     ]
 
@@ -972,10 +1112,7 @@ def test_fetch_from_descriptor_fetches_nested_package_resources(tmp_path: Path) 
     assert summary.ok is True
     assert summary.downloaded == 1
     assert client.calls == [
-        (
-            "https://docs.google.com/spreadsheets/d/test-sheet/edit",
-            str(output_path),
-        )
+        ("https://docs.google.com/spreadsheets/d/test-sheet/edit", str(output_path))
     ]
     assert output_path.read_text(encoding="utf-8") == "nested-ok"
 
@@ -1058,10 +1195,7 @@ def test_fetch_from_descriptor_matches_nested_dot_path_include(tmp_path: Path) -
     assert summary.ok is True
     assert summary.downloaded == 1
     assert client.calls == [
-        (
-            "https://docs.google.com/spreadsheets/d/test-sheet/edit",
-            str(output_path),
-        )
+        ("https://docs.google.com/spreadsheets/d/test-sheet/edit", str(output_path))
     ]
 
 
@@ -1132,14 +1266,13 @@ def test_fetch_from_descriptor_matches_top_level_package_name(tmp_path: Path) ->
     assert summary.ok is True
     assert summary.downloaded == 1
     assert client.calls == [
-        (
-            "https://docs.google.com/spreadsheets/d/test-sheet/edit",
-            str(output_path),
-        )
+        ("https://docs.google.com/spreadsheets/d/test-sheet/edit", str(output_path))
     ]
 
 
-def test_download_from_descriptor_matches_nested_catalog_package_name(tmp_path: Path) -> None:
+def test_download_from_descriptor_matches_nested_catalog_package_name(
+    tmp_path: Path,
+) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
         descriptor,
@@ -1216,14 +1349,96 @@ def test_download_from_descriptor_matches_nested_catalog_package_name(tmp_path: 
     assert summary.ok is True
     assert summary.downloaded == 1
     assert client.calls == [
-        (
-            "https://docs.google.com/spreadsheets/d/test-sheet/edit",
-            str(output_path),
-        )
+        ("https://docs.google.com/spreadsheets/d/test-sheet/edit", str(output_path))
     ]
 
 
-def test_fetch_resource_metadata_supports_sharepoint_directory(tmp_path: Path) -> None:
+def test_download_from_descriptor_selecting_catalog_includes_nested_package_resources(
+    tmp_path: Path,
+) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_catalog_descriptor(
+        descriptor,
+        catalogs=[
+            {
+                "name": "research",
+                "catalogs": [
+                    {
+                        "name": "archive",
+                        "packages": [
+                            {
+                                "name": "analytics-docs",
+                                "path": "downloads/analytics",
+                                "syncTarget": "resources",
+                                "sources": [
+                                    {
+                                        "path": "https://drive.google.com/drive/folders/folder123",
+                                        "serviceType": "GoogleDrive",
+                                        "entityType": "Directory",
+                                    }
+                                ],
+                                "resources": [
+                                    {
+                                        "name": "selected-export",
+                                        "path": "export.csv",
+                                        "sources": [
+                                            {
+                                                "path": "https://docs.google.com/spreadsheets/d/test-sheet/edit",
+                                                "serviceType": "GoogleDrive",
+                                                "entityType": "File",
+                                            }
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    )
+
+    class DummyDriveClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def get_from_weburl(self, url: str):
+            calls = self.calls
+
+            class DummyFileItem:
+                @property
+                def is_directory(self) -> bool:
+                    return False
+
+                def download(self, target_path: str) -> None:
+                    calls.append((url, target_path))
+                    Path(target_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(target_path).write_text("nested-ok", encoding="utf-8")
+
+            return DummyFileItem()
+
+    client = DummyDriveClient()
+
+    summary = download_from_descriptor(
+        descriptor,
+        include=["research"],
+        output_dir=tmp_path / "resources",
+        dry_run=False,
+        log=lambda _message: None,
+        googledrive_client_factory=lambda: client,
+    )
+
+    output_path = tmp_path / "resources" / "downloads" / "analytics" / "export.csv"
+    assert summary.ok is True
+    assert summary.downloaded == 1
+    assert client.calls == [
+        ("https://docs.google.com/spreadsheets/d/test-sheet/edit", str(output_path))
+    ]
+
+
+def test_fetch_resource_metadata_supports_sharepoint_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
         descriptor,
@@ -1245,27 +1460,42 @@ def test_fetch_resource_metadata_supports_sharepoint_directory(tmp_path: Path) -
 
     class DummySharepointClient:
         def get_from_weburl(self, url: str):
-            assert url == "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs"
+            assert (
+                url
+                == "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs"
+            )
 
             class DummyFolder:
                 @property
-                def is_directory(self): return True
+                def is_directory(self):
+                    return True
 
                 @property
                 def children(self):
                     class DummyItem1:
                         @property
-                        def id(self): return "1"
+                        def id(self):
+                            return "1"
+
                         @property
-                        def name(self): return "spec.xlsx"
+                        def name(self):
+                            return "spec.xlsx"
+
                         @property
-                        def path(self): return "spec.xlsx"
+                        def path(self):
+                            return "spec.xlsx"
+
                         @property
-                        def is_directory(self): return False
+                        def is_directory(self):
+                            return False
+
                         @property
-                        def source_url(self): return "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/spec.xlsx"
+                        def source_url(self):
+                            return "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/spec.xlsx"
+
                         def to_dp(self):
                             from sharedrive.models import DriveSource, DriveResource
+
                             return DriveResource(
                                 name="spec.xlsx",
                                 path="downloads/shared-specs/spec.xlsx",
@@ -1284,17 +1514,28 @@ def test_fetch_resource_metadata_supports_sharepoint_directory(tmp_path: Path) -
 
                     class DummyItem2:
                         @property
-                        def id(self): return "2"
+                        def id(self):
+                            return "2"
+
                         @property
-                        def name(self): return "detail.csv"
+                        def name(self):
+                            return "detail.csv"
+
                         @property
-                        def path(self): return "nested/detail.csv"
+                        def path(self):
+                            return "nested/detail.csv"
+
                         @property
-                        def is_directory(self): return False
+                        def is_directory(self):
+                            return False
+
                         @property
-                        def source_url(self): return "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/nested/detail.csv"
+                        def source_url(self):
+                            return "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/nested/detail.csv"
+
                         def to_dp(self):
                             from sharedrive.models import DriveSource, DriveResource
+
                             return DriveResource(
                                 name="detail.csv",
                                 path="downloads/shared-specs/nested/detail.csv",
@@ -1310,15 +1551,20 @@ def test_fetch_resource_metadata_supports_sharepoint_directory(tmp_path: Path) -
                                     )
                                 ],
                             )
+
                     return [DummyItem1(), DummyItem2()]
+
             return DummyFolder()
+
+    _patch_fetch_registry(
+        monkeypatch, sharepoint_factory=lambda: DummySharepointClient()
+    )
 
     summary = fetch_resource_metadata_in_descriptor(
         descriptor=descriptor,
         resource_name="shared-specs",
         dry_run=False,
         log=lambda _message: None,
-        sharepoint_client_factory=lambda: DummySharepointClient(),
     )
 
     assert summary.changed is True
@@ -1329,7 +1575,9 @@ def test_fetch_resource_metadata_supports_sharepoint_directory(tmp_path: Path) -
     assert "serviceType: SharePoint" in document
 
 
-def test_fetch_resource_metadata_resolves_nested_catalog_package_selector(tmp_path: Path) -> None:
+def test_fetch_resource_metadata_resolves_nested_catalog_package_selector(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
         descriptor,
@@ -1391,12 +1639,15 @@ def test_fetch_resource_metadata_resolves_nested_catalog_package_selector(tmp_pa
 
             return DummyFolder()
 
+    _patch_fetch_registry(
+        monkeypatch, sharepoint_factory=lambda: DummySharepointClient()
+    )
+
     summary = fetch_resource_metadata_in_descriptor(
         descriptor=descriptor,
         resource_name="research.archive.shared-specs",
         dry_run=False,
         log=lambda _message: None,
-        sharepoint_client_factory=lambda: DummySharepointClient(),
     )
 
     assert summary.changed is True
@@ -1404,7 +1655,9 @@ def test_fetch_resource_metadata_resolves_nested_catalog_package_selector(tmp_pa
     assert "spec.xlsx" in descriptor.read_text(encoding="utf-8")
 
 
-def test_fetch_resource_metadata_rejects_legacy_package_root_descriptor(tmp_path: Path) -> None:
+def test_fetch_resource_metadata_rejects_legacy_package_root_descriptor(
+    tmp_path: Path,
+) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     descriptor.write_text(
         """
@@ -1431,16 +1684,15 @@ resources:
         assert "data-package-catalog" in str(exc)
         assert "packages:" in str(exc)
     else:  # pragma: no cover
-        raise AssertionError("Expected legacy package-root descriptor validation failure")
+        raise AssertionError(
+            "Expected legacy package-root descriptor validation failure"
+        )
 
 
 def test_resource_adapter_name_prefers_drive_service_over_legacy_adapter() -> None:
     resource = {
         "sources": [
-            {
-                "serviceType": "SharePoint",
-                "path": "https://example.invalid/file.xlsx",
-            }
+            {"serviceType": "SharePoint", "path": "https://example.invalid/file.xlsx"}
         ],
         "x-adapter": "s3",
     }
@@ -1452,12 +1704,15 @@ def test_resource_adapter_name_supports_legacy_x_adapter() -> None:
     resource = {"x-adapter": "googledrive"}
 
     assert (
-        resource_adapter_name(
-            resource,
-            "https://example.invalid/path.csv",
-        )
+        resource_adapter_name(resource, "https://example.invalid/path.csv")
         == "googledrive"
     )
+
+
+def test_resource_adapter_name_supports_model_resources_without_mapping_api() -> None:
+    resource = DriveResource(name="model-resource", path="downloads/model-resource.csv")
+
+    assert resource_adapter_name(resource, None) == "unknown"
 
 
 def test_download_from_descriptor_requires_existing_descriptor(tmp_path: Path) -> None:
@@ -1482,7 +1737,9 @@ def test_check_auth_for_descriptor_requires_existing_descriptor(tmp_path: Path) 
         raise AssertionError("Expected FileNotFoundError for missing descriptor")
 
 
-def test_fetch_entity_metadata_fetches_all_packages_in_catalog(tmp_path: Path) -> None:
+def test_fetch_entity_metadata_fetches_all_packages_in_catalog(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """fetch_entity_metadata_in_descriptor with a DriveCatalog selector fetches each package."""
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
@@ -1533,10 +1790,17 @@ def test_fetch_entity_metadata_fetches_all_packages_in_catalog(tmp_path: Path) -
 
                 def to_dp(self):
                     from sharedrive.models import DriveResource, DriveSource
+
                     return DriveResource(
                         name="report.csv",
                         path="report.csv",
-                        sources=[DriveSource(path=url + "/report.csv", serviceType="GoogleDrive", entityType="File")],
+                        sources=[
+                            DriveSource(
+                                path=url + "/report.csv",
+                                serviceType="GoogleDrive",
+                                entityType="File",
+                            )
+                        ],
                     )
 
             class DummyFolder:
@@ -1550,12 +1814,10 @@ def test_fetch_entity_metadata_fetches_all_packages_in_catalog(tmp_path: Path) -
 
             return DummyFolder()
 
+    _patch_fetch_registry(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
+
     summaries = fetch_entity_metadata_in_descriptor(
-        descriptor=descriptor,
-        entity_selector="research",
-        dry_run=False,
-        log=None,
-        googledrive_client_factory=lambda: DummyDriveClient(),
+        descriptor=descriptor, entity_selector="research", dry_run=False, log=None
     )
 
     assert len(summaries) == 2
@@ -1577,7 +1839,9 @@ def test_fetch_entity_metadata_fetches_all_packages_in_catalog(tmp_path: Path) -
     assert catalog["packages"][1]["resources"][0]["name"] == "report.csv"
 
 
-def test_fetch_entity_metadata_dry_run_does_not_write_catalog(tmp_path: Path) -> None:
+def test_fetch_entity_metadata_dry_run_does_not_write_catalog(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Catalog fetch with dry_run=True does not modify the descriptor."""
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
@@ -1613,10 +1877,17 @@ def test_fetch_entity_metadata_dry_run_does_not_write_catalog(tmp_path: Path) ->
 
                 def to_dp(self):
                     from sharedrive.models import DriveResource, DriveSource
+
                     return DriveResource(
                         name="report.csv",
                         path="report.csv",
-                        sources=[DriveSource(path="https://example.com/report.csv", serviceType="GoogleDrive", entityType="File")],
+                        sources=[
+                            DriveSource(
+                                path="https://example.com/report.csv",
+                                serviceType="GoogleDrive",
+                                entityType="File",
+                            )
+                        ],
                     )
 
             class DummyFolder:
@@ -1630,12 +1901,10 @@ def test_fetch_entity_metadata_dry_run_does_not_write_catalog(tmp_path: Path) ->
 
             return DummyFolder()
 
+    _patch_fetch_registry(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
+
     summaries = fetch_entity_metadata_in_descriptor(
-        descriptor=descriptor,
-        entity_selector="research",
-        dry_run=True,
-        log=None,
-        googledrive_client_factory=lambda: DummyDriveClient(),
+        descriptor=descriptor, entity_selector="research", dry_run=True, log=None
     )
 
     assert len(summaries) == 1
@@ -1644,7 +1913,9 @@ def test_fetch_entity_metadata_dry_run_does_not_write_catalog(tmp_path: Path) ->
     assert descriptor.read_text(encoding="utf-8") == before
 
 
-def test_fetch_entity_metadata_with_depth_recurses_sub_catalogs(tmp_path: Path) -> None:
+def test_fetch_entity_metadata_with_depth_recurses_sub_catalogs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """depth=1 causes fetch to recurse one level into nested catalogs."""
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
@@ -1702,10 +1973,17 @@ def test_fetch_entity_metadata_with_depth_recurses_sub_catalogs(tmp_path: Path) 
 
                 def to_dp(self):
                     from sharedrive.models import DriveResource, DriveSource
+
                     return DriveResource(
                         name="file.csv",
                         path="file.csv",
-                        sources=[DriveSource(path=url + "/file.csv", serviceType="GoogleDrive", entityType="File")],
+                        sources=[
+                            DriveSource(
+                                path=url + "/file.csv",
+                                serviceType="GoogleDrive",
+                                entityType="File",
+                            )
+                        ],
                     )
 
             class DummyFolder:
@@ -1720,13 +1998,14 @@ def test_fetch_entity_metadata_with_depth_recurses_sub_catalogs(tmp_path: Path) 
             return DummyFolder()
 
     # depth=0 (default): only top-level package
+    _patch_fetch_registry(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
+
     summaries_flat = fetch_entity_metadata_in_descriptor(
         descriptor=descriptor,
         entity_selector="research",
         dry_run=True,
         depth=0,
         log=None,
-        googledrive_client_factory=lambda: DummyDriveClient(),
     )
     assert len(summaries_flat) == 1
     assert summaries_flat[0].resource_name == "top-docs"
@@ -1738,7 +2017,6 @@ def test_fetch_entity_metadata_with_depth_recurses_sub_catalogs(tmp_path: Path) 
         dry_run=True,
         depth=1,
         log=None,
-        googledrive_client_factory=lambda: DummyDriveClient(),
     )
     assert len(summaries_deep) == 2
     assert summaries_deep[0].resource_name == "top-docs"
@@ -1767,9 +2045,7 @@ def test_fetch_entity_metadata_raises_for_standalone_resource(tmp_path: Path) ->
 
     try:
         fetch_entity_metadata_in_descriptor(
-            descriptor=descriptor,
-            entity_selector="my-file",
-            log=None,
+            descriptor=descriptor, entity_selector="my-file", log=None
         )
     except ValueError as exc:
         assert "standalone resource" in str(exc)
