@@ -261,6 +261,8 @@ class S3Client(BaseClient):
             )
         except ClientError as exc:
             error_code = exc.response.get("Error", {}).get("Code", "")
+            # HeadObject returns HTTP 404 as error code "404"; GetObject/other
+            # ops use "NoSuchKey". Check both for defence-in-depth.
             if error_code in ("404", "NoSuchKey"):
                 prefix = key.rstrip("/") + "/"
                 return S3Item(bucket=bucket, key=prefix, is_prefix=True, client=self)

@@ -118,7 +118,7 @@ def test_get_from_weburl_prefix_explicit() -> None:
     item = client.get_from_weburl("s3://my-bucket/data/folder/")
 
     assert item.is_directory is True
-    assert item.key == "data/folder/" if hasattr(item, "key") else True
+    assert item._key == "data/folder/"
     mock_s3.head_object.assert_not_called()
 
 
@@ -269,7 +269,7 @@ def test_s3item_download_raises_s3_error_on_client_error(tmp_path: Path) -> None
         item.download(tmp_path / "file.csv")
 
 
-def test_s3item_refresh_file(tmp_path: Path) -> None:
+def test_s3item_refresh_file() -> None:
     client, mock_s3 = _make_client()
     mock_s3.head_object.return_value = {"ContentLength": 200}
     item = S3Item(bucket="my-bucket", key="data/file.csv", is_prefix=False, client=client)
