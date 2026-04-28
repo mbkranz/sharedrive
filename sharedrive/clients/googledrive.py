@@ -194,9 +194,8 @@ class GoogleDriveClient(GoogleBaseClient):
     production code.
 
     The class is registered as the ``"googledrive"`` provider via the
-    :func:`~sharedrive.registry.provider` decorator; use
-    :func:`~sharedrive.registry.build_service_registry` to obtain a
-    :class:`~sharedrive.registry.ServiceAdapter` for it.
+    :func:`~sharedrive.registry.provider` decorator; look it up at runtime
+    with :func:`~sharedrive.registry.get_provider`.
     """
 
     api_error_cls = GoogleDriveError

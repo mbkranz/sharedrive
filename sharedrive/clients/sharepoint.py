@@ -38,9 +38,8 @@ class SharepointClient(BaseClient):
     production code.
 
     The class is registered as the ``"sharepoint"`` provider via the
-    :func:`~sharedrive.registry.provider` decorator; use
-    :func:`~sharedrive.registry.build_service_registry` to obtain a
-    :class:`~sharedrive.registry.ServiceAdapter` for it.
+    :func:`~sharedrive.registry.provider` decorator; look it up at runtime
+    with :func:`~sharedrive.registry.get_provider`.
 
     Microsoft Graph API reference:
         https://learn.microsoft.com/en-us/graph/api/resources/onedrive?view=graph-rest-1.0

@@ -6,7 +6,7 @@ import pytest
 import yaml
 
 from sharedrive.actions.fetch import fetch_resource_metadata_in_descriptor
-from sharedrive.registry import ServiceAdapter
+from sharedrive.registry import get_provider
 
 
 def _write_syncable_descriptor(path: Path) -> None:
@@ -43,16 +43,29 @@ def _patch_fetch_registry(
     googledrive_factory=None,
     sharepoint_factory=None,
 ) -> None:
-    def fake_build_service_registry():
-        registry: dict[str, ServiceAdapter] = {}
-        if googledrive_factory is not None:
-            registry["googledrive"] = ServiceAdapter(build_client=googledrive_factory)
-        if sharepoint_factory is not None:
-            registry["sharepoint"] = ServiceAdapter(build_client=sharepoint_factory)
-        return registry
+    _real_get_provider = get_provider
+
+    def fake_get_provider(name: str):
+        if name == "googledrive" and googledrive_factory is not None:
+
+            class _GDriveStub:
+                @classmethod
+                def build_default(cls):
+                    return googledrive_factory()
+
+            return _GDriveStub
+        if name == "sharepoint" and sharepoint_factory is not None:
+
+            class _SPStub:
+                @classmethod
+                def build_default(cls):
+                    return sharepoint_factory()
+
+            return _SPStub
+        return _real_get_provider(name)
 
     monkeypatch.setattr(
-        "sharedrive.actions.fetch.build_service_registry", fake_build_service_registry
+        "sharedrive.actions.fetch.get_provider", fake_get_provider
     )
 
 

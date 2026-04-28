@@ -13,7 +13,7 @@ from sharedrive.models import (
     load_drive_descriptor,
     save_drive_descriptor,
 )
-from sharedrive.registry import build_service_registry
+from sharedrive.registry import get_provider
 
 LogFn = Callable[[str], None]
 
@@ -75,14 +75,17 @@ class FetchSummary:
 def _fetch_from_adapter(resource: Any, source_url: str) -> Any:
     adapter_name = resource_adapter_name(resource, source_url)
 
-    registry = build_service_registry()
-    adapter = registry.get(adapter_name)
-    if adapter is None or adapter.build_client is None:
+    # Ensure @provider decorators have run for the built-in client modules.
+    import sharedrive.clients.googledrive  # noqa: F401
+    import sharedrive.clients.sharepoint  # noqa: F401
+
+    cls = get_provider(adapter_name)
+    if cls is None:
         raise NotImplementedError(
             f"fetch is not implemented for adapter '{adapter_name}'."
         )
 
-    client = adapter.build_client()
+    client = cls.build_default()
     return client.get_from_weburl(source_url)
 
 

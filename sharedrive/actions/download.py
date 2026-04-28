@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import shutil
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import urlparse
 
 from dplib.system import Model
 
-from sharedrive.clients.aws import download_s3_url
+from sharedrive.clients.aws import check_s3_credentials, download_s3_url
 from sharedrive.helpers import resolve_default_descriptor
 from sharedrive.models import (
     DriveCatalog,
@@ -17,16 +16,10 @@ from sharedrive.models import (
     normalize_service_type,
     service_type_adapter_name,
 )
-from sharedrive.registry import ServiceAdapter, build_service_registry
+from sharedrive.registry import get_provider
 
 LogFn = Callable[[str], None]
 Entry = Model | dict[str, Any]
-
-
-@dataclass(frozen=True, slots=True)
-class DownloadAdapter:
-    download_directory: Callable[..., tuple[int, int]] | None = None
-    download_item: Callable[..., None] | None = None
 
 
 def load_descriptor(path: Path | str) -> DriveCatalog:
@@ -292,50 +285,46 @@ def _download_s3_item(
         raise RuntimeError("S3 download returned no output path")
 
 
-def _build_download_adapter_registry(
-    *,
-    sharepoint_client_factory: Callable[[], Any] | None,
-    googledrive_client_factory: Callable[[], Any] | None,
-    s3_auth_checker: Callable[[], None] | None = None,
-) -> dict[str, tuple[ServiceAdapter, DownloadAdapter]]:
-    service_registry = build_service_registry(
-        sharepoint_client_factory=sharepoint_client_factory,
-        googledrive_client_factory=googledrive_client_factory,
-        s3_auth_checker=s3_auth_checker,
-    )
-    return {
-        "sharepoint": (
-            service_registry["sharepoint"],
-            DownloadAdapter(
-                download_directory=_download_sharepoint_directory,
-                download_item=_download_sharepoint_item,
-            ),
-        ),
-        "googledrive": (
-            service_registry["googledrive"],
-            DownloadAdapter(
-                download_directory=_download_googledrive_directory,
-                download_item=_download_googledrive_item,
-            ),
-        ),
-        "s3": (
-            service_registry["s3"],
-            DownloadAdapter(download_item=_download_s3_item),
-        ),
-    }
+# Maps adapter name → directory-download function (for folder/container resources).
+_DIRECTORY_DOWNLOADERS: dict[str, Callable[..., tuple[int, int]]] = {
+    "sharepoint": _download_sharepoint_directory,
+    "googledrive": _download_googledrive_directory,
+}
+
+# Maps adapter name → single-item download function.
+_ITEM_DOWNLOADERS: dict[str, Callable[..., None]] = {
+    "sharepoint": _download_sharepoint_item,
+    "googledrive": _download_googledrive_item,
+    "s3": _download_s3_item,
+}
 
 
 def _get_download_client(
     adapter_name: str,
     *,
-    registry: dict[str, tuple[ServiceAdapter, DownloadAdapter]],
+    factories: dict[str, Callable[[], Any]],
     clients: dict[str, Any],
 ) -> Any:
-    registry_entry = registry.get(adapter_name)
-    if registry_entry is None or registry_entry[0].build_client is None:
+    """Return a cached client for *adapter_name*, building one if needed.
+
+    *factories* may supply test-override callables keyed by adapter name.
+    For production use, the registered :class:`~sharedrive.clients.base.BaseClient`
+    subclass's ``build_default()`` classmethod is called.
+    """
+    if adapter_name in clients:
+        return clients[adapter_name]
+    factory = factories.get(adapter_name)
+    if factory is not None:
+        clients[adapter_name] = factory()
+        return clients[adapter_name]
+    # Ensure @provider decorators have run.
+    import sharedrive.clients.googledrive  # noqa: F401
+    import sharedrive.clients.sharepoint  # noqa: F401
+
+    cls = get_provider(adapter_name)
+    if cls is None:
         raise ValueError(f"Adapter '{adapter_name}' does not provide a client factory.")
-    if adapter_name not in clients:
-        clients[adapter_name] = registry_entry[0].build_client()
+    clients[adapter_name] = cls.build_default()
     return clients[adapter_name]
 
 
@@ -586,26 +575,39 @@ def check_auth_for_adapters(
     googledrive_client_factory: Callable[[], Any] | None = None,
     s3_auth_checker: Callable[[], None] | None = None,
 ) -> list[AuthCheckResult]:
+    factories: dict[str, Callable[[], Any]] = {
+        k: v
+        for k, v in {
+            "sharepoint": sharepoint_client_factory,
+            "googledrive": googledrive_client_factory,
+        }.items()
+        if v is not None
+    }
     results: list[AuthCheckResult] = []
-    registry = _build_download_adapter_registry(
-        sharepoint_client_factory=sharepoint_client_factory,
-        googledrive_client_factory=googledrive_client_factory,
-        s3_auth_checker=s3_auth_checker,
-    )
 
     for adapter_name in adapters:
-        registry_entry = registry.get(adapter_name)
-        if registry_entry is None or registry_entry[0].check_auth is None:
-            results.append(
-                AuthCheckResult(
-                    adapter=adapter_name,
-                    ok=False,
-                    message=f"Unsupported adapter '{adapter_name}'.",
-                )
-            )
-            continue
         try:
-            registry_entry[0].check_auth()
+            if adapter_name == "s3":
+                (s3_auth_checker or check_s3_credentials)()
+            elif adapter_name in factories:
+                # Calling the factory is the auth check (test-override pattern).
+                factories[adapter_name]()
+            else:
+                # Ensure @provider decorators have run.
+                import sharedrive.clients.googledrive  # noqa: F401
+                import sharedrive.clients.sharepoint  # noqa: F401
+
+                cls = get_provider(adapter_name)
+                if cls is None:
+                    results.append(
+                        AuthCheckResult(
+                            adapter=adapter_name,
+                            ok=False,
+                            message=f"Unsupported adapter '{adapter_name}'.",
+                        )
+                    )
+                    continue
+                cls.check_auth()
             results.append(
                 AuthCheckResult(
                     adapter=adapter_name,
@@ -669,10 +671,14 @@ def download_from_descriptor(
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
     resources = _contained_entries(load_drive_descriptor(descriptor_path))
-    registry = _build_download_adapter_registry(
-        sharepoint_client_factory=sharepoint_client_factory,
-        googledrive_client_factory=googledrive_client_factory,
-    )
+    factories: dict[str, Callable[[], Any]] = {
+        k: v
+        for k, v in {
+            "sharepoint": sharepoint_client_factory,
+            "googledrive": googledrive_client_factory,
+        }.items()
+        if v is not None
+    }
 
     summary = DownloadSummary(total_resources=len(resources))
     clients: dict[str, Any] = {}
@@ -747,25 +753,22 @@ def download_from_descriptor(
             output_path = output_paths[0]
             sync_target = resource_sync_target(normalized)
             entity_type = source_entity_type(normalized)
-            registry_entry = registry.get(adapter_name)
-            service_adapter: ServiceAdapter | None = None
-            download_adapter: DownloadAdapter | None = None
-            if registry_entry is not None:
-                service_adapter, download_adapter = registry_entry
+
+            download_directory = _DIRECTORY_DOWNLOADERS.get(adapter_name)
+            download_item = _ITEM_DOWNLOADERS.get(adapter_name)
 
             if (
-                download_adapter is not None
-                and download_adapter.download_directory is not None
+                download_directory is not None
                 and entity_type in {"Directory", "Container"}
                 and not nested_entries
             ):
                 client = _get_download_client(
-                    adapter_name, registry=registry, clients=clients
+                    adapter_name, factories=factories, clients=clients
                 )
                 output_roots = (
                     output_paths if sync_target == "resources" else [output_path]
                 )
-                downloaded, dry_run_actions = download_adapter.download_directory(
+                downloaded, dry_run_actions = download_directory(
                     normalized,
                     output_roots=output_roots,
                     source_url=source_url,
@@ -784,25 +787,25 @@ def download_from_descriptor(
                 return
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            if download_adapter is None or download_adapter.download_item is None:
+            if download_item is None:
                 emit(
                     f"Warning, {resource_name} has unsupported adapter '{adapter_name}'"
                 )
                 summary.failures += 1
                 return
 
-            if service_adapter is not None and service_adapter.build_client is not None:
-                client = _get_download_client(
-                    adapter_name, registry=registry, clients=clients
-                )
-                download_adapter.download_item(
-                    client=client, source_url=source_url, output_path=output_path
-                )
-            else:
-                download_adapter.download_item(
+            if adapter_name == "s3":
+                download_item(
                     source_url=source_url,
                     output_path=output_path,
                     use_cloudpathlib=use_cloudpathlib,
+                )
+            else:
+                client = _get_download_client(
+                    adapter_name, factories=factories, clients=clients
+                )
+                download_item(
+                    client=client, source_url=source_url, output_path=output_path
                 )
 
             for destination in output_paths[1:]:
