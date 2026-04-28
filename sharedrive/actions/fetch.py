@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from sharedrive.actions.download import resource_adapter_name, resource_source_url
-from sharedrive.item import DriveFolder, DriveItem
+from sharedrive.item import DriveFile, DriveFolder, DriveItem
 from sharedrive.models import (
     DriveCatalog,
     DrivePackage,
@@ -13,9 +13,34 @@ from sharedrive.models import (
     load_drive_descriptor,
     save_drive_descriptor,
 )
-from sharedrive.registry import build_service_registry
+from sharedrive.registry import get_provider
 
 LogFn = Callable[[str], None]
+
+
+def _item_to_resource_dict(item: Any) -> dict[str, Any]:
+    """Convert a drive item to a :class:`~sharedrive.models.DriveResource` dict.
+
+    Calls ``item.to_dp().to_dict()`` when available.  Falls back to duck-typing
+    for lightweight test doubles that expose ``name``, ``path``,
+    ``source_url``, and ``service_type`` attributes without subclassing
+    :class:`~sharedrive.clients.base.DriveItem`.
+    """
+    if hasattr(item, "to_dp"):
+        return item.to_dp().to_dict()
+    name = str(getattr(item, "name", "") or "")
+    path_str = str(getattr(item, "path", "") or name)
+    source_url_str = str(getattr(item, "source_url", "") or "")
+    service_type_str = str(getattr(item, "service_type", "") or "")
+    suffix = Path(path_str).suffix.lstrip(".") if path_str else ""
+    return DriveResource.from_drive_metadata(
+        name=name,
+        path=path_str,
+        service_type=service_type_str,
+        entity_type="File",
+        source_url=source_url_str,
+        format_str=suffix or None,
+    ).to_dict()
 
 
 def _iter_drive_leaf_items(item: Any) -> Iterable[Any]:
@@ -48,7 +73,7 @@ def _build_child_resources(drive_item: Any) -> list[dict[str, Any]]:
         else:
             leaf_items = [refreshed_item]
         return [
-            item.to_dp().to_dict()
+            _item_to_resource_dict(item)
             for item in sorted(
                 leaf_items, key=lambda i: str(getattr(i, "path", "") or "")
             )
@@ -59,7 +84,7 @@ def _build_child_resources(drive_item: Any) -> list[dict[str, Any]]:
     else:
         leaf_items = list(_iter_drive_leaf_items(drive_item))
     return [
-        item.to_dp().to_dict()
+        _item_to_resource_dict(item)
         for item in sorted(leaf_items, key=lambda i: str(getattr(i, "path", "") or ""))
     ]
 
@@ -75,14 +100,13 @@ class FetchSummary:
 def _fetch_from_adapter(resource: Any, source_url: str) -> Any:
     adapter_name = resource_adapter_name(resource, source_url)
 
-    registry = build_service_registry()
-    adapter = registry.get(adapter_name)
-    if adapter is None or adapter.build_client is None:
+    provider_cls = get_provider(adapter_name)
+    if provider_cls is None or not hasattr(provider_cls, "build_default"):
         raise NotImplementedError(
             f"fetch is not implemented for adapter '{adapter_name}'."
         )
 
-    client = adapter.build_client()
+    client = provider_cls.build_default()
     return client.get_from_weburl(source_url)
 
 
@@ -143,7 +167,7 @@ def _build_catalog_children(
         if getattr(child, "is_directory", False):
             catalogs.append(_catalog_entry_from_item(child))
             continue
-        resources.append(child.to_dp().to_dict())
+        resources.append(_item_to_resource_dict(child))
     return resources, catalogs
 
 
@@ -227,6 +251,80 @@ def _collect_fetchable_entities_from_catalog(
     return result
 
 
+def _fetch_one_package(
+    entity: DrivePackage,
+    resolved_name: str,
+    *,
+    dry_run: bool,
+    log: LogFn | None,
+) -> "FetchSummary":
+    """Fetch the remote file listing for a source-backed package.
+
+    Populates ``entity.resources`` with one :class:`~sharedrive.models.DriveResource`
+    per remote file (unless *dry_run* is ``True``).
+    """
+    source_url = resource_source_url(entity)
+    if not source_url:
+        raise ValueError(f"Package '{resolved_name}' has no identifiable source URL.")
+
+    drive_item = _fetch_from_adapter(resource=entity, source_url=source_url)
+    resources = _build_child_resources(drive_item)
+    generated_resources = len(resources)
+
+    if log is not None:
+        verb = "Would fetch" if dry_run else "Fetched"
+        noun = "resource" if generated_resources == 1 else "resources"
+        log(f"{verb} metadata for {generated_resources} {noun} into package '{resolved_name}'.")
+
+    if not dry_run:
+        entity.resources = [DriveResource.model_validate(r) for r in resources]
+
+    return FetchSummary(
+        resource_name=resolved_name,
+        generated_resources=generated_resources,
+        dry_run=dry_run,
+        changed=not dry_run,
+    )
+
+
+def _fetch_one_catalog(
+    entity: DriveCatalog,
+    resolved_name: str,
+    *,
+    dry_run: bool,
+    log: LogFn | None,
+) -> "FetchSummary":
+    """Fetch the remote directory listing for a source-backed catalog.
+
+    Populates ``entity.resources`` and ``entity.catalogs`` (unless *dry_run*
+    is ``True``).
+    """
+    source_url = resource_source_url(entity)
+    if not source_url:
+        raise ValueError(f"Catalog '{resolved_name}' has no identifiable source URL.")
+
+    drive_item = _fetch_from_adapter(resource=entity, source_url=source_url)
+    resources, catalogs = _build_catalog_children(drive_item)
+    generated_entries = len(resources) + len(catalogs)
+
+    if log is not None:
+        verb = "Would fetch" if dry_run else "Fetched"
+        noun = "entry" if generated_entries == 1 else "entries"
+        log(f"{verb} metadata for {generated_entries} child {noun} into catalog '{resolved_name}'.")
+
+    if not dry_run:
+        entity.resources = [DriveResource.model_validate(item) for item in resources]
+        entity.catalogs = [DriveCatalog.model_validate(item) for item in catalogs]
+        entity.packages = []
+
+    return FetchSummary(
+        resource_name=resolved_name,
+        generated_resources=generated_entries,
+        dry_run=dry_run,
+        changed=not dry_run,
+    )
+
+
 def fetch_entity_metadata(
     descriptor: Path | str,
     entity_selector: str | None,
@@ -272,7 +370,7 @@ def fetch_entity_metadata(
 
     # DriveCatalog without its own source: collect fetchable descendants.
     fetchable_entities = _collect_fetchable_entities_from_catalog(
-        entity, entity_path, depth=depth
+        entity, entity_selector, depth=depth
     )
     summaries: list[FetchSummary] = []
     for child_path, child_entity in fetchable_entities:
@@ -293,6 +391,42 @@ def fetch_entity_metadata(
 
 
 
+# ---------------------------------------------------------------------------
+# Public API aliases
+# ---------------------------------------------------------------------------
+
+fetch_entity_metadata_in_descriptor = fetch_entity_metadata
+"""Preferred name for :func:`fetch_entity_metadata`.  Returns ``list[FetchSummary]``."""
+
+
+def fetch_resource_metadata_in_descriptor(
+    descriptor: Path | str,
+    resource_name: str,
+    *,
+    dry_run: bool = False,
+    log: LogFn | None = print,
+) -> FetchSummary:
+    """Fetch remote metadata for a single named package in *descriptor*.
+
+    This is a convenience wrapper around :func:`fetch_entity_metadata_in_descriptor`
+    that accepts a ``resource_name`` positional argument and returns a single
+    :class:`FetchSummary` rather than a list.
+
+    Raises :class:`ValueError` if the entity named *resource_name* is not found
+    or if *descriptor* does not exist.
+    """
+    summaries = fetch_entity_metadata(
+        descriptor,
+        resource_name,
+        dry_run=dry_run,
+        log=log,
+    )
+    return summaries[0]
+
+
 __all__ = [
-    "FetchSummary"
+    "FetchSummary",
+    "fetch_entity_metadata",
+    "fetch_entity_metadata_in_descriptor",
+    "fetch_resource_metadata_in_descriptor",
 ]

@@ -18,7 +18,6 @@ from sharedrive.clients.googledrive import GDriveFile, GDriveFolder
 from sharedrive.clients.sharepoint import SharepointFile, SharepointFolder
 from sharedrive.item import DriveFile, DriveFolder
 from sharedrive.models import DriveResource
-from sharedrive.registry import ServiceAdapter
 
 
 def _write_catalog_descriptor(
@@ -48,17 +47,25 @@ def _patch_fetch_registry(
     googledrive_factory=None,
     sharepoint_factory=None,
 ) -> None:
-    def fake_build_service_registry():
-        registry: dict[str, ServiceAdapter] = {}
-        if googledrive_factory is not None:
-            registry["googledrive"] = ServiceAdapter(build_client=googledrive_factory)
-        if sharepoint_factory is not None:
-            registry["sharepoint"] = ServiceAdapter(build_client=sharepoint_factory)
-        return registry
+    """Patch the ``get_provider`` entry-point used by ``fetch.py`` to inject test clients."""
 
-    monkeypatch.setattr(
-        "sharedrive.actions.fetch.build_service_registry", fake_build_service_registry
-    )
+    def fake_get_provider(name: str):
+        factory = (
+            googledrive_factory if name == "googledrive"
+            else sharepoint_factory if name == "sharepoint"
+            else None
+        )
+        if factory is None:
+            return None
+
+        class FakeProvider:
+            @classmethod
+            def build_default(cls):
+                return factory()
+
+        return FakeProvider
+
+    monkeypatch.setattr("sharedrive.actions.fetch.get_provider", fake_get_provider)
 
 
 def test_drive_file_refresh_returns_self() -> None:

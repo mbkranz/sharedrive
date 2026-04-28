@@ -9,9 +9,10 @@ from typing import Any, Dict, Literal, Optional, Union
 import requests
 from google.auth.credentials import Credentials
 
-from .base import DriveItem
+from .base import DriveFile, DriveFolder, DriveItem
 from ..auth.google import GoogleAuth
 from ..exceptions import GoogleApiError, GoogleDriveError
+from ..registry import provider
 
 
 class GoogleBaseClient:
@@ -130,6 +131,7 @@ ALT_EXPORTS = {
 }
 
 
+@provider("googledrive")
 class GoogleDriveClient(GoogleBaseClient):
     """
     Minimal Google Drive client (ID-first) with read/write and full export coverage for Google-native files.
@@ -158,12 +160,34 @@ class GoogleDriveClient(GoogleBaseClient):
         session: requests.Session | None = None,
         timeout: int = 120,
     ):
-        super().__init__(
-            auth=auth,
-            credentials=credentials,
-            session=session,
-            timeout=timeout,
-        )
+        if auth is not None and credentials is not None:
+            raise ValueError("Provide either auth or credentials, not both.")
+        if credentials is not None:
+            auth = GoogleAuth(credentials)
+        super().__init__(auth=auth, session=session, timeout=timeout)
+
+    # ------------------------------------------------------------------
+    # Named constructor and auth helpers
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def build_default(cls) -> "GoogleDriveClient":
+        """Build a client from environment variables / application default credentials.
+
+        Reads ``GOOGLE_AUTH_MODE``, ``GOOGLE_APPLICATION_CREDENTIALS``, and
+        related env vars via :class:`~sharedrive.auth.settings.GoogleAuthConfig`.
+        Falls back to ADC when no settings are configured.
+        """
+        return cls(auth=GoogleAuth.from_settings())
+
+    @classmethod
+    def check_auth(cls) -> None:
+        """Validate that Google Drive credentials are available.
+
+        Raises an exception if the credentials cannot be obtained or refreshed.
+        """
+        client = cls.build_default()
+        client._hdrs  # triggers ensure_valid() inside _hdrs
 
     @staticmethod
     def _is_google_workspace_file(file_mime_type: str) -> bool:
@@ -503,6 +527,11 @@ class GoogleDriveClient(GoogleBaseClient):
         file_id = self._extract_id_from_url(web_url)
         metadata = self.get_file(file_id, fields=fields + ",mimeType,webViewLink")
         return self._to_item(metadata, scope_root=True)
+
+    def download_item(self, *, source_url: str, output_path: Path, **kwargs: Any) -> None:
+        """Download the Google Drive file at *source_url* to *output_path*."""
+        item = self.get_from_weburl(source_url)
+        item.download(str(output_path))
 
     def _to_item(
         self,

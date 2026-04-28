@@ -8,7 +8,6 @@ from urllib.parse import urlparse
 
 from dplib.system import Model
 
-from sharedrive.clients.aws import download_s3_url
 from sharedrive.helpers import resolve_default_descriptor
 from sharedrive.models import (
     DriveCatalog,
@@ -17,16 +16,10 @@ from sharedrive.models import (
     normalize_service_type,
     service_type_adapter_name,
 )
-from sharedrive.registry import ServiceAdapter, build_service_registry
+from sharedrive.registry import get_provider
 
 LogFn = Callable[[str], None]
 Entry = Model | dict[str, Any]
-
-
-@dataclass(frozen=True, slots=True)
-class DownloadAdapter:
-    download_directory: Callable[..., tuple[int, int]] | None = None
-    download_item: Callable[..., None] | None = None
 
 
 def load_descriptor(path: Path | str) -> DriveCatalog:
@@ -282,60 +275,48 @@ def _download_googledrive_item(
     item.download(str(output_path))
 
 
-def _download_s3_item(
-    *, source_url: str, output_path: Path, use_cloudpathlib: bool
-) -> None:
-    result = download_s3_url(
-        source_url, output_path, dry_run=False, use_cloudpathlib=use_cloudpathlib
-    )
-    if result is None:
-        raise RuntimeError("S3 download returned no output path")
-
-
-def _build_download_adapter_registry(
+def _build_client_factory_map(
     *,
     sharepoint_client_factory: Callable[[], Any] | None,
     googledrive_client_factory: Callable[[], Any] | None,
-    s3_auth_checker: Callable[[], None] | None = None,
-) -> dict[str, tuple[ServiceAdapter, DownloadAdapter]]:
-    service_registry = build_service_registry(
-        sharepoint_client_factory=sharepoint_client_factory,
-        googledrive_client_factory=googledrive_client_factory,
-        s3_auth_checker=s3_auth_checker,
-    )
-    return {
-        "sharepoint": (
-            service_registry["sharepoint"],
-            DownloadAdapter(
-                download_directory=_download_sharepoint_directory,
-                download_item=_download_sharepoint_item,
-            ),
-        ),
-        "googledrive": (
-            service_registry["googledrive"],
-            DownloadAdapter(
-                download_directory=_download_googledrive_directory,
-                download_item=_download_googledrive_item,
-            ),
-        ),
-        "s3": (
-            service_registry["s3"],
-            DownloadAdapter(download_item=_download_s3_item),
-        ),
+) -> dict[str, Callable[[], Any]]:
+    """Map adapter names to zero-argument client factories.
+
+    Explicit override factories (used in tests) take precedence over the
+    :func:`~sharedrive.registry.get_provider` defaults.
+    """
+    result: dict[str, Callable[[], Any]] = {}
+    overrides = {
+        "sharepoint": sharepoint_client_factory,
+        "googledrive": googledrive_client_factory,
     }
+    for name, override in overrides.items():
+        if override is not None:
+            result[name] = override
+        else:
+            cls = get_provider(name)
+            if cls is not None and hasattr(cls, "build_default"):
+                result[name] = cls.build_default
+
+    # S3 has no factory override kwarg; always falls back to the registry.
+    s3_cls = get_provider("s3")
+    if s3_cls is not None and hasattr(s3_cls, "build_default"):
+        result["s3"] = s3_cls.build_default
+
+    return result
 
 
 def _get_download_client(
     adapter_name: str,
     *,
-    registry: dict[str, tuple[ServiceAdapter, DownloadAdapter]],
+    factory_map: dict[str, Callable[[], Any]],
     clients: dict[str, Any],
 ) -> Any:
-    registry_entry = registry.get(adapter_name)
-    if registry_entry is None or registry_entry[0].build_client is None:
-        raise ValueError(f"Adapter '{adapter_name}' does not provide a client factory.")
     if adapter_name not in clients:
-        clients[adapter_name] = registry_entry[0].build_client()
+        factory = factory_map.get(adapter_name)
+        if factory is None:
+            raise ValueError(f"Adapter '{adapter_name}' does not provide a client factory.")
+        clients[adapter_name] = factory()
     return clients[adapter_name]
 
 
@@ -502,38 +483,14 @@ def _download_googledrive_directory(
     dry_run: bool,
     emit: LogFn,
 ) -> tuple[int, int]:
-    resource_name = str(resource.get("name", "resource")).strip() or "resource"
-    folder_item = client.get_from_weburl(source_url)
-
-    downloaded = 0
-    dry_run_actions = 0
-    for child in _iter_drive_item_files(folder_item):
-        relative_path = child.path or child.name or getattr(child, "id", None)
-        if not relative_path:
-            relative_path = getattr(child, "id", "file")
-
-        destinations = [root / Path(relative_path) for root in output_roots]
-        if dry_run:
-            for destination in destinations:
-                emit(
-                    f"Would fetch {resource_name}/{relative_path} from {source_url} to {destination}"
-                )
-            dry_run_actions += len(destinations)
-            continue
-
-        primary_destination = destinations[0]
-        primary_destination.parent.mkdir(parents=True, exist_ok=True)
-        child.download(str(primary_destination))
-
-        for destination in destinations[1:]:
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            import shutil
-
-            shutil.copy2(primary_destination, destination)
-
-        downloaded += len(destinations)
-
-    return downloaded, dry_run_actions
+    return _download_directory_via_weburl(
+        resource,
+        output_roots=output_roots,
+        source_url=source_url,
+        client=client,
+        dry_run=dry_run,
+        emit=emit,
+    )
 
 
 def _download_sharepoint_directory(
@@ -545,6 +502,31 @@ def _download_sharepoint_directory(
     dry_run: bool,
     emit: LogFn,
 ) -> tuple[int, int]:
+    return _download_directory_via_weburl(
+        resource,
+        output_roots=output_roots,
+        source_url=source_url,
+        client=client,
+        dry_run=dry_run,
+        emit=emit,
+    )
+
+
+def _download_directory_via_weburl(
+    resource: dict[str, Any],
+    *,
+    output_roots: list[Path],
+    source_url: str,
+    client: Any,
+    dry_run: bool,
+    emit: LogFn,
+) -> tuple[int, int]:
+    """Download a folder/directory resource via ``client.get_from_weburl``.
+
+    Both Google Drive and SharePoint expose a ``get_from_weburl`` method that
+    returns a folder item with ``is_directory`` and ``children`` attributes.
+    This single implementation handles both adapters.
+    """
     resource_name = str(resource.get("name", "resource")).strip() or "resource"
     folder_item = client.get_from_weburl(source_url)
 
@@ -570,8 +552,6 @@ def _download_sharepoint_directory(
 
         for destination in destinations[1:]:
             destination.parent.mkdir(parents=True, exist_ok=True)
-            import shutil
-
             shutil.copy2(primary_destination, destination)
 
         downloaded += len(destinations)
@@ -587,15 +567,43 @@ def check_auth_for_adapters(
     s3_auth_checker: Callable[[], None] | None = None,
 ) -> list[AuthCheckResult]:
     results: list[AuthCheckResult] = []
-    registry = _build_download_adapter_registry(
-        sharepoint_client_factory=sharepoint_client_factory,
-        googledrive_client_factory=googledrive_client_factory,
-        s3_auth_checker=s3_auth_checker,
-    )
+
+    _adapter_messages = {
+        "sharepoint": ("SharePoint credentials are ready.", "SharePoint authentication failed"),
+        "googledrive": ("Google Drive credentials are ready.", "Google Drive authentication failed"),
+        "s3": ("AWS credentials are ready for S3 operations.", "S3 credential check failed"),
+    }
+
+    def _resolve_auth_check(name: str) -> Callable[[], None] | None:
+        """Return the auth-check callable for *name*, respecting factory overrides."""
+        if name == "s3":
+            if s3_auth_checker is not None:
+                return s3_auth_checker
+            cls = get_provider("s3")
+            return cls.check_auth if cls is not None else None
+
+        factory = (
+            sharepoint_client_factory if name == "sharepoint" else googledrive_client_factory
+        )
+        if factory is not None:
+            if name == "sharepoint":
+                return factory
+            # googledrive: build via factory, then trigger token refresh
+            def _gd_check() -> None:
+                client = factory()
+                ensure_valid = getattr(client, "_ensure_valid_credentials", None)
+                if callable(ensure_valid):
+                    ensure_valid()
+                else:
+                    _ = client._hdrs  # noqa: F841
+            return _gd_check
+
+        cls = get_provider(name)
+        return cls.check_auth if cls is not None and hasattr(cls, "check_auth") else None
 
     for adapter_name in adapters:
-        registry_entry = registry.get(adapter_name)
-        if registry_entry is None or registry_entry[0].check_auth is None:
+        auth_check = _resolve_auth_check(adapter_name)
+        if auth_check is None:
             results.append(
                 AuthCheckResult(
                     adapter=adapter_name,
@@ -604,28 +612,17 @@ def check_auth_for_adapters(
                 )
             )
             continue
+        ok_msg, fail_prefix = _adapter_messages.get(
+            adapter_name,
+            (f"Adapter '{adapter_name}' is ready.", f"Adapter '{adapter_name}' authentication failed"),
+        )
         try:
-            registry_entry[0].check_auth()
-            results.append(
-                AuthCheckResult(
-                    adapter=adapter_name,
-                    ok=True,
-                    message={
-                        "sharepoint": "SharePoint credentials are ready.",
-                        "googledrive": "Google Drive credentials are ready.",
-                        "s3": "AWS credentials are ready for S3 operations.",
-                    }.get(adapter_name, f"Adapter '{adapter_name}' is ready."),
-                )
-            )
+            auth_check()
+            results.append(AuthCheckResult(adapter=adapter_name, ok=True, message=ok_msg))
         except Exception as exc:
-            prefix = {
-                "sharepoint": "SharePoint authentication failed",
-                "googledrive": "Google Drive authentication failed",
-                "s3": "S3 credential check failed",
-            }.get(adapter_name, f"Adapter '{adapter_name}' authentication failed")
             results.append(
                 AuthCheckResult(
-                    adapter=adapter_name, ok=False, message=f"{prefix}: {exc}"
+                    adapter=adapter_name, ok=False, message=f"{fail_prefix}: {exc}"
                 )
             )
 
@@ -669,7 +666,7 @@ def download_from_descriptor(
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
     resources = _contained_entries(load_drive_descriptor(descriptor_path))
-    registry = _build_download_adapter_registry(
+    factory_map = _build_client_factory_map(
         sharepoint_client_factory=sharepoint_client_factory,
         googledrive_client_factory=googledrive_client_factory,
     )
@@ -697,6 +694,9 @@ def download_from_descriptor(
         if failed_checks:
             summary.failures += len(failed_checks)
             return summary
+
+    # Adapters that support directory-level downloads (have get_from_weburl).
+    _weburl_adapters = {"sharepoint", "googledrive"}
 
     def fetch_resource(
         resource: Entry,
@@ -747,25 +747,20 @@ def download_from_descriptor(
             output_path = output_paths[0]
             sync_target = resource_sync_target(normalized)
             entity_type = source_entity_type(normalized)
-            registry_entry = registry.get(adapter_name)
-            service_adapter: ServiceAdapter | None = None
-            download_adapter: DownloadAdapter | None = None
-            if registry_entry is not None:
-                service_adapter, download_adapter = registry_entry
 
+            supports_directory = adapter_name in _weburl_adapters
             if (
-                download_adapter is not None
-                and download_adapter.download_directory is not None
+                supports_directory
                 and entity_type in {"Directory", "Container"}
                 and not nested_entries
             ):
                 client = _get_download_client(
-                    adapter_name, registry=registry, clients=clients
+                    adapter_name, factory_map=factory_map, clients=clients
                 )
                 output_roots = (
                     output_paths if sync_target == "resources" else [output_path]
                 )
-                downloaded, dry_run_actions = download_adapter.download_directory(
+                downloaded, dry_run_actions = _download_directory_via_weburl(
                     normalized,
                     output_roots=output_roots,
                     source_url=source_url,
@@ -784,25 +779,26 @@ def download_from_descriptor(
                 return
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            if download_adapter is None or download_adapter.download_item is None:
+            if adapter_name not in factory_map:
                 emit(
                     f"Warning, {resource_name} has unsupported adapter '{adapter_name}'"
                 )
                 summary.failures += 1
                 return
 
-            if service_adapter is not None and service_adapter.build_client is not None:
-                client = _get_download_client(
-                    adapter_name, registry=registry, clients=clients
-                )
-                download_adapter.download_item(
-                    client=client, source_url=source_url, output_path=output_path
-                )
-            else:
-                download_adapter.download_item(
+            client = _get_download_client(
+                adapter_name, factory_map=factory_map, clients=clients
+            )
+            if hasattr(client, "download_item"):
+                client.download_item(
                     source_url=source_url,
                     output_path=output_path,
                     use_cloudpathlib=use_cloudpathlib,
+                )
+            else:
+                # Legacy duck-typed path: client exposes get_from_weburl
+                _download_googledrive_item(
+                    client=client, source_url=source_url, output_path=output_path
                 )
 
             for destination in output_paths[1:]:

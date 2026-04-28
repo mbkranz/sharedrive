@@ -76,4 +76,44 @@ def download_s3_url(
 __all__ = [
     "download_s3_url",
     "parse_s3_source_url",
+    "S3Adapter",
 ]
+
+
+from sharedrive.registry import provider
+
+
+@provider("s3")
+class S3Adapter:
+    """Lightweight adapter for S3 downloads, registered under the ``"s3"`` provider name.
+
+    Unlike the Google Drive and SharePoint clients this adapter holds no auth
+    state — credentials are read from the boto3 credential chain at call time.
+    ``build_default()`` returns a fresh instance; all network I/O happens
+    inside :meth:`download_item`.
+    """
+
+    @classmethod
+    def build_default(cls) -> "S3Adapter":
+        """Return a new ``S3Adapter`` instance (stateless — no auth to configure)."""
+        return cls()
+
+    @classmethod
+    def check_auth(cls) -> None:
+        """Validate that AWS credentials are available for S3 operations."""
+        check_s3_credentials()
+
+    def download_item(
+        self,
+        *,
+        source_url: str,
+        output_path: Path,
+        use_cloudpathlib: bool = True,
+        **kwargs: object,
+    ) -> None:
+        """Download the S3 object at *source_url* to *output_path*."""
+        result = download_s3_url(
+            source_url, output_path, dry_run=False, use_cloudpathlib=use_cloudpathlib
+        )
+        if result is None:
+            raise RuntimeError("S3 download returned no output path")

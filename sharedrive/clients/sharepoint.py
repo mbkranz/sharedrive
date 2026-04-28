@@ -9,13 +9,15 @@ from urllib.parse import unquote, urlparse
 
 import requests
 
+from sharedrive.clients.base import DriveFile, DriveFolder, DriveItem
 from sharedrive.exceptions import GraphApiDriveError, GraphApiSiteError
-from sharedrive.item import DriveFile, DriveFolder, DriveItem
+from sharedrive.registry import provider
 
 if TYPE_CHECKING:
     from sharedrive.auth.microsoft import MicrosoftAuth
 
 
+@provider("sharepoint")
 class SharepointClient:
     """
     TODO: look into for local dev: https://learn.microsoft.com/en-us/powershell/microsoftgraph/overview?view=graph-powershell-1.0
@@ -45,6 +47,37 @@ class SharepointClient:
             )
 
         self.auth_header = {"Authorization": f"Bearer {self.access_token}"}
+
+    # ------------------------------------------------------------------
+    # Named constructor and auth helpers
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def build_default(cls) -> "SharepointClient":
+        """Build a client from environment variables / settings.
+
+        Reads ``AZURE_TENANT_ID``, ``AZURE_CLIENT_ID``, ``AZURE_CLIENT_SECRET``,
+        ``SHAREPOINT_HOST_URL``, and related env vars via
+        :class:`~sharedrive.auth.settings.MicrosoftAuthConfig`.
+        """
+        from sharedrive.auth.settings import MicrosoftAuthConfig
+
+        config = MicrosoftAuthConfig()
+        return cls(auth=config.to_auth(), host_url=config.host_url)
+
+    @classmethod
+    def check_auth(cls) -> None:
+        """Validate that SharePoint credentials are available.
+
+        Constructing the client triggers token acquisition via MSAL; any auth
+        failure surfaces as an exception here.
+        """
+        cls.build_default()
+
+    def download_item(self, *, source_url: str, output_path: Path, **kwargs: Any) -> None:
+        """Download the SharePoint item at *source_url* to *output_path*."""
+        item = self.get_from_weburl(source_url)
+        item.download(str(output_path))
 
     def _request_json(
         self, endpoint: str, *, params: dict[str, Any] | None = None
