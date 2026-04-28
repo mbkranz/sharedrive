@@ -15,6 +15,12 @@ from sharedrive.models import (
 )
 from sharedrive.registry import get_provider
 
+
+def _ensure_providers_registered() -> None:
+    """Import client modules so that ``@provider`` decorators have executed."""
+    import sharedrive.clients.googledrive  # noqa: F401
+    import sharedrive.clients.sharepoint  # noqa: F401
+
 LogFn = Callable[[str], None]
 
 
@@ -74,17 +80,12 @@ class FetchSummary:
 
 def _fetch_from_adapter(resource: Any, source_url: str) -> Any:
     adapter_name = resource_adapter_name(resource, source_url)
-
-    # Ensure @provider decorators have run for the built-in client modules.
-    import sharedrive.clients.googledrive  # noqa: F401
-    import sharedrive.clients.sharepoint  # noqa: F401
-
+    _ensure_providers_registered()
     cls = get_provider(adapter_name)
     if cls is None:
         raise NotImplementedError(
             f"fetch is not implemented for adapter '{adapter_name}'."
         )
-
     client = cls.build_default()
     return client.get_from_weburl(source_url)
 

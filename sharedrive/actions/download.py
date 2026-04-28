@@ -247,6 +247,12 @@ def resource_adapter_name(resource: Any, source_url: str | None) -> str:
     return host.split(".")[0] if host else "unknown"
 
 
+def _ensure_providers_registered() -> None:
+    """Import client modules so that ``@provider`` decorators have executed."""
+    import sharedrive.clients.googledrive  # noqa: F401
+    import sharedrive.clients.sharepoint  # noqa: F401
+
+
 def _normalize_include(include: str | Iterable[str]) -> set[str]:
     if isinstance(include, str):
         include_items = [include]
@@ -317,10 +323,7 @@ def _get_download_client(
     if factory is not None:
         clients[adapter_name] = factory()
         return clients[adapter_name]
-    # Ensure @provider decorators have run.
-    import sharedrive.clients.googledrive  # noqa: F401
-    import sharedrive.clients.sharepoint  # noqa: F401
-
+    _ensure_providers_registered()
     cls = get_provider(adapter_name)
     if cls is None:
         raise ValueError(f"Adapter '{adapter_name}' does not provide a client factory.")
@@ -575,14 +578,11 @@ def check_auth_for_adapters(
     googledrive_client_factory: Callable[[], Any] | None = None,
     s3_auth_checker: Callable[[], None] | None = None,
 ) -> list[AuthCheckResult]:
-    factories: dict[str, Callable[[], Any]] = {
-        k: v
-        for k, v in {
-            "sharepoint": sharepoint_client_factory,
-            "googledrive": googledrive_client_factory,
-        }.items()
-        if v is not None
-    }
+    factories: dict[str, Callable[[], Any]] = {}
+    if sharepoint_client_factory is not None:
+        factories["sharepoint"] = sharepoint_client_factory
+    if googledrive_client_factory is not None:
+        factories["googledrive"] = googledrive_client_factory
     results: list[AuthCheckResult] = []
 
     for adapter_name in adapters:
@@ -593,10 +593,7 @@ def check_auth_for_adapters(
                 # Calling the factory is the auth check (test-override pattern).
                 factories[adapter_name]()
             else:
-                # Ensure @provider decorators have run.
-                import sharedrive.clients.googledrive  # noqa: F401
-                import sharedrive.clients.sharepoint  # noqa: F401
-
+                _ensure_providers_registered()
                 cls = get_provider(adapter_name)
                 if cls is None:
                     results.append(
@@ -671,14 +668,11 @@ def download_from_descriptor(
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
     resources = _contained_entries(load_drive_descriptor(descriptor_path))
-    factories: dict[str, Callable[[], Any]] = {
-        k: v
-        for k, v in {
-            "sharepoint": sharepoint_client_factory,
-            "googledrive": googledrive_client_factory,
-        }.items()
-        if v is not None
-    }
+    factories: dict[str, Callable[[], Any]] = {}
+    if sharepoint_client_factory is not None:
+        factories["sharepoint"] = sharepoint_client_factory
+    if googledrive_client_factory is not None:
+        factories["googledrive"] = googledrive_client_factory
 
     summary = DownloadSummary(total_resources=len(resources))
     clients: dict[str, Any] = {}
