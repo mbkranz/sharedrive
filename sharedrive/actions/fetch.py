@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+import sharedrive.clients.aws  # noqa: F401 — trigger @provider("s3") registration
 import sharedrive.clients.googledrive  # noqa: F401 — trigger @provider registration
 import sharedrive.clients.sharepoint  # noqa: F401 — trigger @provider registration
 from sharedrive.actions.download import resource_adapter_name, resource_source_url

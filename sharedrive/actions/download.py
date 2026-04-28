@@ -8,9 +8,9 @@ from urllib.parse import urlparse
 
 from dplib.system import Model
 
+import sharedrive.clients.aws  # noqa: F401 — trigger @provider("s3") registration
 import sharedrive.clients.googledrive  # noqa: F401 — trigger @provider registration
 import sharedrive.clients.sharepoint  # noqa: F401 — trigger @provider registration
-from sharedrive.clients.aws import check_s3_credentials, download_s3_url
 from sharedrive.helpers import resolve_default_descriptor
 from sharedrive.models import (
     DriveCatalog,
@@ -492,9 +492,7 @@ def check_auth_for_adapters(
     """Check authentication for each of the named adapters.
 
     For adapters registered via :func:`~sharedrive.registry.provider`,
-    calls ``cls.check_auth()``.  The ``"s3"`` adapter is a special case:
-    it has no registered client class and is checked via
-    :func:`~sharedrive.clients.aws.check_s3_credentials`.
+    calls ``cls.check_auth()``.
     """
     _OK_MESSAGES = {
         "sharepoint": "SharePoint credentials are ready.",
@@ -509,26 +507,6 @@ def check_auth_for_adapters(
 
     results: list[AuthCheckResult] = []
     for adapter_name in adapters:
-        if adapter_name == "s3":
-            try:
-                check_s3_credentials()
-                results.append(
-                    AuthCheckResult(
-                        adapter="s3",
-                        ok=True,
-                        message=_OK_MESSAGES["s3"],
-                    )
-                )
-            except Exception as exc:
-                results.append(
-                    AuthCheckResult(
-                        adapter="s3",
-                        ok=False,
-                        message=f"{_FAIL_PREFIXES['s3']}: {exc}",
-                    )
-                )
-            continue
-
         cls = get_provider(adapter_name)
         if cls is None:
             results.append(
@@ -692,23 +670,6 @@ def download_from_descriptor(
                 _download_drive_item(
                     client=client, source_url=source_url, output_path=output_path
                 )
-
-            elif adapter_name == "s3":
-                if dry_run:
-                    for destination in output_paths:
-                        emit(f"Would fetch {source_url} to {destination}")
-                    summary.dry_run_actions += len(output_paths)
-                    return
-
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                result = download_s3_url(
-                    source_url,
-                    output_path,
-                    dry_run=False,
-                    use_cloudpathlib=use_cloudpathlib,
-                )
-                if result is None:
-                    raise RuntimeError("S3 download returned no output path")
 
             else:
                 emit(f"Warning, {resource_name} has unsupported adapter '{adapter_name}'")

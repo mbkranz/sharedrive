@@ -44,3 +44,7 @@ class GraphApiDriveError(GraphApiError):
 class GraphApiSiteError(GraphApiError):
     pass
 
+
+class S3Error(Exception):
+    """Raised when an S3 operation fails."""
+
