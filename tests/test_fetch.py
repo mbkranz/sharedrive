@@ -1913,6 +1913,168 @@ def test_fetch_entity_metadata_dry_run_does_not_write_catalog(
     assert descriptor.read_text(encoding="utf-8") == before
 
 
+def test_fetch_entity_metadata_fetches_source_backed_catalog_children(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_catalog_descriptor(
+        descriptor,
+        catalogs=[
+            {
+                "name": "research",
+                "sources": [
+                    {
+                        "path": "https://drive.google.com/drive/folders/research-folder",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "Directory",
+                    }
+                ],
+                "resources": [{"name": "stale-resource", "path": "stale.csv"}],
+                "packages": [
+                    {
+                        "name": "stale-package",
+                        "path": "downloads/stale",
+                        "syncTarget": "resources",
+                    }
+                ],
+                "catalogs": [{"name": "stale-catalog"}],
+            }
+        ],
+    )
+
+    class DummyDriveClient:
+        def get_from_weburl(self, url: str):
+            assert url == "https://drive.google.com/drive/folders/research-folder"
+
+            class DummyFile:
+                name = "report.csv"
+                path = "report.csv"
+                is_directory = False
+                service_type = "GoogleDrive"
+                source_url = "https://drive.google.com/open?id=report"
+
+                def to_dp(self):
+                    from sharedrive.models import DriveResource, DriveSource
+
+                    return DriveResource(
+                        name="report.csv",
+                        path="report.csv",
+                        sources=[
+                            DriveSource(
+                                path=self.source_url,
+                                serviceType="GoogleDrive",
+                                entityType="File",
+                            )
+                        ],
+                    )
+
+            class DummyFolder:
+                name = "archive"
+                path = "archive"
+                is_directory = True
+                service_type = "GoogleDrive"
+                source_url = "https://drive.google.com/drive/folders/archive-folder"
+                children: list[object] = []
+
+            class DummyRootFolder:
+                is_directory = True
+
+                @property
+                def children(self):
+                    return [DummyFolder(), DummyFile()]
+
+            return DummyRootFolder()
+
+    _patch_fetch_registry(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
+
+    summaries = fetch_entity_metadata_in_descriptor(
+        descriptor=descriptor, entity_selector="research", dry_run=False, log=None
+    )
+
+    assert len(summaries) == 1
+    assert summaries[0].resource_name == "research"
+    assert summaries[0].generated_resources == 2
+
+    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
+    catalog = document["catalogs"][0]
+    assert [resource["name"] for resource in catalog["resources"]] == ["report.csv"]
+    assert [sub_catalog["name"] for sub_catalog in catalog["catalogs"]] == ["archive"]
+    assert catalog["catalogs"][0]["sources"][0]["path"] == (
+        "https://drive.google.com/drive/folders/archive-folder"
+    )
+    assert not catalog.get("packages")
+
+
+def test_fetch_entity_metadata_from_root_fetches_immediate_source_backed_catalogs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_catalog_descriptor(
+        descriptor,
+        catalogs=[
+            {
+                "name": "research",
+                "sources": [
+                    {
+                        "path": "https://drive.google.com/drive/folders/research-folder",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "Directory",
+                    }
+                ],
+                "resources": [],
+                "catalogs": [],
+            }
+        ],
+    )
+
+    class DummyDriveClient:
+        def get_from_weburl(self, url: str):
+            assert url == "https://drive.google.com/drive/folders/research-folder"
+
+            class DummyFile:
+                name = "report.csv"
+                path = "report.csv"
+                is_directory = False
+                service_type = "GoogleDrive"
+                source_url = "https://drive.google.com/open?id=report"
+
+                def to_dp(self):
+                    from sharedrive.models import DriveResource, DriveSource
+
+                    return DriveResource(
+                        name="report.csv",
+                        path="report.csv",
+                        sources=[
+                            DriveSource(
+                                path=self.source_url,
+                                serviceType="GoogleDrive",
+                                entityType="File",
+                            )
+                        ],
+                    )
+
+            class DummyRootFolder:
+                is_directory = True
+
+                @property
+                def children(self):
+                    return [DummyFile()]
+
+            return DummyRootFolder()
+
+    _patch_fetch_registry(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
+
+    summaries = fetch_entity_metadata_in_descriptor(
+        descriptor=descriptor, entity_selector=None, dry_run=False, log=None
+    )
+
+    assert len(summaries) == 1
+    assert summaries[0].resource_name == "research"
+
+    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
+    assert document["catalogs"][0]["resources"][0]["name"] == "report.csv"
+
+
 def test_fetch_entity_metadata_with_depth_recurses_sub_catalogs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

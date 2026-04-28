@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 
 from sharedrive.actions.download import AuthCheckResult
 from sharedrive.cli import app
+from sharedrive.exceptions import GoogleAuthError
 
 RUNNER = CliRunner()
 
@@ -701,6 +702,29 @@ def test_fetch_command_exits_nonzero_on_error(
 
     assert result.exit_code == 1
     assert "was not found" in result.output
+
+
+def test_fetch_command_exits_nonzero_on_auth_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_descriptor(descriptor)
+
+    monkeypatch.setattr(
+        "sharedrive.cli.fetch_entity_metadata_in_descriptor",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            GoogleAuthError("Failed during user OAuth flow: invalid_grant")
+        ),
+    )
+
+    result = RUNNER.invoke(
+        app,
+        ["fetch", "census-package", "--descriptor", str(descriptor)],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 1
+    assert "invalid_grant" in result.output
 
 
 @pytest.mark.parametrize(

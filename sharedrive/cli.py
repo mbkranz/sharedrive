@@ -15,6 +15,7 @@ from sharedrive.actions.download import (
     download_from_descriptor,
 )
 from sharedrive.actions.fetch import fetch_entity_metadata_in_descriptor
+from sharedrive.exceptions import GoogleApiError, GraphApiError
 from sharedrive.helpers import (
     DESCRIPTOR_DEFAULTS_FILE,
     get_checked_out_entity,
@@ -847,7 +848,13 @@ def add(
             profile=profile,
             create_if_missing=not explicit_descriptor,
         )
-    except (FileNotFoundError, NotImplementedError, ValueError) as exc:
+    except (
+        FileNotFoundError,
+        NotImplementedError,
+        ValueError,
+        GoogleApiError,
+        GraphApiError,
+    ) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
@@ -915,7 +922,13 @@ def fetch(
             dry_run=dry_run,
             log=None,
         )
-    except (FileNotFoundError, NotImplementedError, ValueError) as exc:
+    except (
+        FileNotFoundError,
+        NotImplementedError,
+        ValueError,
+        GoogleApiError,
+        GraphApiError,
+    ) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
