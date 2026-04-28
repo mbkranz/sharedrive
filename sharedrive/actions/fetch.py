@@ -263,7 +263,7 @@ def _collect_fetchable_entities_from_catalog(
     return result
 
 
-def fetch_entity_metadata_in_descriptor(
+def fetch_entity_metadata(
     descriptor: Path | str,
     entity_selector: str | None,
     *,
@@ -346,57 +346,7 @@ def fetch_entity_metadata_in_descriptor(
     return summaries
 
 
-def fetch_resource_metadata_in_descriptor(
-    descriptor: Path | str,
-    resource_name: str,
-    *,
-    dry_run: bool = False,
-    log: LogFn | None = print,
-) -> FetchSummary:
-    """Fetch metadata for one package resource into nested descriptor resources.
-
-    Prefer :func:`fetch_entity_metadata_in_descriptor` which also handles
-    ``DriveCatalog`` entities and returns a list of results.
-    """
-    descriptor_path = Path(descriptor)
-    if not resource_name.strip():
-        raise ValueError("resource_name must be a non-empty string")
-
-    descriptor_model = load_drive_descriptor(descriptor_path)
-    resolved_reference = descriptor_model.get_resource_reference(resource_name)
-    if resolved_reference is None:
-        raise ValueError(f"Resource '{resource_name}' was not found.")
-
-    _, resource = resolved_reference
-    resolved_name = str(resource.name or resource_name).strip() or resource_name
-    if not isinstance(resource, DrivePackage):
-        raise ValueError(
-            f"Resource '{resolved_name}' must have syncTarget 'resources' to use fetch. "
-            "Only package resources (syncTarget: resources) can have their remote "
-            "metadata fetched into nested descriptor resources."
-        )
-
-    summary = _fetch_one_package(resource, resolved_name, dry_run=dry_run, log=log)
-    if not dry_run:
-        save_drive_descriptor(descriptor_path, descriptor_model)
-    return summary
-
-
-def fetch_package_metadata_in_descriptor(
-    descriptor: Path | str,
-    package_name: str,
-    *,
-    dry_run: bool = False,
-    log: LogFn | None = print,
-) -> FetchSummary:
-    return fetch_resource_metadata_in_descriptor(
-        descriptor=descriptor, resource_name=package_name, dry_run=dry_run, log=log
-    )
-
 
 __all__ = [
-    "FetchSummary",
-    "fetch_entity_metadata_in_descriptor",
-    "fetch_resource_metadata_in_descriptor",
-    "fetch_package_metadata_in_descriptor",
+    "FetchSummary"
 ]

@@ -14,8 +14,7 @@ from sharedrive.actions.download import (
 )
 from sharedrive.actions.fetch import (
     FetchSummary,
-    fetch_package_metadata_in_descriptor,
-    fetch_resource_metadata_in_descriptor,
+    fetch_entity_metadata
 )
 from sharedrive.helpers import resolve_default_descriptor
 
@@ -28,8 +27,7 @@ __all__ = [
     "check_auth_for_descriptor",
     "download_from_descriptor",
     "download_resources",
-    "fetch_package_metadata_in_descriptor",
-    "fetch_resource_metadata_in_descriptor",
+    "fetch_entity_metadata",
     "load_descriptor",
     "resolve_default_descriptor",
     "resource_adapter_name",
