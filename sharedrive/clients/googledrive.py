@@ -8,7 +8,7 @@ from typing import Any, Dict, Literal, Optional, Union
 
 import requests
 from google.auth.credentials import Credentials
-from sharedrive.item import DriveFile, DriveFolder, DriveItem
+from sharedrive.item import DriveItem
 
 from sharedrive.auth.google import GoogleAuth
 from sharedrive.exceptions import GoogleApiError, GoogleDriveError
@@ -504,10 +504,6 @@ class GoogleDriveClient(GoogleBaseClient):
         return response.json()
 
     def get_from_weburl(self, web_url: str, fields: str = "*") -> "GDriveItem":
-        """
-        Return metadata for a Google Drive file or folder given a web URL,
-        mapped to our active GDriveItem model.
-        """
         file_id = self._extract_id_from_url(web_url)
         metadata = self.get_file(file_id, fields=fields + ",mimeType,webViewLink")
         return self._to_item(metadata, scope_root=True)
@@ -518,15 +514,8 @@ class GoogleDriveClient(GoogleBaseClient):
         *,
         current_rel_path: str = "",
         scope_root: bool = False,
-    ) -> DriveItem:
-        if raw_metadata.get("mimeType") == FOLDER_MIME:
-            return GDriveFolder(
-                raw_metadata=raw_metadata,
-                client=self,
-                current_rel_path=current_rel_path,
-                scope_root=scope_root,
-            )
-        return GDriveFile(
+    ) -> "GDriveItem":
+        return GDriveItem(
             raw_metadata=raw_metadata,
             client=self,
             current_rel_path=current_rel_path,
@@ -570,10 +559,22 @@ GoogleApiDriveError = GoogleDriveError
 __all__ = [
     "GoogleBaseClient",
     "GoogleDriveClient",
+    "GDriveItem",
+    "GDriveFile",
+    "GDriveFolder",
 ]
 
 
-class GDriveItem:
+class GDriveItem(DriveItem):
+    """A Google Drive file or folder item backed by the Drive REST API.
+
+    Whether an instance represents a file or a directory is determined at
+    runtime by :attr:`is_directory` (based on ``mimeType``), so a single
+    class handles both cases.  The previous ``GDriveFile`` / ``GDriveFolder``
+    split has been consolidated here; backward-compatible aliases are kept at
+    module level.
+    """
+
     def __init__(
         self,
         raw_metadata: dict[str, Any],
@@ -611,52 +612,17 @@ class GDriveItem:
 
     @property
     def source_url(self) -> str:
-        # Generate open format if not present
         return self.raw.get("webViewLink") or f"https://drive.google.com/open?id={self.id}"
 
-
-
-class GDriveFile(GDriveItem, DriveFile):
-    def refresh(self, *, include_children: bool = True) -> "GDriveFile":
-        self.raw = self.client.get_file(
-            self.id,
-            fields="id,name,mimeType,parents,webViewLink",
-        )
-        return self
-
-    def download(self, target_dir: str | Path) -> None:
-        target = Path(target_dir)
-        if target.is_dir():
-            target = target / self.name
-
-        target.parent.mkdir(parents=True, exist_ok=True)
-        content = self.client.download_file(self.id)
-        if isinstance(content, bytes):
-            with open(target, "wb") as f:
-                f.write(content)
-        else:
-            with open(target, "w", encoding="utf-8") as f:
-                f.write(content)
-
-
-class GDriveFolder(GDriveItem, DriveFolder):
-    def refresh(self, *, include_children: bool = True) -> "GDriveFolder":
-        refreshed = self.client.get_file(
-            self.id,
-            fields="id,name,mimeType,parents,webViewLink",
-        )
-        if include_children:
-            refreshed["contents"] = self.client.list_folder_contents(
-                self.id,
-                recursive=False,
-            )
-        elif "contents" in self.raw:
-            refreshed["contents"] = self.raw["contents"]
-        self.raw = refreshed
-        return self
+    @property
+    def is_directory(self) -> bool:
+        return self.raw.get("mimeType") == FOLDER_MIME
 
     @property
-    def children(self) -> list[DriveItem]:
+    def children(self) -> list["GDriveItem"]:
+        """Direct children of this directory; empty list for files."""
+        if not self.is_directory:
+            return []
         contents = self.raw.get("contents")
         if contents is None:
             contents = self.client.list_folder_contents(self.id, recursive=False)
@@ -671,3 +637,52 @@ class GDriveFolder(GDriveItem, DriveFolder):
             )
             for child_raw in contents
         ]
+
+    def refresh(self, *, include_children: bool = True) -> "GDriveItem":
+        """Re-fetch raw metadata (and optionally children) from the API."""
+        refreshed = self.client.get_file(
+            self.id,
+            fields="id,name,mimeType,parents,webViewLink",
+        )
+        if self.is_directory:
+            if include_children:
+                refreshed["contents"] = self.client.list_folder_contents(
+                    self.id,
+                    recursive=False,
+                )
+            elif "contents" in self.raw:
+                refreshed["contents"] = self.raw["contents"]
+        self.raw = refreshed
+        return self
+
+    def download(self, target_dir: str | Path) -> None:
+        """Download this item.
+
+        Directories are walked recursively via :meth:`iter_files` and each
+        leaf file is written relative to *target_dir*.  Files are written
+        directly; Google Workspace files are exported to their default format.
+        """
+        if self.is_directory:
+            super().download(target_dir)
+            return
+        target = Path(target_dir)
+        if target.is_dir():
+            target = target / self.name
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        content = self.client.download_file(self.id)
+        if isinstance(content, bytes):
+            with open(target, "wb") as f:
+                f.write(content)
+        else:
+            with open(target, "w", encoding="utf-8") as f:
+                f.write(content)
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible aliases
+# ---------------------------------------------------------------------------
+# Old code that imports or subclasses ``GDriveFile`` / ``GDriveFolder`` will
+# continue to work because these names now point to the unified ``GDriveItem``.
+GDriveFile = GDriveItem
+GDriveFolder = GDriveItem

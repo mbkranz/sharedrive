@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from sharedrive.actions.download import resource_adapter_name, resource_source_url
-from sharedrive.item import DriveFolder, DriveItem
+from sharedrive.item import DriveItem
 from sharedrive.models import (
     DriveCatalog,
     DrivePackage,
@@ -35,16 +35,15 @@ def _iter_drive_leaf_items(item: Any) -> Iterable[Any]:
 def _build_child_resources(drive_item: Any) -> list[dict[str, Any]]:
     """Build sorted resource dicts from runtime leaf file items.
 
-    Runtime ``DriveItem`` instances are refreshed before traversal. Lightweight
-    test doubles that do not inherit from ``DriveItem`` are traversed
-    structurally without refresh support.
+    Runtime ``DriveItem`` instances are refreshed before traversal.
+    Lightweight test doubles that do not inherit from ``DriveItem`` are
+    traversed structurally (duck-typed on ``is_directory`` / ``children``)
+    without refresh support.
     """
     if isinstance(drive_item, DriveItem):
         refreshed_item = drive_item.refresh_tree()
-        if isinstance(refreshed_item, DriveFolder):
+        if refreshed_item.is_directory:
             leaf_items = list(refreshed_item.iter_files())
-        elif getattr(refreshed_item, "is_directory", False):
-            leaf_items = list(_iter_drive_leaf_items(refreshed_item))
         else:
             leaf_items = [refreshed_item]
         return [
@@ -54,10 +53,11 @@ def _build_child_resources(drive_item: Any) -> list[dict[str, Any]]:
             )
         ]
 
-    if isinstance(drive_item, DriveFolder):
-        leaf_items = list(drive_item.iter_files())
-    else:
+    # Lightweight test doubles / non-DriveItem objects
+    if getattr(drive_item, "is_directory", False):
         leaf_items = list(_iter_drive_leaf_items(drive_item))
+    else:
+        leaf_items = [drive_item]
     return [
         item.to_dp().to_dict()
         for item in sorted(leaf_items, key=lambda i: str(getattr(i, "path", "") or ""))
@@ -127,12 +127,13 @@ def _build_catalog_children(
     drive_item: Any,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Build direct child resources/catalogs from a runtime item tree."""
-    if isinstance(drive_item, DriveFolder):
-        direct_children = _sorted_drive_items(
-            drive_item.refresh(include_children=True).children
-        )
-    elif isinstance(drive_item, DriveItem):
-        direct_children = [drive_item.refresh(include_children=False)]
+    if isinstance(drive_item, DriveItem):
+        if drive_item.is_directory:
+            direct_children = _sorted_drive_items(
+                drive_item.refresh(include_children=True).children
+            )
+        else:
+            direct_children = [drive_item.refresh(include_children=False)]
     elif getattr(drive_item, "is_directory", False):
         direct_children = _sorted_drive_items(getattr(drive_item, "children", []))
     else:
@@ -346,7 +347,74 @@ def fetch_entity_metadata(
     return summaries
 
 
+def fetch_entity_metadata_in_descriptor(
+    descriptor: Path | str,
+    entity_selector: str | None = None,
+    *,
+    dry_run: bool = False,
+    depth: int = 0,
+    log: LogFn | None = print,
+) -> list[FetchSummary]:
+    """Preferred entry point: fetch metadata for an entity in a descriptor.
+
+    Thin wrapper around :func:`fetch_entity_metadata` with the same
+    parameters and return value.  Prefer this name in new code.
+    """
+    return fetch_entity_metadata(
+        descriptor,
+        entity_selector,
+        dry_run=dry_run,
+        depth=depth,
+        log=log,
+    )
+
+
+def fetch_resource_metadata_in_descriptor(
+    descriptor: Path | str,
+    resource_name: str,
+    *,
+    dry_run: bool = False,
+    log: LogFn | None = print,
+) -> FetchSummary:
+    """Fetch remote metadata for a single named package resource.
+
+    The named resource must have ``syncTarget: resources`` (i.e. be a
+    :class:`~sharedrive.models.DrivePackage`).  Pass ``dry_run=True`` to
+    preview the fetch without writing to disk.
+
+    Returns a single :class:`FetchSummary` (not a list).
+
+    Raises:
+        FileNotFoundError: if *descriptor* does not exist.
+        ValueError: if the resource is not found or does not have
+            ``syncTarget 'resources'``.
+    """
+    descriptor_path = Path(descriptor)
+    if not descriptor_path.exists():
+        raise FileNotFoundError(f"Descriptor '{descriptor_path}' does not exist.")
+
+    descriptor_model = load_drive_descriptor(descriptor_path)
+    resolved = descriptor_model.get_entity_reference(resource_name.strip())
+    if resolved is None:
+        raise ValueError(f"Resource '{resource_name}' was not found in descriptor.")
+    _entity_path, entity = resolved
+
+    if not isinstance(entity, DrivePackage):
+        raise ValueError(
+            f"Resource '{resource_name}' does not have syncTarget 'resources'. "
+            "Only packages with syncTarget 'resources' support metadata fetch."
+        )
+
+    resolved_name = str(entity.name or resource_name).strip() or resource_name
+    summary = _fetch_one_package(entity, resolved_name, dry_run=dry_run, log=log)
+    if not dry_run:
+        save_drive_descriptor(descriptor_path, descriptor_model)
+    return summary
+
 
 __all__ = [
-    "FetchSummary"
+    "FetchSummary",
+    "fetch_entity_metadata",
+    "fetch_entity_metadata_in_descriptor",
+    "fetch_resource_metadata_in_descriptor",
 ]

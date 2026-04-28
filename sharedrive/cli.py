@@ -14,7 +14,7 @@ from sharedrive.actions.download import (
     check_auth_for_descriptor,
     download_from_descriptor,
 )
-from sharedrive.actions.fetch import fetch_entity_metadata
+from sharedrive.actions.fetch import fetch_entity_metadata_in_descriptor
 from sharedrive.exceptions import GoogleApiError, GraphApiError
 from sharedrive.helpers import (
     DESCRIPTOR_DEFAULTS_FILE,
@@ -921,7 +921,7 @@ def fetch(
         typer.echo(f"Fetching all metadata in {descriptor_path}")
 
     try:
-        summaries = fetch_entity_metadata(
+        summaries = fetch_entity_metadata_in_descriptor(
             descriptor=descriptor_path,
             entity_selector=entity_name,
             dry_run=dry_run,

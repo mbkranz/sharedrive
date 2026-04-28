@@ -14,8 +14,8 @@ from sharedrive.actions.fetch import (
     fetch_entity_metadata_in_descriptor,
     fetch_resource_metadata_in_descriptor,
 )
-from sharedrive.clients.googledrive import GDriveFile, GDriveFolder
-from sharedrive.clients.sharepoint import SharepointFile, SharepointFolder
+from sharedrive.clients.googledrive import GDriveItem
+from sharedrive.clients.sharepoint import SharepointItem
 from sharedrive.item import DriveFile, DriveFolder
 from sharedrive.models import DriveResource
 from sharedrive.registry import ServiceAdapter
@@ -484,7 +484,7 @@ def test_gdrive_file_refresh_refreshes_metadata() -> None:
             current_rel_path: str = "",
             scope_root: bool = False,
         ):
-            return GDriveFile(
+            return GDriveItem(
                 raw_metadata=raw_metadata,
                 client=self,
                 current_rel_path=current_rel_path,
@@ -492,7 +492,7 @@ def test_gdrive_file_refresh_refreshes_metadata() -> None:
             )
 
     client = DummyClient()
-    item = GDriveFile(
+    item = GDriveItem(
         raw_metadata={
             "id": "file-1",
             "name": "summary.csv",
@@ -507,7 +507,8 @@ def test_gdrive_file_refresh_refreshes_metadata() -> None:
 
     refreshed = item.refresh()
 
-    assert isinstance(refreshed, GDriveFile)
+    assert isinstance(refreshed, GDriveItem)
+    assert not refreshed.is_directory
     assert refreshed is item
     assert refreshed.name == "renamed.csv"
     assert refreshed.path == "nested/renamed.csv"
@@ -549,14 +550,7 @@ def test_gdrive_folder_refresh_refreshes_children() -> None:
             current_rel_path: str = "",
             scope_root: bool = False,
         ):
-            if raw_metadata.get("mimeType") == "application/vnd.google-apps.folder":
-                return GDriveFolder(
-                    raw_metadata=raw_metadata,
-                    client=self,
-                    current_rel_path=current_rel_path,
-                    scope_root=scope_root,
-                )
-            return GDriveFile(
+            return GDriveItem(
                 raw_metadata=raw_metadata,
                 client=self,
                 current_rel_path=current_rel_path,
@@ -564,7 +558,7 @@ def test_gdrive_folder_refresh_refreshes_children() -> None:
             )
 
     client = DummyClient()
-    item = GDriveFolder(
+    item = GDriveItem(
         raw_metadata={
             "id": "folder-1",
             "name": "folder",
@@ -579,9 +573,11 @@ def test_gdrive_folder_refresh_refreshes_children() -> None:
     refreshed = item.refresh()
 
     assert refreshed is item
+    assert refreshed.is_directory
     children = item.children
     assert len(children) == 1
-    assert isinstance(children[0], GDriveFile)
+    assert isinstance(children[0], GDriveItem)
+    assert not children[0].is_directory
     assert children[0].path == "folder/report.csv"
     assert client.get_calls == [("folder-1", "id,name,mimeType,parents,webViewLink")]
     assert client.list_calls == [("folder-1", False)]
@@ -612,7 +608,7 @@ def test_sharepoint_file_refresh_refreshes_metadata() -> None:
             current_rel_path: str = "",
             scope_root: bool = False,
         ):
-            return SharepointFile(
+            return SharepointItem(
                 raw_metadata=raw_metadata,
                 client=self,
                 current_rel_path=current_rel_path,
@@ -620,7 +616,7 @@ def test_sharepoint_file_refresh_refreshes_metadata() -> None:
             )
 
     client = DummyClient()
-    item = SharepointFile(
+    item = SharepointItem(
         raw_metadata={
             "id": "file-1",
             "name": "summary.csv",
@@ -636,7 +632,8 @@ def test_sharepoint_file_refresh_refreshes_metadata() -> None:
 
     refreshed = item.refresh()
 
-    assert isinstance(refreshed, SharepointFile)
+    assert isinstance(refreshed, SharepointItem)
+    assert not refreshed.is_directory
     assert refreshed is item
     assert refreshed.name == "renamed.csv"
     assert refreshed.path == "nested/renamed.csv"
@@ -677,14 +674,7 @@ def test_sharepoint_folder_refresh_refreshes_children() -> None:
             current_rel_path: str = "",
             scope_root: bool = False,
         ):
-            if "folder" in raw_metadata:
-                return SharepointFolder(
-                    raw_metadata=raw_metadata,
-                    client=self,
-                    current_rel_path=current_rel_path,
-                    scope_root=scope_root,
-                )
-            return SharepointFile(
+            return SharepointItem(
                 raw_metadata=raw_metadata,
                 client=self,
                 current_rel_path=current_rel_path,
@@ -692,7 +682,7 @@ def test_sharepoint_folder_refresh_refreshes_children() -> None:
             )
 
     client = DummyClient()
-    item = SharepointFolder(
+    item = SharepointItem(
         raw_metadata={
             "id": "folder-1",
             "name": "folder",
@@ -708,9 +698,11 @@ def test_sharepoint_folder_refresh_refreshes_children() -> None:
     refreshed = item.refresh()
 
     assert refreshed is item
+    assert refreshed.is_directory
     children = item.children
     assert len(children) == 1
-    assert isinstance(children[0], SharepointFile)
+    assert isinstance(children[0], SharepointItem)
+    assert not children[0].is_directory
     assert children[0].path == "folder/report.csv"
     assert client.calls == [("drive-1", "folder-1")]
 

@@ -10,7 +10,7 @@ from urllib.parse import unquote, urlparse
 import requests
 
 from sharedrive.exceptions import GraphApiDriveError, GraphApiSiteError
-from sharedrive.item import DriveFile, DriveFolder, DriveItem
+from sharedrive.item import DriveItem
 
 if TYPE_CHECKING:
     from sharedrive.auth.microsoft import MicrosoftAuth
@@ -324,7 +324,7 @@ class SharepointClient:
         *,
         current_rel_path: str = "",
         scope_root: bool = False,
-    ) -> DriveItem:
+    ) -> "SharepointItem":
         return _sharepoint_to_item(
             self, raw_metadata, current_rel_path=current_rel_path, scope_root=scope_root
         )
@@ -498,10 +498,19 @@ class SharepointClient:
             response.raise_for_status()
 
 
-__all__ = ["SharepointClient"]
+__all__ = ["SharepointClient", "SharepointItem", "SharepointFile", "SharepointFolder"]
 
 
-class SharepointItem:
+class SharepointItem(DriveItem):
+    """A SharePoint file or folder item backed by the Graph API.
+
+    Whether an instance represents a file or a directory is determined at
+    runtime by :attr:`is_directory` (``"folder"`` key present in raw
+    metadata), so a single class handles both cases.  The previous
+    ``SharepointFile`` / ``SharepointFolder`` split has been consolidated
+    here; backward-compatible aliases are kept at module level.
+    """
+
     def __init__(
         self,
         raw_metadata: dict,
@@ -541,17 +550,56 @@ class SharepointItem:
     def source_url(self) -> str:
         return self.raw.get("webUrl", "")
 
+    @property
+    def is_directory(self) -> bool:
+        return "folder" in self.raw
 
-class SharepointFile(SharepointItem, DriveFile):
-    def refresh(self, *, include_children: bool = True) -> "SharepointFile":
+    @property
+    def children(self) -> list["SharepointItem"]:
+        """Direct children of this directory; empty list for files."""
+        if not self.is_directory:
+            return []
+        contents = self.raw.get("children")
+        if contents is None:
+            drive_id = self.raw.get("parentReference", {}).get("driveId")
+            if not drive_id:
+                raise ValueError("Missing driveId in SharePoint folder metadata")
+            refreshed = self.client.get_item_metadata(drive_id, item_id=self.id)
+            contents = refreshed.get("children", [])
+            self.raw.update(refreshed)
+
+        next_rel_path = "" if self._scope_root else self.path
+        return [
+            self.client._to_item(
+                child_raw, current_rel_path=next_rel_path, scope_root=False
+            )
+            for child_raw in contents
+        ]
+
+    def refresh(self, *, include_children: bool = True) -> "SharepointItem":
+        """Re-fetch raw metadata (and optionally children) from the Graph API."""
         drive_id = self.raw.get("parentReference", {}).get("driveId")
         if not drive_id:
-            raise ValueError("Missing driveId in Sharepoint item metadata")
-
-        self.raw = self.client.get_item_metadata(drive_id, item_id=self.id)
+            raise ValueError(
+                f"Missing driveId in SharePoint "
+                f"{'folder' if self.is_directory else 'item'} metadata"
+            )
+        refreshed = self.client.get_item_metadata(drive_id, item_id=self.id)
+        if self.is_directory and not include_children and "children" in self.raw:
+            refreshed["children"] = self.raw["children"]
+        self.raw = refreshed
         return self
 
     def download(self, target_dir: str | Path) -> None:
+        """Download this item.
+
+        Directories are walked recursively via :meth:`iter_files` and each
+        leaf file is written relative to *target_dir*.  Files are fetched via
+        their Graph API download URL or a presigned URL.
+        """
+        if self.is_directory:
+            super().download(target_dir)
+            return
         target = Path(target_dir)
         if target.is_dir():
             target = target / self.name
@@ -578,36 +626,13 @@ class SharepointFile(SharepointItem, DriveFile):
                 f.write(chunk)
 
 
-class SharepointFolder(SharepointItem, DriveFolder):
-    def refresh(self, *, include_children: bool = True) -> "SharepointFolder":
-        drive_id = self.raw.get("parentReference", {}).get("driveId")
-        if not drive_id:
-            raise ValueError("Missing driveId in SharePoint folder metadata")
-
-        refreshed = self.client.get_item_metadata(drive_id, item_id=self.id)
-        if not include_children and "children" in self.raw:
-            refreshed["children"] = self.raw["children"]
-        self.raw = refreshed
-        return self
-
-    @property
-    def children(self) -> list[DriveItem]:
-        contents = self.raw.get("children")
-        if contents is None:
-            drive_id = self.raw.get("parentReference", {}).get("driveId")
-            if not drive_id:
-                raise ValueError("Missing driveId in SharePoint folder metadata")
-            refreshed = self.client.get_item_metadata(drive_id, item_id=self.id)
-            contents = refreshed.get("children", [])
-            self.raw.update(refreshed)
-
-        next_rel_path = "" if self._scope_root else self.path
-        return [
-            self.client._to_item(
-                child_raw, current_rel_path=next_rel_path, scope_root=False
-            )
-            for child_raw in contents
-        ]
+# ---------------------------------------------------------------------------
+# Backward-compatible aliases
+# ---------------------------------------------------------------------------
+# Old code that imports or subclasses ``SharepointFile`` / ``SharepointFolder``
+# will continue to work because these names now point to ``SharepointItem``.
+SharepointFile = SharepointItem
+SharepointFolder = SharepointItem
 
 
 def _sharepoint_to_item(
@@ -616,15 +641,8 @@ def _sharepoint_to_item(
     *,
     current_rel_path: str = "",
     scope_root: bool = False,
-) -> DriveItem:
-    if "folder" in raw_metadata:
-        return SharepointFolder(
-            raw_metadata=raw_metadata,
-            client=client,
-            current_rel_path=current_rel_path,
-            scope_root=scope_root,
-        )
-    return SharepointFile(
+) -> SharepointItem:
+    return SharepointItem(
         raw_metadata=raw_metadata,
         client=client,
         current_rel_path=current_rel_path,
