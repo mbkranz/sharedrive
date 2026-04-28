@@ -72,18 +72,10 @@ class FetchSummary:
     changed: bool = False
 
 
-def _fetch_from_adapter(
-    resource: Any,
-    source_url: str,
-    googledrive_client_factory: Callable[[], Any] | None,
-    sharepoint_client_factory: Callable[[], Any] | None,
-) -> list[dict[str, Any]]:
+def _fetch_from_adapter(resource: Any, source_url: str) -> list[dict[str, Any]]:
     adapter_name = resource_adapter_name(resource, source_url)
 
-    registry = build_service_registry(
-        googledrive_client_factory=googledrive_client_factory,
-        sharepoint_client_factory=sharepoint_client_factory,
-    )
+    registry = build_service_registry()
     adapter = registry.get(adapter_name)
     if adapter is None or adapter.build_client is None:
         raise NotImplementedError(
@@ -101,8 +93,6 @@ def _fetch_one_package(
     *,
     dry_run: bool = False,
     log: LogFn | None = print,
-    googledrive_client_factory: Callable[[], Any] | None = None,
-    sharepoint_client_factory: Callable[[], Any] | None = None,
 ) -> FetchSummary:
     """Fetch remote folder metadata into a package's resources list.
 
@@ -113,12 +103,7 @@ def _fetch_one_package(
     if not source_url:
         raise ValueError(f"Package '{package_name}' has no identifiable source URL.")
 
-    child_resources = _fetch_from_adapter(
-        resource=package,
-        source_url=source_url,
-        googledrive_client_factory=googledrive_client_factory,
-        sharepoint_client_factory=sharepoint_client_factory,
-    )
+    child_resources = _fetch_from_adapter(resource=package, source_url=source_url)
 
     if log is not None:
         verb = "Would fetch" if dry_run else "Fetched"
@@ -179,8 +164,6 @@ def fetch_entity_metadata_in_descriptor(
     dry_run: bool = False,
     depth: int = 0,
     log: LogFn | None = print,
-    googledrive_client_factory: Callable[[], Any] | None = None,
-    sharepoint_client_factory: Callable[[], Any] | None = None,
 ) -> list[FetchSummary]:
     """Fetch remote metadata for one entity (package or catalog) in a descriptor.
 
@@ -199,10 +182,6 @@ def fetch_entity_metadata_in_descriptor(
     """
     descriptor_path = Path(descriptor)
     descriptor_model = load_drive_descriptor(descriptor_path)
-    client_kwargs = {
-        "googledrive_client_factory": googledrive_client_factory,
-        "sharepoint_client_factory": sharepoint_client_factory,
-    }
 
     if entity_selector:
         entity_selector = entity_selector.strip()
@@ -226,9 +205,7 @@ def fetch_entity_metadata_in_descriptor(
 
     if isinstance(entity, DrivePackage):
         resolved_name = str(entity.name or entity_selector).strip() or entity_selector
-        summary = _fetch_one_package(
-            entity, resolved_name, dry_run=dry_run, log=log, **client_kwargs
-        )
+        summary = _fetch_one_package(entity, resolved_name, dry_run=dry_run, log=log)
         if not dry_run:
             save_drive_descriptor(descriptor_path, descriptor_model)
         return [summary]
@@ -238,9 +215,7 @@ def fetch_entity_metadata_in_descriptor(
     summaries: list[FetchSummary] = []
     for pkg_path, package in packages:
         resolved_name = str(package.name or pkg_path).strip() or pkg_path
-        summary = _fetch_one_package(
-            package, resolved_name, dry_run=dry_run, log=log, **client_kwargs
-        )
+        summary = _fetch_one_package(package, resolved_name, dry_run=dry_run, log=log)
         summaries.append(summary)
 
     if not dry_run and summaries:
@@ -254,8 +229,6 @@ def fetch_resource_metadata_in_descriptor(
     *,
     dry_run: bool = False,
     log: LogFn | None = print,
-    googledrive_client_factory: Callable[[], Any] | None = None,
-    sharepoint_client_factory: Callable[[], Any] | None = None,
 ) -> FetchSummary:
     """Fetch metadata for one package resource into nested descriptor resources.
 
@@ -280,14 +253,7 @@ def fetch_resource_metadata_in_descriptor(
             "metadata fetched into nested descriptor resources."
         )
 
-    summary = _fetch_one_package(
-        resource,
-        resolved_name,
-        dry_run=dry_run,
-        log=log,
-        googledrive_client_factory=googledrive_client_factory,
-        sharepoint_client_factory=sharepoint_client_factory,
-    )
+    summary = _fetch_one_package(resource, resolved_name, dry_run=dry_run, log=log)
     if not dry_run:
         save_drive_descriptor(descriptor_path, descriptor_model)
     return summary
@@ -299,16 +265,9 @@ def fetch_package_metadata_in_descriptor(
     *,
     dry_run: bool = False,
     log: LogFn | None = print,
-    googledrive_client_factory: Callable[[], Any] | None = None,
-    sharepoint_client_factory: Callable[[], Any] | None = None,
 ) -> FetchSummary:
     return fetch_resource_metadata_in_descriptor(
-        descriptor=descriptor,
-        resource_name=package_name,
-        dry_run=dry_run,
-        log=log,
-        googledrive_client_factory=googledrive_client_factory,
-        sharepoint_client_factory=sharepoint_client_factory,
+        descriptor=descriptor, resource_name=package_name, dry_run=dry_run, log=log
     )
 
 

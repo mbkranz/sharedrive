@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from sharedrive.actions.download import (
@@ -17,6 +18,7 @@ from sharedrive.clients.googledrive import GDriveFile, GDriveFolder
 from sharedrive.clients.sharepoint import SharepointFile, SharepointFolder
 from sharedrive.item import DriveFile, DriveFolder
 from sharedrive.models import DriveResource
+from sharedrive.registry import ServiceAdapter
 
 
 def _write_catalog_descriptor(
@@ -37,6 +39,25 @@ def _write_catalog_descriptor(
             sort_keys=False,
         ),
         encoding="utf-8",
+    )
+
+
+def _patch_fetch_registry(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    googledrive_factory=None,
+    sharepoint_factory=None,
+) -> None:
+    def fake_build_service_registry():
+        registry: dict[str, ServiceAdapter] = {}
+        if googledrive_factory is not None:
+            registry["googledrive"] = ServiceAdapter(build_client=googledrive_factory)
+        if sharepoint_factory is not None:
+            registry["sharepoint"] = ServiceAdapter(build_client=sharepoint_factory)
+        return registry
+
+    monkeypatch.setattr(
+        "sharedrive.actions.fetch.build_service_registry", fake_build_service_registry
     )
 
 
@@ -1415,7 +1436,9 @@ def test_download_from_descriptor_selecting_catalog_includes_nested_package_reso
     ]
 
 
-def test_fetch_resource_metadata_supports_sharepoint_directory(tmp_path: Path) -> None:
+def test_fetch_resource_metadata_supports_sharepoint_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
         descriptor,
@@ -1533,12 +1556,15 @@ def test_fetch_resource_metadata_supports_sharepoint_directory(tmp_path: Path) -
 
             return DummyFolder()
 
+    _patch_fetch_registry(
+        monkeypatch, sharepoint_factory=lambda: DummySharepointClient()
+    )
+
     summary = fetch_resource_metadata_in_descriptor(
         descriptor=descriptor,
         resource_name="shared-specs",
         dry_run=False,
         log=lambda _message: None,
-        sharepoint_client_factory=lambda: DummySharepointClient(),
     )
 
     assert summary.changed is True
@@ -1550,7 +1576,7 @@ def test_fetch_resource_metadata_supports_sharepoint_directory(tmp_path: Path) -
 
 
 def test_fetch_resource_metadata_resolves_nested_catalog_package_selector(
-    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
@@ -1613,12 +1639,15 @@ def test_fetch_resource_metadata_resolves_nested_catalog_package_selector(
 
             return DummyFolder()
 
+    _patch_fetch_registry(
+        monkeypatch, sharepoint_factory=lambda: DummySharepointClient()
+    )
+
     summary = fetch_resource_metadata_in_descriptor(
         descriptor=descriptor,
         resource_name="research.archive.shared-specs",
         dry_run=False,
         log=lambda _message: None,
-        sharepoint_client_factory=lambda: DummySharepointClient(),
     )
 
     assert summary.changed is True
@@ -1708,7 +1737,9 @@ def test_check_auth_for_descriptor_requires_existing_descriptor(tmp_path: Path) 
         raise AssertionError("Expected FileNotFoundError for missing descriptor")
 
 
-def test_fetch_entity_metadata_fetches_all_packages_in_catalog(tmp_path: Path) -> None:
+def test_fetch_entity_metadata_fetches_all_packages_in_catalog(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """fetch_entity_metadata_in_descriptor with a DriveCatalog selector fetches each package."""
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
@@ -1783,12 +1814,10 @@ def test_fetch_entity_metadata_fetches_all_packages_in_catalog(tmp_path: Path) -
 
             return DummyFolder()
 
+    _patch_fetch_registry(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
+
     summaries = fetch_entity_metadata_in_descriptor(
-        descriptor=descriptor,
-        entity_selector="research",
-        dry_run=False,
-        log=None,
-        googledrive_client_factory=lambda: DummyDriveClient(),
+        descriptor=descriptor, entity_selector="research", dry_run=False, log=None
     )
 
     assert len(summaries) == 2
@@ -1810,7 +1839,9 @@ def test_fetch_entity_metadata_fetches_all_packages_in_catalog(tmp_path: Path) -
     assert catalog["packages"][1]["resources"][0]["name"] == "report.csv"
 
 
-def test_fetch_entity_metadata_dry_run_does_not_write_catalog(tmp_path: Path) -> None:
+def test_fetch_entity_metadata_dry_run_does_not_write_catalog(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Catalog fetch with dry_run=True does not modify the descriptor."""
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
@@ -1870,12 +1901,10 @@ def test_fetch_entity_metadata_dry_run_does_not_write_catalog(tmp_path: Path) ->
 
             return DummyFolder()
 
+    _patch_fetch_registry(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
+
     summaries = fetch_entity_metadata_in_descriptor(
-        descriptor=descriptor,
-        entity_selector="research",
-        dry_run=True,
-        log=None,
-        googledrive_client_factory=lambda: DummyDriveClient(),
+        descriptor=descriptor, entity_selector="research", dry_run=True, log=None
     )
 
     assert len(summaries) == 1
@@ -1884,7 +1913,9 @@ def test_fetch_entity_metadata_dry_run_does_not_write_catalog(tmp_path: Path) ->
     assert descriptor.read_text(encoding="utf-8") == before
 
 
-def test_fetch_entity_metadata_with_depth_recurses_sub_catalogs(tmp_path: Path) -> None:
+def test_fetch_entity_metadata_with_depth_recurses_sub_catalogs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """depth=1 causes fetch to recurse one level into nested catalogs."""
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
@@ -1967,13 +1998,14 @@ def test_fetch_entity_metadata_with_depth_recurses_sub_catalogs(tmp_path: Path) 
             return DummyFolder()
 
     # depth=0 (default): only top-level package
+    _patch_fetch_registry(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
+
     summaries_flat = fetch_entity_metadata_in_descriptor(
         descriptor=descriptor,
         entity_selector="research",
         dry_run=True,
         depth=0,
         log=None,
-        googledrive_client_factory=lambda: DummyDriveClient(),
     )
     assert len(summaries_flat) == 1
     assert summaries_flat[0].resource_name == "top-docs"
@@ -1985,7 +2017,6 @@ def test_fetch_entity_metadata_with_depth_recurses_sub_catalogs(tmp_path: Path) 
         dry_run=True,
         depth=1,
         log=None,
-        googledrive_client_factory=lambda: DummyDriveClient(),
     )
     assert len(summaries_deep) == 2
     assert summaries_deep[0].resource_name == "top-docs"

@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -11,7 +10,10 @@ import typer
 from dotenv import find_dotenv, load_dotenv
 
 from sharedrive.actions.add import add_resource_to_descriptor
-from sharedrive.actions.download import check_auth_for_descriptor, download_from_descriptor
+from sharedrive.actions.download import (
+    check_auth_for_descriptor,
+    download_from_descriptor,
+)
 from sharedrive.actions.fetch import fetch_entity_metadata_in_descriptor
 from sharedrive.helpers import (
     DESCRIPTOR_DEFAULTS_FILE,
@@ -43,16 +45,11 @@ app = typer.Typer(
     rich_markup_mode="markdown",
 )
 clone_app = typer.Typer(
-    help="Clone descriptor state for new local variants.",
-    rich_markup_mode="markdown",
+    help="Clone descriptor state for new local variants.", rich_markup_mode="markdown"
 )
-auth_app = typer.Typer(
-    help="Authentication helpers.",
-    rich_markup_mode="markdown",
-)
+auth_app = typer.Typer(help="Authentication helpers.", rich_markup_mode="markdown")
 auth_login_app = typer.Typer(
-    help="Interactive login commands.",
-    rich_markup_mode="markdown",
+    help="Interactive login commands.", rich_markup_mode="markdown"
 )
 app.add_typer(auth_app, name="auth")
 app.add_typer(clone_app, name="clone")
@@ -74,7 +71,12 @@ def load_descriptor_document(path: Path | str) -> dict[str, Any]:
     """Load descriptor file as a dict, optional fields for CLI manipulation."""
     descriptor_path = Path(path)
     if not descriptor_path.exists():
-        return {"$schema": CATALOG_PROFILE, "resources": [], "packages": [], "catalogs": []}
+        return {
+            "$schema": CATALOG_PROFILE,
+            "resources": [],
+            "packages": [],
+            "catalogs": [],
+        }
     return load_drive_descriptor(descriptor_path).to_dict()
 
 
@@ -84,9 +86,7 @@ def save_descriptor_document(path: Path | str, document: dict[str, Any]) -> None
 
 
 def get_descriptor_resources(
-    document: dict[str, Any],
-    *,
-    create: bool = False,
+    document: dict[str, Any], *, create: bool = False
 ) -> list[dict[str, Any]]:
     """Get top-level resources array from descriptor dict."""
     resources = document.get("resources")
@@ -99,9 +99,7 @@ def get_descriptor_resources(
 
 
 def get_descriptor_packages(
-    document: dict[str, Any],
-    *,
-    create: bool = False,
+    document: dict[str, Any], *, create: bool = False
 ) -> list[dict[str, Any]]:
     """Get top-level packages array from descriptor dict."""
     packages = document.get("packages")
@@ -116,9 +114,7 @@ def get_descriptor_packages(
 
 
 def get_descriptor_catalogs(
-    document: dict[str, Any],
-    *,
-    create: bool = False,
+    document: dict[str, Any], *, create: bool = False
 ) -> list[dict[str, Any]]:
     """Get top-level catalogs array from descriptor dict."""
     catalogs = document.get("catalogs")
@@ -133,9 +129,7 @@ def get_descriptor_catalogs(
 
 
 def get_package_resources(
-    resource: dict[str, Any],
-    *,
-    create: bool = False,
+    resource: dict[str, Any], *, create: bool = False
 ) -> list[dict[str, Any]]:
     """Get nested resources array from a resource dict."""
     resources = resource.get("resources")
@@ -194,7 +188,9 @@ def _run_microsoft_login(
     )
 
 
-def _make_gdrive_client(credentials_path: Optional[str], scope: Optional[list[str]] = None) -> GoogleDriveClient:
+def _make_gdrive_client(
+    credentials_path: Optional[str], scope: Optional[list[str]] = None
+) -> GoogleDriveClient:
     from sharedrive.auth.google import default_drive_strategy
     from sharedrive.clients.googledrive import GoogleDriveClient
 
@@ -207,8 +203,13 @@ def _make_gdrive_client(credentials_path: Optional[str], scope: Optional[list[st
     )
 
 
-def _make_gdrive_client_from_settings(scope: Optional[list[str]] = None) -> GoogleDriveClient:
-    from sharedrive.auth.settings import GoogleAuthConfig, make_google_drive_client_from_settings
+def _make_gdrive_client_from_settings(
+    scope: Optional[list[str]] = None,
+) -> GoogleDriveClient:
+    from sharedrive.auth.settings import (
+        GoogleAuthConfig,
+        make_google_drive_client_from_settings,
+    )
 
     if scope is None:
         return make_google_drive_client_from_settings()
@@ -306,7 +307,9 @@ def _parse_set_args(args: list[str]) -> dict[str, Any]:
     return parsed
 
 
-def _set_saved_scope(parsed: dict[str, Any], descriptor: Optional[Path], global_scope: bool) -> str:
+def _set_saved_scope(
+    parsed: dict[str, Any], descriptor: Optional[Path], global_scope: bool
+) -> str:
     if global_scope and descriptor is not None:
         raise typer.BadParameter("Use either <descriptor> or --global, not both.")
 
@@ -363,9 +366,7 @@ def _set_active_descriptor(descriptor_path: Path, *, entity: str | None = None) 
 
 
 def _iter_resource_references(
-    resources: list[dict[str, Any]],
-    *,
-    parent_path: str | None = None,
+    resources: list[dict[str, Any]], *, parent_path: str | None = None
 ) -> list[tuple[str, dict[str, Any]]]:
     references: list[tuple[str, dict[str, Any]]] = []
     for resource in resources:
@@ -381,23 +382,17 @@ def _iter_resource_references(
         children = get_package_resources(resource)
         if children:
             references.extend(
-                _iter_resource_references(
-                    children,
-                    parent_path=selector_path,
-                )
+                _iter_resource_references(children, parent_path=selector_path)
             )
 
     return references
 
 
 def _iter_catalog_references(
-    document: dict[str, Any],
-    *,
-    parent_path: str | None = None,
+    document: dict[str, Any], *, parent_path: str | None = None
 ) -> list[tuple[str, dict[str, Any]]]:
     references = _iter_resource_references(
-        get_descriptor_resources(document),
-        parent_path=parent_path,
+        get_descriptor_resources(document), parent_path=parent_path
     )
 
     for package in get_descriptor_packages(document):
@@ -411,8 +406,7 @@ def _iter_catalog_references(
         references.append((selector_path, package))
         references.extend(
             _iter_resource_references(
-                get_package_resources(package),
-                parent_path=selector_path,
+                get_package_resources(package), parent_path=selector_path
             )
         )
 
@@ -431,8 +425,7 @@ def _iter_catalog_references(
 
 
 def _resolve_exact_resource_reference(
-    resource_selector: str,
-    document: dict[str, Any],
+    resource_selector: str, document: dict[str, Any]
 ) -> tuple[str, dict[str, Any]]:
     references = _iter_catalog_references(document)
     normalized_selector = resource_selector.strip().lower()
@@ -442,11 +435,14 @@ def _resolve_exact_resource_reference(
     matches = [
         (path, resource)
         for path, resource in references
-        if path.lower() == normalized_selector or path.split(".")[-1].lower() == normalized_selector
+        if path.lower() == normalized_selector
+        or path.split(".")[-1].lower() == normalized_selector
     ]
 
     if matches:
-        unique_matches = {(path, id(resource)): (path, resource) for path, resource in matches}
+        unique_matches = {
+            (path, id(resource)): (path, resource) for path, resource in matches
+        }
         resolved_matches = list(unique_matches.values())
         if len(resolved_matches) > 1 and "." not in resource_selector:
             raise typer.BadParameter(
@@ -539,7 +535,9 @@ def _set_nested_property(target: Any, property_path: str, value: Any) -> bool:
         return True
 
     if not isinstance(current, dict):
-        raise typer.BadParameter(f"Cannot set property '{property_path}' on a non-object value.")
+        raise typer.BadParameter(
+            f"Cannot set property '{property_path}' on a non-object value."
+        )
     if current.get(leaf) == value:
         return False
     current[leaf] = value
@@ -562,10 +560,18 @@ def _exit_if_descriptor_missing(descriptor_path: Path) -> None:
     ),
 )
 def clone_descriptor(
-    target_path: Path = typer.Argument(..., help="Target descriptor path for the clone."),
-    descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be cloned without writing files."),
-    force: bool = typer.Option(False, "--force", help="Overwrite an existing target descriptor."),
+    target_path: Path = typer.Argument(
+        ..., help="Target descriptor path for the clone."
+    ),
+    descriptor: Optional[Path] = typer.Option(
+        None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would be cloned without writing files."
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Overwrite an existing target descriptor."
+    ),
 ) -> None:
     """Clone one descriptor file to a new local path."""
     source_descriptor = resolve_descriptor_path(descriptor)
@@ -597,9 +603,15 @@ def clone_descriptor(
 )
 def update_command(
     ctx: typer.Context,
-    descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
-    resource: Optional[str] = typer.Option(None, "--resource", help="Exact resource name or dot-path to update."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be updated without writing files."),
+    descriptor: Optional[Path] = typer.Option(
+        None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP
+    ),
+    resource: Optional[str] = typer.Option(
+        None, "--resource", help="Exact resource name or dot-path to update."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would be updated without writing files."
+    ),
 ) -> None:
     """Update descriptor-root or resource properties using flag-style field edits."""
     parsed = _parse_set_args(list(ctx.args))
@@ -613,15 +625,14 @@ def update_command(
     target_label = str(descriptor_path)
     target: dict[str, Any] = document
     if resource is not None:
-        resolved_path, target = _resolve_exact_resource_reference(
-            resource,
-            document,
-        )
+        resolved_path, target = _resolve_exact_resource_reference(resource, document)
         target_label = f"{resolved_path} in {descriptor_path}"
 
     changed_properties: list[str] = []
     for property_name, raw_value in parsed.items():
-        property_path = _normalize_update_property(property_name, resource_target=resource is not None)
+        property_path = _normalize_update_property(
+            property_name, resource_target=resource is not None
+        )
         value = _normalize_update_value(property_path, raw_value)
         if _set_nested_property(target, property_path, value):
             changed_properties.append(
@@ -651,7 +662,9 @@ def update_command(
     ),
 )
 def checkout_command(
-    descriptor: Path = typer.Argument(..., help="Descriptor path to activate for later commands."),
+    descriptor: Path = typer.Argument(
+        ..., help="Descriptor path to activate for later commands."
+    ),
     entity: Optional[str] = typer.Argument(
         None,
         help="Entity dot-path within the descriptor to set as the active scope for fetch/download commands.",
@@ -718,23 +731,16 @@ def _render_auth_results(results: list[Any], output_format: OutputFormat) -> Non
 def set_command(
     ctx: typer.Context,
     descriptor_scope: Optional[Path] = typer.Argument(
-        None,
-        help="Descriptor path to save defaults for.",
+        None, help="Descriptor path to save defaults for."
     ),
     global_scope: bool = typer.Option(
-        False,
-        "--global",
-        help="Save params as global defaults for all descriptors.",
+        False, "--global", help="Save params as global defaults for all descriptors."
     ),
     descriptor: Optional[str] = typer.Option(
-        None,
-        "--descriptor",
-        help="Default descriptor path to save.",
+        None, "--descriptor", help="Default descriptor path to save."
     ),
     output_dir: Optional[str] = typer.Option(
-        None,
-        "--output-dir",
-        help="Default output directory to save.",
+        None, "--output-dir", help="Default output directory to save."
     ),
 ) -> None:
     """Set reusable key/value parameters for sharedrive descriptor workflows."""
@@ -773,7 +779,6 @@ def set_command(
         "sharedrive add census-docs --path downloads/census --source https://drive.google.com/drive/folders/<id> --service-type GoogleDrive --entity-type Directory --sync-target resources",
     ),
 )
-
 @app.command(
     "add",
     epilog=_examples_epilog(
@@ -783,16 +788,44 @@ def set_command(
 )
 def add(
     name: str = typer.Argument(..., help="Resource name to store in the descriptor."),
-    path: str = typer.Option(..., "--path", help="Resource path stored in the descriptor."),
-    source: str = typer.Option(..., "--source", help="Source URL/URI/path for the resource."),
-    title: Optional[str] = typer.Option(None, "--title", help="Optional resource title."),
-    description: Optional[str] = typer.Option(None, "--description", help="Optional resource description."),
-    service_type: Optional[str] = typer.Option(None, "--service-type", help="Source serviceType. If omitted, infer from source."),
-    entity_type: Optional[str] = typer.Option(None, "--entity-type", help="Source entityType such as File, Directory, or Container."),
-    package: bool = typer.Option(False, "--package", help="Treat as a package (creates a resource with nested resources)."),
-    catalog: bool = typer.Option(False, "--catalog", help="Treat as a catalog (alias for package, future extension)."),
-    profile: Optional[str] = typer.Option(None, "--profile", help="Optional metadata profile for the resource."),
-    descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
+    path: str = typer.Option(
+        ..., "--path", help="Resource path stored in the descriptor."
+    ),
+    source: str = typer.Option(
+        ..., "--source", help="Source URL/URI/path for the resource."
+    ),
+    title: Optional[str] = typer.Option(
+        None, "--title", help="Optional resource title."
+    ),
+    description: Optional[str] = typer.Option(
+        None, "--description", help="Optional resource description."
+    ),
+    service_type: Optional[str] = typer.Option(
+        None,
+        "--service-type",
+        help="Source serviceType. If omitted, infer from source.",
+    ),
+    entity_type: Optional[str] = typer.Option(
+        None,
+        "--entity-type",
+        help="Source entityType such as File, Directory, or Container.",
+    ),
+    package: bool = typer.Option(
+        False,
+        "--package",
+        help="Treat as a package (creates a resource with nested resources).",
+    ),
+    catalog: bool = typer.Option(
+        False,
+        "--catalog",
+        help="Treat as a catalog (alias for package, future extension).",
+    ),
+    profile: Optional[str] = typer.Option(
+        None, "--profile", help="Optional metadata profile for the resource."
+    ),
+    descriptor: Optional[Path] = typer.Option(
+        None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP
+    ),
 ) -> None:
     """Add a resource or package entry to a descriptor."""
     descriptor_path = resolve_descriptor_path(descriptor)
@@ -836,10 +869,21 @@ def add(
     ),
 )
 def fetch(
-    entity: Optional[str] = typer.Argument(None, help="Entity or package dot-path to fetch. If omitted, uses the checked-out entity."),
-    descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
-    dry_run: bool = typer.Option(False, help="Preview descriptor changes without writing them."),
-    env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
+    entity: Optional[str] = typer.Argument(
+        None,
+        help="Entity or package dot-path to fetch. If omitted, uses the checked-out entity.",
+    ),
+    descriptor: Optional[Path] = typer.Option(
+        None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP
+    ),
+    dry_run: bool = typer.Option(
+        False, help="Preview descriptor changes without writing them."
+    ),
+    env_file: Optional[Path] = typer.Option(
+        None,
+        "--env-file",
+        help="Path to .env file for credentials. Defaults to .env in the current directory.",
+    ),
 ) -> None:
     """Fetch remote metadata for one selector into the descriptor.
 
@@ -857,9 +901,10 @@ def fetch(
     else:
         entity_name = f"{checked_out_entity}.{entity}" if checked_out_entity else entity
 
-
     if entity_name is not None:
-        typer.echo(f"Fetching metadata in {descriptor_path} for selector '{entity_name}'...")
+        typer.echo(
+            f"Fetching metadata in {descriptor_path} for selector '{entity_name}'..."
+        )
     else:
         typer.echo(f"Fetching all metadata in {descriptor_path}")
 
@@ -869,8 +914,6 @@ def fetch(
             entity_selector=entity_name,
             dry_run=dry_run,
             log=None,
-            googledrive_client_factory=lambda: _make_gdrive_client(None),
-            sharepoint_client_factory=_make_sharepoint_client,
         )
     except (FileNotFoundError, NotImplementedError, ValueError) as exc:
         typer.echo(str(exc), err=True)
@@ -885,6 +928,7 @@ def fetch(
             f"{action} metadata for {summary.generated_resources} resource(s) into '{summary.resource_name}' in {descriptor_path}."
         )
 
+
 @app.command(
     "download",
     epilog=_examples_epilog(
@@ -894,12 +938,24 @@ def fetch(
     ),
 )
 def download(
-    selector: Optional[str] = typer.Argument(None, help="Selector to download. If omitted, uses the checked-out descriptor."),
-    descriptor: Optional[Path] = typer.Option(None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP),
-    output_dir: Optional[Path] = typer.Option(None, help="Base output directory for relative resource paths."),
+    selector: Optional[str] = typer.Argument(
+        None, help="Selector to download. If omitted, uses the checked-out descriptor."
+    ),
+    descriptor: Optional[Path] = typer.Option(
+        None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP
+    ),
+    output_dir: Optional[Path] = typer.Option(
+        None, help="Base output directory for relative resource paths."
+    ),
     dry_run: bool = typer.Option(False, help="Print actions without downloading."),
-    check_auth: bool = typer.Option(False, "--check-auth", help="Validate service credentials before downloading."),
-    env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
+    check_auth: bool = typer.Option(
+        False, "--check-auth", help="Validate service credentials before downloading."
+    ),
+    env_file: Optional[Path] = typer.Option(
+        None,
+        "--env-file",
+        help="Path to .env file for credentials. Defaults to .env in the current directory.",
+    ),
 ) -> None:
     """Download resources from a selector in the descriptor.
 
@@ -915,7 +971,9 @@ def download(
     if selector is None:
         package_name = checked_out_entity  # may remain None → checked later
     else:
-        package_name = f"{checked_out_entity}.{selector}" if checked_out_entity else selector
+        package_name = (
+            f"{checked_out_entity}.{selector}" if checked_out_entity else selector
+        )
 
     output_dir_path = resolve_output_dir(output_dir, descriptor=descriptor_path)
 
@@ -948,9 +1006,7 @@ def download(
 )
 def auth_check(
     descriptor: Optional[Path] = typer.Argument(
-        None,
-        exists=False,
-        help=DESCRIPTOR_DEFAULT_HELP,
+        None, exists=False, help=DESCRIPTOR_DEFAULT_HELP
     ),
     include: Optional[list[str]] = typer.Option(
         None,
@@ -961,8 +1017,14 @@ def auth_check(
             "Repeat the option or pass a comma-separated list."
         ),
     ),
-    output_format: OutputFormat = typer.Option(OutputFormat.TEXT, "--format", help="Output format."),
-    env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.TEXT, "--format", help="Output format."
+    ),
+    env_file: Optional[Path] = typer.Option(
+        None,
+        "--env-file",
+        help="Path to .env file for credentials. Defaults to .env in the current directory.",
+    ),
 ) -> None:
     """Validate credentials for the adapters selected by a descriptor."""
     _load_env_file(env_file)
@@ -988,11 +1050,27 @@ def auth_check(
     ),
 )
 def auth_login_gdrive(
-    oauth_client_secrets: Optional[Path] = typer.Option(None, "--oauth-client-secrets", help="Path to Google OAuth client secrets JSON."),
-    oauth_token_path: Optional[Path] = typer.Option(None, "--oauth-token-path", help="Path to persist the authorized-user token JSON."),
-    scope: Optional[list[str]] = typer.Option(None, "--scope", help="OAuth scope. Repeat for multiple scopes."),
-    no_local_server: bool = typer.Option(False, "--no-local-server", help="Use the console flow instead of a local callback server."),
-    env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
+    oauth_client_secrets: Optional[Path] = typer.Option(
+        None, "--oauth-client-secrets", help="Path to Google OAuth client secrets JSON."
+    ),
+    oauth_token_path: Optional[Path] = typer.Option(
+        None,
+        "--oauth-token-path",
+        help="Path to persist the authorized-user token JSON.",
+    ),
+    scope: Optional[list[str]] = typer.Option(
+        None, "--scope", help="OAuth scope. Repeat for multiple scopes."
+    ),
+    no_local_server: bool = typer.Option(
+        False,
+        "--no-local-server",
+        help="Use the console flow instead of a local callback server.",
+    ),
+    env_file: Optional[Path] = typer.Option(
+        None,
+        "--env-file",
+        help="Path to .env file for credentials. Defaults to .env in the current directory.",
+    ),
 ) -> None:
     """Run the Google installed-app OAuth flow and optionally persist a token.
 
@@ -1028,9 +1106,13 @@ def auth_login_gdrive(
     config.to_strategy().build()
 
     if config.oauth_token_path is not None:
-        typer.echo(f"Google Drive login succeeded. Token saved to {config.oauth_token_path}")
+        typer.echo(
+            f"Google Drive login succeeded. Token saved to {config.oauth_token_path}"
+        )
     else:
-        typer.echo("Google Drive login succeeded. No token path was configured, so credentials are only available for this process.")
+        typer.echo(
+            "Google Drive login succeeded. No token path was configured, so credentials are only available for this process."
+        )
 
 
 @auth_login_app.command(
@@ -1042,10 +1124,22 @@ def auth_login_gdrive(
     ),
 )
 def auth_login_microsoft(
-    auth_mode: Optional[str] = typer.Option(None, "--auth-mode", help="Microsoft auth mode: app_only or delegated."),
-    host_url: Optional[str] = typer.Option(None, "--host-url", help="SharePoint host for validating Graph-backed access, for example norc.sharepoint.com."),
-    scope: Optional[list[str]] = typer.Option(None, "--scope", help="Microsoft Graph scope. Repeat for multiple scopes."),
-    env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
+    auth_mode: Optional[str] = typer.Option(
+        None, "--auth-mode", help="Microsoft auth mode: app_only or delegated."
+    ),
+    host_url: Optional[str] = typer.Option(
+        None,
+        "--host-url",
+        help="SharePoint host for validating Graph-backed access, for example norc.sharepoint.com.",
+    ),
+    scope: Optional[list[str]] = typer.Option(
+        None, "--scope", help="Microsoft Graph scope. Repeat for multiple scopes."
+    ),
+    env_file: Optional[Path] = typer.Option(
+        None,
+        "--env-file",
+        help="Path to .env file for credentials. Defaults to .env in the current directory.",
+    ),
 ) -> None:
     """Validate Microsoft authentication used by SharePoint workflows."""
     _run_microsoft_login(auth_mode, host_url, scope, env_file)
@@ -1060,10 +1154,22 @@ def auth_login_microsoft(
     ),
 )
 def auth_login_sharepoint(
-    auth_mode: Optional[str] = typer.Option(None, "--auth-mode", help="Microsoft auth mode for SharePoint: app_only or delegated."),
-    host_url: Optional[str] = typer.Option(None, "--host-url", help="SharePoint host, for example norc.sharepoint.com."),
-    scope: Optional[list[str]] = typer.Option(None, "--scope", help="Microsoft Graph scope. Repeat for multiple scopes."),
-    env_file: Optional[Path] = typer.Option(None, "--env-file", help="Path to .env file for credentials. Defaults to .env in the current directory."),
+    auth_mode: Optional[str] = typer.Option(
+        None,
+        "--auth-mode",
+        help="Microsoft auth mode for SharePoint: app_only or delegated.",
+    ),
+    host_url: Optional[str] = typer.Option(
+        None, "--host-url", help="SharePoint host, for example norc.sharepoint.com."
+    ),
+    scope: Optional[list[str]] = typer.Option(
+        None, "--scope", help="Microsoft Graph scope. Repeat for multiple scopes."
+    ),
+    env_file: Optional[Path] = typer.Option(
+        None,
+        "--env-file",
+        help="Path to .env file for credentials. Defaults to .env in the current directory.",
+    ),
 ) -> None:
     """Validate SharePoint authentication using the configured auth mode."""
     _run_microsoft_login(auth_mode, host_url, scope, env_file)
