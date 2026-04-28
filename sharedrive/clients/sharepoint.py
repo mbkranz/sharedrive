@@ -17,11 +17,10 @@ if TYPE_CHECKING:
 
 
 class SharepointClient:
-
-    """ 
+    """
     TODO: look into for local dev: https://learn.microsoft.com/en-us/powershell/microsoftgraph/overview?view=graph-powershell-1.0
-    
-    
+
+
     """
 
     def __init__(
@@ -57,25 +56,27 @@ class SharepointClient:
                         "SharepointClient requires either token_strategy/access_token or tenant_id/client_id."
                     )
 
-                strategy = DelegatedStrategy(
-                    tenant_id=tenant_id,
-                    client_id=client_id,
-                    scopes=self.scope,
-                ) if user_delegated_access else AppOnlyStrategy(
-                    tenant_id=tenant_id,
-                    client_id=client_id,
-                    client_secret=client_secret,
-                    scopes=self.scope,
+                strategy = (
+                    DelegatedStrategy(
+                        tenant_id=tenant_id, client_id=client_id, scopes=self.scope
+                    )
+                    if user_delegated_access
+                    else AppOnlyStrategy(
+                        tenant_id=tenant_id,
+                        client_id=client_id,
+                        client_secret=client_secret,
+                        scopes=self.scope,
+                    )
                 )
                 access_token = strategy.build()
 
         self.access_token = access_token
 
-        self.auth_header = {
-            'Authorization': f'Bearer {self.access_token}'
-        }
+        self.auth_header = {"Authorization": f"Bearer {self.access_token}"}
 
-    def _request_json(self, endpoint: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _request_json(
+        self, endpoint: str, *, params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         try:
             response = requests.get(endpoint, headers=self.auth_header, params=params)
             response.raise_for_status()
@@ -89,10 +90,12 @@ class SharepointClient:
                 response_text=response.text,
             ) from http_err
         except requests.exceptions.RequestException as req_err:
-            raise GraphApiDriveError(f"Request error when calling {endpoint}: {req_err}") from req_err
-        
+            raise GraphApiDriveError(
+                f"Request error when calling {endpoint}: {req_err}"
+            ) from req_err
+
         response_json = response.json()
-        
+
         # Handle pagination for collection endpoints (e.g., drives, children)
         if "@odata.nextLink" in response_json:
             current_json = response_json
@@ -111,21 +114,24 @@ class SharepointClient:
                         response_text=next_resp.text,
                     ) from http_err
                 except requests.exceptions.RequestException as req_err:
-                    raise GraphApiDriveError(f"Request error when calling {next_link}: {req_err}") from req_err
-                
+                    raise GraphApiDriveError(
+                        f"Request error when calling {next_link}: {req_err}"
+                    ) from req_err
+
                 current_json = next_resp.json()
                 # Aggregate items if "value" array exists
                 if "value" in response_json and "value" in current_json:
                     response_json["value"].extend(current_json.get("value", []))
-                    
+
             # Remove the nextLink from final aggregated response
             response_json.pop("@odata.nextLink", None)
 
         return response_json
-            
 
-    def get_site_id(self,site_name):
-        endpoint = f"https://graph.microsoft.com/v1.0/sites/{self.host_url}:/sites/{site_name}"
+    def get_site_id(self, site_name):
+        endpoint = (
+            f"https://graph.microsoft.com/v1.0/sites/{self.host_url}:/sites/{site_name}"
+        )
         try:
             response = requests.get(endpoint, headers=self.auth_header)
             response.raise_for_status()
@@ -138,7 +144,9 @@ class SharepointClient:
                 f"Details: {response.text}"
             ) from http_err
         except requests.exceptions.RequestException as req_err:
-            raise GraphApiDriveError(f"Request error when calling {endpoint}: {req_err}") from req_err
+            raise GraphApiDriveError(
+                f"Request error when calling {endpoint}: {req_err}"
+            ) from req_err
 
         if "id" not in site_data:
             raise GraphApiDriveError(
@@ -150,7 +158,9 @@ class SharepointClient:
         return site_data["id"]
 
     def list_site_drives(self, site_id: str) -> list[dict[str, Any]]:
-        data = self._request_json(f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives")
+        data = self._request_json(
+            f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives"
+        )
         value = data.get("value", [])
         if not isinstance(value, list):
             raise GraphApiDriveError(f"Unexpected drives response for site '{site_id}'")
@@ -175,7 +185,9 @@ class SharepointClient:
                 if web_url:
                     candidate_names.add(Path(urlparse(web_url).path).name)
 
-                if normalized_drive_name in {value for value in candidate_names if value}:
+                if normalized_drive_name in {
+                    value for value in candidate_names if value
+                }:
                     return drive_id
 
             raise GraphApiDriveError(
@@ -196,7 +208,9 @@ class SharepointClient:
                 f"Details: {response.text}"
             ) from http_err
         except requests.exceptions.RequestException as req_err:
-            raise GraphApiDriveError(f"Request error calling {endpoint}: {req_err}") from req_err
+            raise GraphApiDriveError(
+                f"Request error calling {endpoint}: {req_err}"
+            ) from req_err
 
         if "id" not in drive_data:
             raise GraphApiDriveError(
@@ -207,38 +221,56 @@ class SharepointClient:
 
         return drive_data["id"]
 
-    def get_item_metadata(self, drive: str, *, item_path: str | None = None, item_id: str | None = None, fields: list[str] | None = None):
+    def get_item_metadata(
+        self,
+        drive: str,
+        *,
+        item_path: str | None = None,
+        item_id: str | None = None,
+        fields: list[str] | None = None,
+    ):
         """
         get item metadata based on relative file path or item id within the drive
         """
         if fields is None:
-            fields = ["id","name","folder","file","parentReference","webUrl","lastModifiedDateTime"]
-        
+            fields = [
+                "id",
+                "name",
+                "folder",
+                "file",
+                "parentReference",
+                "webUrl",
+                "lastModifiedDateTime",
+            ]
+
         select_query = ",".join(fields)
-        
+
         if item_id:
-            endpoint = f'https://graph.microsoft.com/v1.0/drives/{drive}/items/{item_id}?$select={select_query}'
-            children_endpoint = f'https://graph.microsoft.com/v1.0/drives/{drive}/items/{item_id}/children?$select={select_query}'
+            endpoint = f"https://graph.microsoft.com/v1.0/drives/{drive}/items/{item_id}?$select={select_query}"
+            children_endpoint = f"https://graph.microsoft.com/v1.0/drives/{drive}/items/{item_id}/children?$select={select_query}"
         else:
             normalized_itempath = str(item_path).strip() if item_path else "/"
             if not normalized_itempath:
                 normalized_itempath = "/"
             if normalized_itempath == "/":
-                endpoint = f'https://graph.microsoft.com/v1.0/drives/{drive}/root?$select={select_query}'
-                children_endpoint = f'https://graph.microsoft.com/v1.0/drives/{drive}/root/children?$select={select_query}'
+                endpoint = f"https://graph.microsoft.com/v1.0/drives/{drive}/root?$select={select_query}"
+                children_endpoint = f"https://graph.microsoft.com/v1.0/drives/{drive}/root/children?$select={select_query}"
             else:
                 if not normalized_itempath.startswith("/"):
                     normalized_itempath = f"/{normalized_itempath}"
-                endpoint = f'https://graph.microsoft.com/v1.0/drives/{drive}/root:{normalized_itempath}?$select={select_query}'
-                children_endpoint = f'https://graph.microsoft.com/v1.0/drives/{drive}/root:{normalized_itempath}:/children?$select={select_query}'
+                endpoint = f"https://graph.microsoft.com/v1.0/drives/{drive}/root:{normalized_itempath}?$select={select_query}"
+                children_endpoint = f"https://graph.microsoft.com/v1.0/drives/{drive}/root:{normalized_itempath}:/children?$select={select_query}"
 
         metadata = self._request_json(endpoint)
-        has_children = metadata.get("folder",{}).get("childCount",0) > 0
+        has_children = metadata.get("folder", {}).get("childCount", 0) > 0
         if has_children:
-            list_of_children = self._request_json(children_endpoint).get("value",[])
-            metadata["children"] = [self.get_item_metadata(drive, item_id=child["id"], fields=fields) for child in list_of_children]
+            list_of_children = self._request_json(children_endpoint).get("value", [])
+            metadata["children"] = [
+                self.get_item_metadata(drive, item_id=child["id"], fields=fields)
+                for child in list_of_children
+            ]
 
-        #TODO: return other container types (bundles,lists, etc)
+        # TODO: return other container types (bundles,lists, etc)
 
         return metadata
 
@@ -248,17 +280,25 @@ class SharepointClient:
             raise ValueError(f"Invalid SharePoint URL: {url}")
 
         self.host_url = parsed.hostname or self.host_url
-        path_parts = [part for part in Path(unquote(parsed.path)).parts if part not in {"/", ""}]
+        path_parts = [
+            part for part in Path(unquote(parsed.path)).parts if part not in {"/", ""}
+        ]
 
         site_name = None
         for index, part in enumerate(path_parts):
             if part.lower() == "sites" and index + 1 < len(path_parts):
                 site_name = path_parts[index + 1]
-                drive_name = path_parts[index + 2] if index + 2 < len(path_parts) else "Shared Documents"
+                drive_name = (
+                    path_parts[index + 2]
+                    if index + 2 < len(path_parts)
+                    else "Shared Documents"
+                )
                 item_path_parts = path_parts[index + 3 :]
                 break
         else:
-            raise ValueError(f"Could not extract site and library from SharePoint URL: {url}")
+            raise ValueError(
+                f"Could not extract site and library from SharePoint URL: {url}"
+            )
 
         site_id = self.get_site_id(site_name)
         drive_id = self.get_drive_id(site_id, drive_name=drive_name)
@@ -271,9 +311,8 @@ class SharepointClient:
             "item_path": item_path,
         }
 
-
-    def download_content(self,drive_id=None,item_id=None,download_url=None):
-        """ takes in the components needed to download content --
+    def download_content(self, drive_id=None, item_id=None, download_url=None):
+        """takes in the components needed to download content --
 
         drive id and item id -- uses Oauth to download
         download_url -- uses a presigned url (note: if on VPN, need to use this option - I think)
@@ -285,25 +324,26 @@ class SharepointClient:
             response = requests.get(url)
         else:
             if drive_id and item_id:
-                url = f'https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}/content'
-                response = requests.get(url,headers=self.auth_header)
+                url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}/content"
+                response = requests.get(url, headers=self.auth_header)
             else:
-                raise Exception("Need drive_id and item_id if not using download_url")
-        
-        # Save the file
-        if response.status_code == 200:
-            print("File downloaded successfully.")
-            return response.content
-            
-        else:
-            print(f"Failed to download file. Status code: {response.status_code}")
-            print(response.status_code)
-            print(response.reason)
-            return None
+                raise GraphApiDriveError(
+                    "Need drive_id and item_id if not using download_url"
+                )
+
+        if response.status_code != 200:
+            raise GraphApiDriveError(
+                f"Failed to download file. Status code: {response.status_code} - {response.reason}",
+                status_code=response.status_code,
+                response_text=response.text,
+            )
+        return response.content
 
     def get_from_weburl(self, url: str) -> "SharepointItem":
         resolved = self.resolve_weburl(url)
-        metadata = self.get_item_metadata(resolved["drive_id"], item_path=resolved["item_path"])
+        metadata = self.get_item_metadata(
+            resolved["drive_id"], item_path=resolved["item_path"]
+        )
         return self._to_item(metadata, scope_root=True)
 
     def _to_item(
@@ -314,66 +354,71 @@ class SharepointClient:
         scope_root: bool = False,
     ) -> DriveItem:
         return _sharepoint_to_item(
-            self,
-            raw_metadata,
-            current_rel_path=current_rel_path,
-            scope_root=scope_root,
+            self, raw_metadata, current_rel_path=current_rel_path, scope_root=scope_root
         )
 
-    def download(self,metadata,path):
+    def download(self, metadata, path):
         # TODO: refactor/redesign to make object oriented and based on classes from GraphAPI
         metadata_downloaded = {}
         if "file" in metadata:
             drive_id = metadata["parentReference"]["driveId"]
             item_id = metadata["id"]
-            url = metadata.get("@microsoft.graph.downloadUrl",
-                                f'https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}/content')
-            response = requests.get(url,headers=self.auth_header)
+            url = metadata.get(
+                "@microsoft.graph.downloadUrl",
+                f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}/content",
+            )
+            response = requests.get(url, headers=self.auth_header)
             if response.status_code == 302:
                 # [Handle redirect for download URL](https://learn.microsoft.com/en-us/graph/api/driveitem-get-content?view=graph-rest-1.0&tabs=http#response)
                 download_url = response.headers.get("Location")
                 if download_url:
                     response = requests.get(download_url)
                 else:
-                    raise GraphApiDriveError(f"Received 302 but no Location header found for URL: {url}")
-                
+                    raise GraphApiDriveError(
+                        f"Received 302 but no Location header found for URL: {url}"
+                    )
+
+            if not response.ok:
+                raise GraphApiDriveError(
+                    f"Failed to download item '{item_id}': {response.status_code} {response.reason}",
+                    status_code=response.status_code,
+                    response_text=response.text,
+                )
             content = response.content
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
 
             metadata_downloaded[path] = metadata
-    
+
         if "folder" in metadata:
-            for child in metadata.get("children",[]):
-                self.download(child,path / child["name"])
+            for child in metadata.get("children", []):
+                self.download(child, path / child["name"])
                 metadata_downloaded[path / child["name"]] = child
 
         return metadata_downloaded
-        
 
+    def get_file(self, site_name, file_path, metadata_only=False):
+        """
 
+        gets file item metadata and file
 
-    def get_file(self,site_name,file_path,metadata_only=False):
-        """ 
-        
-        gets file item metadata and file 
-        
-        """ 
-        
+        """
+
         site_id = self.get_site_id(site_name)
         drive_id = self.get_drive_id(site_id)
         item_metadata = self.get_item_metadata(drive_id, item_path=file_path)
-        
-        if not item_metadata or 'id' not in item_metadata:
-            raise FileNotFoundError(f"File not found at path: {file_path} in site: {site_name}")
-            
-        item = {"metadata":item_metadata}
+
+        if not item_metadata or "id" not in item_metadata:
+            raise FileNotFoundError(
+                f"File not found at path: {file_path} in site: {site_name}"
+            )
+
+        item = {"metadata": item_metadata}
 
         if metadata_only:
             return item
         else:
-
-            if item_metadata.get('@microsoft.graph.downloadUrl'):
+            if item_metadata.get("@microsoft.graph.downloadUrl"):
                 item_content = self.download(item_metadata, Path(file_path))
             else:
                 print("No Presigned URL detected...using drive id and item id")
@@ -394,8 +439,9 @@ class SharepointClient:
         Returns:
             dict: A dictionary containing the folder's contents.
         """
-        raise NotImplementedError("get_folder has been deprecated in favor of `get_from_weburl` or `get_item_metadata` with options for recursion")
-
+        raise NotImplementedError(
+            "get_folder has been deprecated in favor of `get_from_weburl` or `get_item_metadata` with options for recursion"
+        )
 
     def upload_new_content(self, site_name, folder_path, local_file_path):
         """
@@ -405,29 +451,35 @@ class SharepointClient:
         drive_id = self.get_drive_id(site_id)
 
         file_name = Path(local_file_path).name
-        
+
         upload_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:{folder_path}/{file_name}:/content"
 
         # Determine the content type based on the file extension
         content_type, _ = mimetypes.guess_type(local_file_path)
         headers = self.auth_header.copy()
         if content_type:
-            headers['Content-Type'] = content_type
+            headers["Content-Type"] = content_type
         else:
-            headers['Content-Type'] = 'application/octet-stream'  # Fallback binary stream
+            headers["Content-Type"] = (
+                "application/octet-stream"  # Fallback binary stream
+            )
 
-        with open(local_file_path, 'rb') as file_stream:
+        with open(local_file_path, "rb") as file_stream:
             response = requests.put(upload_url, headers=headers, data=file_stream)
 
         if response.status_code in (200, 201):
-            print(f"File '{file_name}' uploaded successfully to '{folder_path}' with Content-Type '{headers['Content-Type']}'.")
+            print(
+                f"File '{file_name}' uploaded successfully to '{folder_path}' with Content-Type '{headers['Content-Type']}'."
+            )
             return response.json()
         else:
             print(f"Failed to upload file: {response.status_code}")
             print(response.text)
             response.raise_for_status()
 
-    def update_content(self, site_name, folder_path, local_file_path, create_if_missing=False):
+    def update_content(
+        self, site_name, folder_path, local_file_path, create_if_missing=False
+    ):
         """
         [IN DEVELOPMENT] Updates an existing file in SharePoint, or creates it if not found (optional).
         """
@@ -438,14 +490,14 @@ class SharepointClient:
 
         content_type, _ = mimetypes.guess_type(local_file_path)
         headers = self.auth_header.copy()
-        headers['Content-Type'] = content_type or 'application/octet-stream'
+        headers["Content-Type"] = content_type or "application/octet-stream"
 
         # Attempt to get file metadata
         try:
             file_metadata = self.get_item_metadata(drive_id, item_path=file_path)
-            file_id = file_metadata.get('id')
-        except requests.HTTPError as e:
-            if e.response.status_code == 404:
+            file_id = file_metadata.get("id")
+        except GraphApiDriveError as e:
+            if e.status_code == 404:
                 file_id = None
             else:
                 raise
@@ -458,9 +510,11 @@ class SharepointClient:
             upload_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:{folder_path}/{file_name}:/content"
             action = "created"
         else:
-            raise FileNotFoundError(f"File '{file_name}' not found and `create_if_missing` is False.")
+            raise FileNotFoundError(
+                f"File '{file_name}' not found and `create_if_missing` is False."
+            )
 
-        with open(local_file_path, 'rb') as file_stream:
+        with open(local_file_path, "rb") as file_stream:
             response = requests.put(upload_url, headers=headers, data=file_stream)
 
         if response.status_code in (200, 201):
@@ -473,6 +527,7 @@ class SharepointClient:
 
 
 __all__ = ["SharepointClient"]
+
 
 class SharepointItem:
     def __init__(
@@ -494,7 +549,7 @@ class SharepointItem:
     @property
     def name(self) -> str:
         return self.raw.get("name", "")
-        
+
     @property
     def path(self) -> str:
         relative_path = str(self.raw.get("relative_path", "")).strip()
@@ -513,7 +568,6 @@ class SharepointItem:
     @property
     def source_url(self) -> str:
         return self.raw.get("webUrl", "")
-
 
 
 class SharepointFile(SharepointItem, DriveFile):
@@ -535,14 +589,12 @@ class SharepointFile(SharepointItem, DriveFile):
         if not drive_id:
             raise ValueError("Missing driveId in Sharepoint item metadata")
 
-        url = self.raw.get("@microsoft.graph.downloadUrl",
-                           f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{self.id}/content")
-
-        response = requests.get(
-            url,
-            headers=self.client.auth_header,
-            stream=True
+        url = self.raw.get(
+            "@microsoft.graph.downloadUrl",
+            f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{self.id}/content",
         )
+
+        response = requests.get(url, headers=self.client.auth_header, stream=True)
         if response.status_code == 302:
             redirect_url = response.headers.get("Location")
             if redirect_url:
@@ -580,9 +632,7 @@ class SharepointFolder(SharepointItem, DriveFolder):
         next_rel_path = "" if self._scope_root else self.path
         return [
             self.client._to_item(
-                child_raw,
-                current_rel_path=next_rel_path,
-                scope_root=False,
+                child_raw, current_rel_path=next_rel_path, scope_root=False
             )
             for child_raw in contents
         ]
@@ -608,4 +658,3 @@ def _sharepoint_to_item(
         current_rel_path=current_rel_path,
         scope_root=scope_root,
     )
-

@@ -49,7 +49,9 @@ def _build_child_resources(drive_item: Any) -> list[dict[str, Any]]:
             leaf_items = [refreshed_item]
         return [
             item.to_dp().to_dict()
-            for item in sorted(leaf_items, key=lambda i: str(getattr(i, "path", "") or ""))
+            for item in sorted(
+                leaf_items, key=lambda i: str(getattr(i, "path", "") or "")
+            )
         ]
 
     if isinstance(drive_item, DriveFolder):
@@ -120,7 +122,9 @@ def _fetch_one_package(
 
     if log is not None:
         verb = "Would fetch" if dry_run else "Fetched"
-        log(f"{verb} metadata for {len(child_resources)} resource(s) into package '{package_name}'.")
+        log(
+            f"{verb} metadata for {len(child_resources)} resource(s) into package '{package_name}'."
+        )
 
     if not dry_run:
         package.resources = [
@@ -139,10 +143,7 @@ def _fetch_one_package(
 
 
 def _collect_packages_from_catalog(
-    catalog: DriveCatalog,
-    catalog_path: str,
-    *,
-    depth: int,
+    catalog: DriveCatalog, catalog_path: str, *, depth: int
 ) -> list[tuple[str, DrivePackage]]:
     """Return (dot_path, package) pairs for packages within a catalog.
 
@@ -152,13 +153,21 @@ def _collect_packages_from_catalog(
     """
     result: list[tuple[str, DrivePackage]] = []
     for package in catalog.packages:
-        pkg_path = f"{catalog_path}.{package.name}" if catalog_path else str(package.name)
+        pkg_path = (
+            f"{catalog_path}.{package.name}" if catalog_path else str(package.name)
+        )
         result.append((pkg_path, package))
 
     if depth > 0:
         for sub_catalog in catalog.catalogs:
-            sub_path = f"{catalog_path}.{sub_catalog.name}" if catalog_path else str(sub_catalog.name)
-            result.extend(_collect_packages_from_catalog(sub_catalog, sub_path, depth=depth - 1))
+            sub_path = (
+                f"{catalog_path}.{sub_catalog.name}"
+                if catalog_path
+                else str(sub_catalog.name)
+            )
+            result.extend(
+                _collect_packages_from_catalog(sub_catalog, sub_path, depth=depth - 1)
+            )
 
     return result
 
@@ -170,6 +179,8 @@ def fetch_entity_metadata_in_descriptor(
     dry_run: bool = False,
     depth: int = 0,
     log: LogFn | None = print,
+    googledrive_client_factory: Callable[[], Any] | None = None,
+    sharepoint_client_factory: Callable[[], Any] | None = None,
 ) -> list[FetchSummary]:
     """Fetch remote metadata for one entity (package or catalog) in a descriptor.
 
@@ -188,6 +199,10 @@ def fetch_entity_metadata_in_descriptor(
     """
     descriptor_path = Path(descriptor)
     descriptor_model = load_drive_descriptor(descriptor_path)
+    client_kwargs = {
+        "googledrive_client_factory": googledrive_client_factory,
+        "sharepoint_client_factory": sharepoint_client_factory,
+    }
 
     if entity_selector:
         entity_selector = entity_selector.strip()
@@ -266,7 +281,10 @@ def fetch_resource_metadata_in_descriptor(
         )
 
     summary = _fetch_one_package(
-        resource, resolved_name, dry_run=dry_run, log=log,
+        resource,
+        resolved_name,
+        dry_run=dry_run,
+        log=log,
         googledrive_client_factory=googledrive_client_factory,
         sharepoint_client_factory=sharepoint_client_factory,
     )
