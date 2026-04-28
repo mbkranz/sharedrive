@@ -18,6 +18,63 @@ from sharedrive.registry import build_service_registry
 LogFn = Callable[[str], None]
 
 
+def _source_path_from_dict(item_dict: dict[str, Any]) -> str | None:
+    """Extract the primary source path URL from a fetched resource dict.
+
+    Returns ``None`` when the dict has no ``sources`` list, an empty sources
+    list, or a sources entry that lacks a non-empty ``path`` value.
+    """
+    sources = item_dict.get("sources")
+    if not isinstance(sources, list) or not sources:
+        return None
+    primary = sources[0]
+    if not isinstance(primary, dict):
+        return None
+    path = primary.get("path")
+    if isinstance(path, str) and path.strip():
+        return path.strip()
+    return None
+
+
+def _merge_fetched_into_existing(
+    existing: list[DriveResource | DrivePackage],
+    fetched: list[dict[str, Any]],
+) -> list[DriveResource | DrivePackage]:
+    """Reconcile freshly fetched drive items with existing descriptor resources.
+
+    Matching is keyed on the primary source path (``sources[0].path``).  For
+    each fetched item:
+
+    - **Matched** – an existing resource whose primary source path equals the
+      fetched item's source path.  The *existing* object is kept as-is so that
+      any user-added metadata (titles, descriptions, custom local paths, etc.)
+      is preserved.
+    - **New** – no existing resource matches the fetched source path.  The
+      item is added directly from the fetched data.
+
+    Items present in ``existing`` but *absent* from ``fetched`` are dropped;
+    they no longer exist in the remote source.
+    """
+    existing_by_source: dict[str, DriveResource | DrivePackage] = {}
+    for item in existing:
+        sp = item.source_path
+        if sp:
+            existing_by_source[sp] = item
+
+    result: list[DriveResource | DrivePackage] = []
+    for fetched_dict in fetched:
+        source_url = _source_path_from_dict(fetched_dict)
+        if source_url and source_url in existing_by_source:
+            result.append(existing_by_source[source_url])
+        else:
+            result.append(
+                DrivePackage.model_validate(fetched_dict)
+                if isinstance(fetched_dict.get("resources"), list)
+                else DriveResource.model_validate(fetched_dict)
+            )
+    return result
+
+
 def _iter_drive_leaf_items(item: Any) -> Iterable[Any]:
     """Recursively yield non-directory children from a drive item tree.
 
@@ -97,44 +154,46 @@ def _fetch_one_package(
     """Fetch remote folder metadata into a package's resources list.
 
     Mutates ``package.resources`` in-place when ``dry_run`` is ``False``.
+    Freshly fetched items are **merged** with any existing child resources:
+    items matched by primary source path retain their existing descriptor
+    metadata (titles, descriptions, custom local paths, etc.); new items are
+    appended; items no longer present in the remote source are dropped.
     The caller is responsible for saving the descriptor afterwards.
     """
     source_url = resource_source_url(package)
     if not source_url:
         raise ValueError(f"Package '{package_name}' has no identifiable source URL.")
 
-    child_resources = _fetch_from_adapter(resource=package, source_url=source_url)
+    fetched_items = _fetch_from_adapter(resource=package, source_url=source_url)
 
     if log is not None:
         verb = "Would fetch" if dry_run else "Fetched"
         log(
-            f"{verb} metadata for {len(child_resources)} resource(s) into package '{package_name}'."
+            f"{verb} metadata for {len(fetched_items)} resource(s) into package '{package_name}'."
         )
 
     if not dry_run:
-        package.resources = [
-            DrivePackage.model_validate(item)
-            if isinstance(item.get("resources"), list)
-            else DriveResource.model_validate(item)
-            for item in child_resources
-        ]
+        package.resources = _merge_fetched_into_existing(package.resources, fetched_items)
 
     return FetchSummary(
         resource_name=package_name,
-        generated_resources=len(child_resources),
+        generated_resources=len(fetched_items),
         dry_run=dry_run,
         changed=not dry_run,
     )
 
 
 def _collect_packages_from_catalog(
-    catalog: DriveCatalog, catalog_path: str, *, depth: int
+    catalog: DriveCatalog, catalog_path: str, *, depth: int | None = None
 ) -> list[tuple[str, DrivePackage]]:
     """Return (dot_path, package) pairs for packages within a catalog.
 
-    With ``depth=0`` (default) only packages at the immediate level of the
-    catalog are included.  Increase ``depth`` to also collect packages from
-    nested catalogs: ``depth=1`` includes one level of sub-catalogs, and so on.
+    With ``depth=None`` (the default) **all** packages at every level of nested
+    catalogs are included – this is the "maximum depth" traversal that ensures
+    the deepest packages with sources are always reached.  Pass an integer to
+    limit the recursion: ``depth=0`` collects only packages at the immediate
+    level of the catalog; ``depth=1`` also includes packages in direct
+    sub-catalogs; and so on.
     """
     result: list[tuple[str, DrivePackage]] = []
     for package in catalog.packages:
@@ -143,15 +202,17 @@ def _collect_packages_from_catalog(
         )
         result.append((pkg_path, package))
 
-    if depth > 0:
+    should_recurse = depth is None or depth > 0
+    if should_recurse:
         for sub_catalog in catalog.catalogs:
             sub_path = (
                 f"{catalog_path}.{sub_catalog.name}"
                 if catalog_path
                 else str(sub_catalog.name)
             )
+            next_depth = None if depth is None else depth - 1
             result.extend(
-                _collect_packages_from_catalog(sub_catalog, sub_path, depth=depth - 1)
+                _collect_packages_from_catalog(sub_catalog, sub_path, depth=next_depth)
             )
 
     return result
@@ -162,7 +223,7 @@ def fetch_entity_metadata_in_descriptor(
     entity_selector: str | None,
     *,
     dry_run: bool = False,
-    depth: int = 0,
+    depth: int | None = None,
     log: LogFn | None = print,
 ) -> list[FetchSummary]:
     """Fetch remote metadata for one entity (package or catalog) in a descriptor.
@@ -170,13 +231,22 @@ def fetch_entity_metadata_in_descriptor(
     Dispatches based on the resolved entity type:
 
     - ``DrivePackage``: fetch the remote folder's file listing into the
-      package's nested resources.  Returns a list with one ``FetchSummary``.
-    - ``DriveCatalog``: iterate over packages within the catalog and fetch
-      each one.  With the default ``depth=0`` only packages at the immediate
-      level are fetched; increase ``depth`` to recurse into nested catalogs.
+      package's nested resources and merge with any existing children.
+      Returns a list with one ``FetchSummary``.
+    - ``DriveCatalog``: iterate over **all** packages within the catalog at
+      every depth level and fetch each one.  Pass an integer ``depth`` to
+      restrict the recursion: ``depth=0`` fetches only packages at the
+      immediate level; ``depth=1`` also fetches packages in direct
+      sub-catalogs; and so on.  The default (``depth=None``) traverses to the
+      maximum depth, reaching every nested package that has a source URL.
       Returns a flat list of ``FetchSummary``, one per package fetched.
     - Standalone ``DriveResource``: raises ``ValueError`` (leaf resources do
       not have a remote listing to fetch).
+
+    Freshly fetched resources are **merged** with existing child entries: items
+    whose primary source path matches an existing resource keep the existing
+    descriptor metadata; new items are appended; items absent from the remote
+    source are dropped.
 
     The descriptor is saved once after all updates when ``dry_run`` is ``False``.
     """
@@ -210,7 +280,7 @@ def fetch_entity_metadata_in_descriptor(
             save_drive_descriptor(descriptor_path, descriptor_model)
         return [summary]
 
-    # DriveCatalog: collect and fetch all packages within it (flat by default)
+    # DriveCatalog: collect and fetch all packages within it (maximum depth by default)
     packages = _collect_packages_from_catalog(entity, entity_path, depth=depth)
     summaries: list[FetchSummary] = []
     for pkg_path, package in packages:

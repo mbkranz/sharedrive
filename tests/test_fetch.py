@@ -2051,3 +2051,345 @@ def test_fetch_entity_metadata_raises_for_standalone_resource(tmp_path: Path) ->
         assert "standalone resource" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("Expected ValueError for standalone resource")
+
+
+# ---------------------------------------------------------------------------
+# merge behaviour
+# ---------------------------------------------------------------------------
+
+
+def test_merge_fetched_preserves_existing_resource_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Existing resources whose source path matches a fetched item keep their metadata."""
+    from sharedrive.actions.fetch import _merge_fetched_into_existing
+    from sharedrive.models import DriveResource, DriveSource
+
+    existing_item = DriveResource(
+        name="custom-name",
+        path="custom/path/report.csv",
+        title="My custom title",
+        description="User-added description",
+        sources=[
+            DriveSource(
+                path="https://drive.google.com/file/d/file-1/view",
+                serviceType="GoogleDrive",
+                entityType="File",
+            )
+        ],
+    )
+
+    fetched_dicts = [
+        {
+            "name": "report.csv",
+            "path": "report.csv",
+            "sources": [
+                {
+                    "path": "https://drive.google.com/file/d/file-1/view",
+                    "serviceType": "GoogleDrive",
+                    "entityType": "File",
+                }
+            ],
+        }
+    ]
+
+    merged = _merge_fetched_into_existing([existing_item], fetched_dicts)
+
+    assert len(merged) == 1
+    item = merged[0]
+    assert item is existing_item
+    assert item.name == "custom-name"
+    assert item.title == "My custom title"
+    assert item.description == "User-added description"
+    assert item.path == "custom/path/report.csv"
+
+
+def test_merge_fetched_adds_new_items(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Items in the fetched set whose source path has no existing match are added."""
+    from sharedrive.actions.fetch import _merge_fetched_into_existing
+    from sharedrive.models import DriveResource, DriveSource
+
+    existing_item = DriveResource(
+        name="old-file",
+        path="old-file.csv",
+        sources=[
+            DriveSource(
+                path="https://drive.google.com/file/d/file-1/view",
+                serviceType="GoogleDrive",
+                entityType="File",
+            )
+        ],
+    )
+
+    fetched_dicts = [
+        {
+            "name": "old-file.csv",
+            "path": "old-file.csv",
+            "sources": [
+                {
+                    "path": "https://drive.google.com/file/d/file-1/view",
+                    "serviceType": "GoogleDrive",
+                    "entityType": "File",
+                }
+            ],
+        },
+        {
+            "name": "new-file.csv",
+            "path": "new-file.csv",
+            "sources": [
+                {
+                    "path": "https://drive.google.com/file/d/file-2/view",
+                    "serviceType": "GoogleDrive",
+                    "entityType": "File",
+                }
+            ],
+        },
+    ]
+
+    merged = _merge_fetched_into_existing([existing_item], fetched_dicts)
+
+    assert len(merged) == 2
+    assert merged[0] is existing_item
+    assert merged[1].name == "new-file.csv"
+
+
+def test_merge_fetched_drops_removed_items(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Items present in existing but absent from the fetched set are dropped."""
+    from sharedrive.actions.fetch import _merge_fetched_into_existing
+    from sharedrive.models import DriveResource, DriveSource
+
+    kept = DriveResource(
+        name="kept",
+        path="kept.csv",
+        sources=[
+            DriveSource(
+                path="https://drive.google.com/file/d/kept/view",
+                serviceType="GoogleDrive",
+                entityType="File",
+            )
+        ],
+    )
+    removed = DriveResource(
+        name="removed",
+        path="removed.csv",
+        sources=[
+            DriveSource(
+                path="https://drive.google.com/file/d/removed/view",
+                serviceType="GoogleDrive",
+                entityType="File",
+            )
+        ],
+    )
+
+    fetched_dicts = [
+        {
+            "name": "kept.csv",
+            "path": "kept.csv",
+            "sources": [
+                {
+                    "path": "https://drive.google.com/file/d/kept/view",
+                    "serviceType": "GoogleDrive",
+                    "entityType": "File",
+                }
+            ],
+        }
+    ]
+
+    merged = _merge_fetched_into_existing([kept, removed], fetched_dicts)
+
+    assert len(merged) == 1
+    assert merged[0] is kept
+
+
+def test_fetch_one_package_merges_rather_than_replaces(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """fetch preserves existing resource metadata when source paths match."""
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_catalog_descriptor(
+        descriptor,
+        packages=[
+            {
+                "name": "docs",
+                "path": "downloads/docs",
+                "syncTarget": "resources",
+                "sources": [
+                    {
+                        "path": "https://drive.google.com/drive/folders/docs-folder",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "Directory",
+                    }
+                ],
+                "resources": [
+                    {
+                        "name": "custom-report-name",
+                        "path": "custom/report.csv",
+                        "title": "Annual Report",
+                        "description": "Preserved by merge",
+                        "sources": [
+                            {
+                                "path": "https://drive.google.com/file/d/report/view",
+                                "serviceType": "GoogleDrive",
+                                "entityType": "File",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    )
+
+    class DummyDriveClient:
+        def get_from_weburl(self, _url: str):
+            class DummyItem:
+                path = "report.csv"
+                is_directory = False
+
+                def to_dp(self):
+                    from sharedrive.models import DriveResource, DriveSource
+
+                    return DriveResource(
+                        name="report.csv",
+                        path="report.csv",
+                        sources=[
+                            DriveSource(
+                                path="https://drive.google.com/file/d/report/view",
+                                serviceType="GoogleDrive",
+                                entityType="File",
+                            )
+                        ],
+                    )
+
+            class DummyFolder:
+                @property
+                def is_directory(self):
+                    return True
+
+                @property
+                def children(self):
+                    return [DummyItem()]
+
+            return DummyFolder()
+
+    _patch_fetch_registry(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
+
+    summaries = fetch_entity_metadata_in_descriptor(
+        descriptor=descriptor, entity_selector="docs", dry_run=False, log=None
+    )
+
+    assert len(summaries) == 1
+    assert summaries[0].generated_resources == 1
+    assert summaries[0].changed is True
+
+    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
+    saved_resource = document["packages"][0]["resources"][0]
+    assert saved_resource["name"] == "custom-report-name"
+    assert saved_resource["title"] == "Annual Report"
+    assert saved_resource["description"] == "Preserved by merge"
+    assert saved_resource["path"] == "custom/report.csv"
+
+
+def test_fetch_entity_metadata_default_depth_traverses_nested_catalogs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Default depth=None causes fetch to recurse into all nested catalogs."""
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_catalog_descriptor(
+        descriptor,
+        catalogs=[
+            {
+                "name": "research",
+                "packages": [
+                    {
+                        "name": "top-docs",
+                        "path": "downloads/top",
+                        "syncTarget": "resources",
+                        "sources": [
+                            {
+                                "path": "https://drive.google.com/drive/folders/top-folder",
+                                "serviceType": "GoogleDrive",
+                                "entityType": "Directory",
+                            }
+                        ],
+                    }
+                ],
+                "catalogs": [
+                    {
+                        "name": "archive",
+                        "packages": [
+                            {
+                                "name": "archive-docs",
+                                "path": "downloads/archive",
+                                "syncTarget": "resources",
+                                "sources": [
+                                    {
+                                        "path": "https://drive.google.com/drive/folders/archive-folder",
+                                        "serviceType": "GoogleDrive",
+                                        "entityType": "Directory",
+                                    }
+                                ],
+                            }
+                        ],
+                        "catalogs": [],
+                    }
+                ],
+            }
+        ],
+    )
+
+    fetched_urls: list[str] = []
+
+    class DummyDriveClient:
+        def get_from_weburl(self, url: str):
+            fetched_urls.append(url)
+
+            class DummyItem:
+                path = "file.csv"
+                is_directory = False
+
+                def to_dp(self):
+                    from sharedrive.models import DriveResource, DriveSource
+
+                    return DriveResource(
+                        name="file.csv",
+                        path="file.csv",
+                        sources=[
+                            DriveSource(
+                                path=url + "/file.csv",
+                                serviceType="GoogleDrive",
+                                entityType="File",
+                            )
+                        ],
+                    )
+
+            class DummyFolder:
+                @property
+                def is_directory(self):
+                    return True
+
+                @property
+                def children(self):
+                    return [DummyItem()]
+
+            return DummyFolder()
+
+    _patch_fetch_registry(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
+
+    # Default depth (None / unlimited) should reach both top-docs and archive-docs
+    summaries = fetch_entity_metadata_in_descriptor(
+        descriptor=descriptor,
+        entity_selector="research",
+        dry_run=True,
+        log=None,
+    )
+    assert len(summaries) == 2
+    assert summaries[0].resource_name == "top-docs"
+    assert summaries[1].resource_name == "archive-docs"
+    assert fetched_urls == [
+        "https://drive.google.com/drive/folders/top-folder",
+        "https://drive.google.com/drive/folders/archive-folder",
+    ]
