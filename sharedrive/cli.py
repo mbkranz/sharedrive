@@ -33,7 +33,6 @@ from sharedrive.models import (
     normalize_entity_type,
     normalize_service_type,
     normalize_sync_target,
-    resolve_entity_reference,
 )
 
 load_dotenv(find_dotenv(usecwd=True))
@@ -189,13 +188,14 @@ def _scoped_selector(selector: str | None) -> str | None:
 
 
 def _resolve_resource_reference(resource_selector: str, descriptor: DriveCatalog):
-    reference = resolve_entity_reference(
-        descriptor,
-        resource_selector,
-        (DriveResource, DrivePackage),
-    )
+    reference = descriptor.get_entity_reference(resource_selector)
     if reference is None:
         raise typer.BadParameter(f'Resource selector "{resource_selector}" was not found.')
+    _, model = reference
+    if not isinstance(model, (DriveResource, DrivePackage)):
+        raise typer.BadParameter(
+            f'Selector "{resource_selector}" does not reference a resource or package.'
+        )
     return reference
 
 
