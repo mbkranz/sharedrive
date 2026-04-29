@@ -1,45 +1,20 @@
 from __future__ import annotations
 
-import json
-import re
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Annotated, Any, Iterable, Optional, TypeVar
-from urllib.parse import unquote, urlparse
+from typing import Annotated, Any, Optional
+from urllib.parse import  urlparse
 
 import pydantic
-from pydantic.alias_generators import to_pascal,to_camel
+from pydantic.alias_generators import to_pascal
 from pydantic import AliasChoices, Field
-import yaml
+# s
 from dplib.models.catalog import Catalog
 from dplib.models.package import Package
 from dplib.models.resource import Resource
 from dplib.models.source import Source
-from dplib.system import EntityReference, Model
 
 
 CATALOG_PROFILE = "data-package-catalog"
-T = TypeVar("T", bound=Model)
-Entry = Model | dict[str, Any]
 
-
-SYNC_TARGET_ALIASES = {
-    "path": "path",
-    "resource": "resources",
-    "resources": "resources",
-}
-
-def normalize_sync_target(sync_target: str) -> str:
-    """Normalize syncTarget to the sharedrive descriptor contract."""
-    normalized = sync_target.strip()
-    if not normalized:
-        raise ValueError("syncTarget must be a non-empty string")
-
-    alias = SYNC_TARGET_ALIASES.get(normalized.lower())
-    if alias is not None:
-        return alias
-
-    raise ValueError(f"Unsupported syncTarget '{sync_target}'.")
 
 
 def _empty_catalog_document() -> dict[str, Any]:
