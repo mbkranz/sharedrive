@@ -75,14 +75,8 @@ class DriveSource(Source):
         else:
             raise ValueError("Source must declare a serviceType or a path with a recognizable host")
 
-
-        
-
-
-
 class DriveResource(Resource):
     sources: list[DriveSource] = pydantic.Field(default_factory=list)
-    drive_id: Optional[str] = pydantic.Field(default=None, alias="driveId")
     profile: Optional[str] = None
 
 
@@ -91,18 +85,6 @@ class DrivePackage(Package):
     sources: list[DriveSource] = pydantic.Field(default_factory=list)
     resources: list["DriveResource | DrivePackage"] = pydantic.Field(default_factory=list)
     profile: Optional[str] = None
-
-    @property
-    def sync_target(self) -> str:
-        """Return the declared sync target for a package-like resource."""
-        declared = getattr(self, "syncTarget", None)
-        if isinstance(declared, str) and declared.strip():
-            return normalize_sync_target(declared)
-        return "resources"
-
-    @property
-    def is_package(self) -> bool:
-        return True
 
 
 
