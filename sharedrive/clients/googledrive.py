@@ -4,20 +4,36 @@ import json
 import re
 from enum import Enum
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, Literal, Optional, Union
+from typing import Any, ClassVar, Dict, Literal, Optional, Union
 
 import requests
 from google.auth.credentials import Credentials
 from sharedrive.item import DriveItem
 
 from sharedrive.auth.google import GoogleAuth
+from sharedrive.clients.base import BaseClient
 from sharedrive.exceptions import GoogleApiError, GoogleDriveError
+from sharedrive.registry import provider
 
 
-class GoogleBaseClient:
-    """Shared Google client base for auth lifecycle and HTTP transport helpers."""
+class GoogleBaseClient(BaseClient):
+    """Shared Google client base: auth lifecycle and HTTP transport helpers.
+
+    Provides the Bearer-token header, a unified ``_request()`` method with
+    structured error handling, and stream-to-disk / stream-to-bytes helpers.
+    Concrete subclasses supply ``api_error_cls`` to choose which exception is
+    raised on HTTP failures.
+
+    Design note: this class intentionally separates low-level HTTP transport
+    from drive-specific business logic so that non-Drive Google APIs (Sheets,
+    etc.) could extend it without carrying Drive-specific state.
+    """
 
     api_error_cls = GoogleApiError
+
+    # Satisfy BaseClient abstract requirements at the intermediate level so
+    # that direct subclasses only need to override if they want custom behaviour.
+    auth_methods: ClassVar[list[str]] = ["adc", "service_account", "user_oauth"]
 
     def __init__(
         self,
@@ -27,6 +43,7 @@ class GoogleBaseClient:
         session: requests.Session | None = None,
         timeout: int = 120,
     ) -> None:
+
         self.session = session or requests.Session()
         self.timeout = timeout
 
@@ -99,6 +116,26 @@ class GoogleBaseClient:
             chunk for chunk in resp.iter_content(chunk_size=1024 * 1024) if chunk
         )
 
+    @classmethod
+    def build_default(cls) -> "GoogleBaseClient":
+        """Construct from environment variables / settings.
+
+        Reads ``GOOGLE_AUTH_MODE`` (and associated credentials) from the
+        environment or a ``.env`` file.  Override in concrete subclasses to
+        return the exact subclass type.
+        """
+        return cls(auth=GoogleAuth.from_settings())
+
+    @classmethod
+    def check_auth(cls) -> None:
+        """Validate that Google credentials are available.
+
+        Calls :meth:`~sharedrive.auth.google.GoogleAuth.from_settings` which
+        raises :class:`~sharedrive.exceptions.GoogleAuthError` if the
+        credentials are missing or invalid.
+        """
+        GoogleAuth.from_settings()
+
 
 DRIVE_URL = "https://www.googleapis.com/drive/v3"
 UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files"
@@ -138,22 +175,28 @@ ALT_EXPORTS = {
 }
 
 
+@provider("googledrive")
 class GoogleDriveClient(GoogleBaseClient):
-    """
-    Minimal Google Drive client (ID-first) with read/write and full export coverage for Google-native files.
-    Uses ADC (google-auth). Works with My Drive and Shared Drives.
+    """Google Drive client (ID-first) with read/write and full export coverage.
+
+    Supports My Drive and Shared Drives via the Drive REST API v3.
 
     Instantiate via a :class:`~sharedrive.auth.google.GoogleAuth` object::
 
         auth = GoogleAuth.from_adc()
         client = GoogleDriveClient(auth)
 
-        # Or using environment-variable config:
-        client = GoogleDriveClient(GoogleAuth.from_settings())
+        # Or from environment variables / .env file:
+        client = GoogleDriveClient.build_default()
 
     The *credentials* keyword argument is a low-level escape hatch kept for
     tests only; prefer :class:`~sharedrive.auth.google.GoogleAuth` in all
     production code.
+
+    The class is registered as the ``"googledrive"`` provider via the
+    :func:`~sharedrive.registry.provider` decorator; use
+    :func:`~sharedrive.registry.build_service_registry` to obtain a
+    :class:`~sharedrive.registry.ServiceAdapter` for it.
     """
 
     api_error_cls = GoogleDriveError

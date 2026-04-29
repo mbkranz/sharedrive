@@ -3,25 +3,50 @@ from __future__ import annotations
 import json
 import mimetypes
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.parse import unquote, urlparse
 
 
 import requests
 
+from sharedrive.clients.base import BaseClient
 from sharedrive.exceptions import GraphApiDriveError, GraphApiSiteError
 from sharedrive.item import DriveItem
+from sharedrive.registry import provider
 
 if TYPE_CHECKING:
     from sharedrive.auth.microsoft import MicrosoftAuth
 
 
-class SharepointClient:
-    """
-    TODO: look into for local dev: https://learn.microsoft.com/en-us/powershell/microsoftgraph/overview?view=graph-powershell-1.0
+@provider("sharepoint")
+class SharepointClient(BaseClient):
+    """SharePoint / OneDrive client backed by the Microsoft Graph API.
 
+    Supports both app-only (client credentials) and delegated auth via
+    :class:`~sharedrive.auth.microsoft.MicrosoftAuth`.
 
+    Instantiate via a :class:`~sharedrive.auth.microsoft.MicrosoftAuth` object::
+
+        auth = MicrosoftAuth.from_app_only(tenant_id, client_id, client_secret)
+        client = SharepointClient(auth, host_url="contoso.sharepoint.com")
+
+        # Or from environment variables / .env file:
+        client = SharepointClient.build_default()
+
+    The *access_token* keyword argument is a low-level escape hatch kept for
+    tests only; prefer :class:`~sharedrive.auth.microsoft.MicrosoftAuth` in all
+    production code.
+
+    The class is registered as the ``"sharepoint"`` provider via the
+    :func:`~sharedrive.registry.provider` decorator; use
+    :func:`~sharedrive.registry.build_service_registry` to obtain a
+    :class:`~sharedrive.registry.ServiceAdapter` for it.
+
+    Microsoft Graph API reference:
+        https://learn.microsoft.com/en-us/graph/api/resources/onedrive?view=graph-rest-1.0
     """
+
+    auth_methods: ClassVar[list[str]] = ["app_only", "delegated"]
 
     def __init__(
         self,
@@ -45,6 +70,33 @@ class SharepointClient:
             )
 
         self.auth_header = {"Authorization": f"Bearer {self.access_token}"}
+
+    @classmethod
+    def build_default(cls) -> "SharepointClient":
+        """Construct from environment variables / settings.
+
+        Reads ``SHAREPOINT_AUTH_MODE``, ``AZURE_TENANT_ID``, ``AZURE_CLIENT_ID``,
+        ``AZURE_CLIENT_SECRET``, and ``SHAREPOINT_HOST_URL`` from the environment
+        or a ``.env`` file via
+        :class:`~sharedrive.auth.settings.MicrosoftAuthConfig`.
+        """
+        from sharedrive.auth.settings import MicrosoftAuthConfig
+
+        config = MicrosoftAuthConfig()
+        auth = config.to_auth()
+        return cls(auth=auth, host_url=config.host_url)
+
+    @classmethod
+    def check_auth(cls) -> None:
+        """Validate that Microsoft Graph credentials are available.
+
+        Raises :class:`~sharedrive.exceptions.GraphAuthError` if the
+        credentials configured in the environment are missing or invalid.
+        """
+        from sharedrive.auth.settings import MicrosoftAuthConfig
+
+        config = MicrosoftAuthConfig()
+        config.to_auth()
 
     def _request_json(
         self, endpoint: str, *, params: dict[str, Any] | None = None
