@@ -56,10 +56,6 @@ class GoogleAuth:
         """Low-level escape hatch: supply raw credentials directly."""
         self._creds = credentials
 
-    # ------------------------------------------------------------------
-    # Named constructors
-    # ------------------------------------------------------------------
-
     @classmethod
     def from_adc(cls, scopes: Sequence[str] | str | None = None) -> "GoogleAuth":
         """Build from Application Default Credentials (``gcloud auth application-default login``)."""
@@ -117,8 +113,8 @@ class GoogleAuth:
     @classmethod
     def from_user_oauth(
         cls,
-        client_secrets_path: str | Path,
-        token_path: str | Path,
+        client_secrets_path: str | Path = None,
+        token_path: str | Path = None,
         scopes: Sequence[str] | str | None = None,
         use_local_server: bool = True,
     ) -> "GoogleAuth":
@@ -187,8 +183,5 @@ class GoogleAuth:
 
 
 __all__ = [
-    "DEFAULT_DRIVE_READONLY_SCOPES",
-    "DEFAULT_DRIVE_SCOPES",
-    "GoogleAuth",
-    "normalize_google_scopes",
+    "GoogleAuth"
 ]

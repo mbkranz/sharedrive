@@ -122,7 +122,5 @@ class MicrosoftAuth:
 
 
 __all__ = [
-    "DEFAULT_MICROSOFT_GRAPH_SCOPES",
-    "MicrosoftAuth",
-    "normalize_microsoft_scopes",
+    "MicrosoftAuth"
 ]
