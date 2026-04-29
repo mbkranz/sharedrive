@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
-
+from google.auth.exceptions import RefreshError
 
 class GoogleApiError(Exception):
     """Base exception for Google API failures."""
@@ -18,6 +18,8 @@ class GoogleApiError(Exception):
         self.response_text = response_text
         self.response_json = response_json
 
+class GoogleRefreshError(RefreshError):
+     """Raised when Google credentials cannot be refreshed."""
 
 class GoogleAuthError(GoogleApiError):
     """Raised when Google credentials cannot be acquired or refreshed."""
