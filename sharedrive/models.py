@@ -487,6 +487,21 @@ class DriveSource(Source):
             raise ValueError("Source must declare a serviceType or a path with a recognizable host")
 
         
+    def get_client(self) -> "BaseClient":
+        """Build and return a default provider client for this source.
+
+        Lazy import keeps model modules decoupled from provider registry wiring.
+        """
+        from sharedrive.registry import get_provider
+
+        provider = get_provider(self.adapter_name)
+        if provider is None:
+            raise NotImplementedError(
+                f"No provider registered for '{self.adapter_name}'"
+            )
+        return provider.build_default()
+
+
 
 
 

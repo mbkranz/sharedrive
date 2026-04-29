@@ -9,12 +9,12 @@ from sharedrive.models import (
     DriveCatalog,
     DrivePackage,
     DriveResource,
+    DriveSource,
     DriveSourceReference,
     iter_source_refs,
     load_drive_descriptor,
     save_drive_descriptor,
 )
-from sharedrive.registry import get_client
 
 LogFn = Callable[[str], None]
 
@@ -48,7 +48,12 @@ def _build_child_resources(drive_item: DriveItem) -> list[dict[str, Any]]:
 
 
 def _fetch_from_source(source: DriveSourceReference) -> DriveItem:
-    return get_client(source.adapter).get_from_weburl(source.path)
+    source_model = DriveSource.model_validate({
+        "path": source.path,
+        "serviceType": source.service_type or source.adapter,
+        "entityType": source.entity_type,
+    })
+    return source_model.get_client().get_from_weburl(source.path)
 
 
 def _sorted_drive_items(items: Iterable[Any]) -> list[Any]:
