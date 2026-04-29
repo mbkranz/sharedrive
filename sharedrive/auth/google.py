@@ -8,11 +8,8 @@ from google.auth.credentials import Credentials
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 from google_auth_oauthlib.flow import InstalledAppFlow
-
 from sharedrive.exceptions import GoogleAuthError
-
-if TYPE_CHECKING:
-    from sharedrive.auth.token_store import TokenStore
+from warnings import warn
 
 DEFAULT_DRIVE_SCOPES = ("https://www.googleapis.com/auth/drive",)
 DEFAULT_DRIVE_READONLY_SCOPES = (
@@ -100,42 +97,53 @@ class GoogleAuth:
             ) from exc
 
     @classmethod
+    def from_user_interactive_oauth(
+        cls,
+        client_secrets_path: str | Path,
+        token_path: str | Path | None = None,
+        scopes: Sequence[str] | str | None = None
+    ) -> "GoogleAuth":
+        """Build via the OAuth installed-app flow.
+        """
+        normalized_scopes = normalize_google_scopes(scopes)
+        flow = InstalledAppFlow.from_client_secrets_file(
+                    str(client_secrets_path),
+                    scopes=normalized_scopes,
+                )
+        creds = flow.run_local_server(port=0,open_browser=False)
+        Path(token_path).write_text(creds.to_json())
+        return cls(creds)
+
+    @classmethod
     def from_user_oauth(
         cls,
         client_secrets_path: str | Path,
+        token_path: str | Path,
         scopes: Sequence[str] | str | None = None,
-        token_store: TokenStore | None = None,
         use_local_server: bool = True,
     ) -> "GoogleAuth":
-        """Build via the OAuth installed-app flow.
-
-        If *token_store* is supplied, a cached token is loaded first and the
-        flow is only triggered when no valid (or refreshable) token exists.
-        """
-        normalized_scopes = normalize_google_scopes(scopes)
-        creds = token_store.load() if token_store else None
-
-        try:
-            if creds and creds.valid:
-                return cls(creds)
-
-            if creds and getattr(creds, "expired", False):
+        """Build via the OAuth installed-app flow, with token persistence."""
+        if token_path:
+            creds = Credentials.from_authorized_user_file(token_path, scopes=scopes)
+            try:
                 creds.refresh(Request())
-                if token_store:
-                    token_store.save(creds)
+                Path(token_path).write_text(creds.to_json())
                 return cls(creds)
-
-            flow = InstalledAppFlow.from_client_secrets_file(
-                str(client_secrets_path),
-                normalized_scopes,
+            except Exception as exc:
+                warn(f"Failed to refresh stored credentials: {exc}. Proceeding to interactive login.")
+                return cls.from_user_interactive_oauth(
+                    client_secrets_path=client_secrets_path,
+                    scopes=scopes
+                )
+        elif client_secrets_path:
+            warn("Token path is not provided. Credentials will not be saved for future use.")
+            return cls.from_user_interactive_oauth(
+                client_secrets_path=client_secrets_path,
+                scopes=scopes
             )
-            creds = flow.run_local_server(port=0) if use_local_server else flow.run_console()
-
-            if token_store:
-                token_store.save(creds)
-            return cls(creds)
-        except Exception as exc:
-            raise GoogleAuthError(f"Failed during user OAuth flow: {exc}") from exc
+        else:
+            raise GoogleAuthError("At least one of token_path or client_secrets_path must be provided for user OAuth.")
+            
 
     @classmethod
     def from_settings(cls, config: object | None = None) -> "GoogleAuth":

@@ -17,7 +17,6 @@ from sharedrive.auth.microsoft import (
     MicrosoftAuth,
     normalize_microsoft_scopes,
 )
-from sharedrive.auth.token_store import JsonTokenStore
 
 
 class GoogleAuthMode(str, Enum):
@@ -102,23 +101,22 @@ class GoogleAuthConfig(BaseSettings):
         if self.auth_mode == GoogleAuthMode.ADC:
             return GoogleAuth.from_adc(scopes=self.scopes)
 
-        if self.auth_mode == GoogleAuthMode.SERVICE_ACCOUNT:
+        elif self.auth_mode == GoogleAuthMode.SERVICE_ACCOUNT:
             return GoogleAuth.from_service_account(
                 credentials_path=self.service_account_credentials,
                 scopes=self.scopes,
             )
 
-        token_store = (
-            JsonTokenStore(self.oauth_token_path)
-            if self.oauth_token_path is not None
-            else None
-        )
-        return GoogleAuth.from_user_oauth(
-            client_secrets_path=self.oauth_client_secrets,
-            scopes=self.scopes,
-            token_store=token_store,
-            use_local_server=self.use_local_server,
-        )
+        elif self.auth_mode == GoogleAuthMode.USER_OAUTH:
+            return GoogleAuth.from_user_oauth(
+                client_secrets_path=self.oauth_client_secrets,
+                scopes=self.scopes
+            )
+        else:
+            if self.auth_mode:
+                raise ValueError(f"Unsupported Google auth mode: {self.auth_mode}")
+            else:
+                raise ValueError("GOOGLE_AUTH_MODE is required for Google authentication.")
 
 
 class MicrosoftAuthConfig(BaseSettings):
@@ -197,15 +195,20 @@ class MicrosoftAuthConfig(BaseSettings):
                 client_id=self.client_id,
                 scopes=self.scopes,
             )
-
-        return MicrosoftAuth.from_app_only(
-            tenant_id=self.tenant_id,
-            client_id=self.client_id,
-            client_secret=self.client_secret.get_secret_value()
-            if self.client_secret is not None
-            else None,
-            scopes=self.scopes,
-        )
+        elif self.auth_mode == MicrosoftAuthMode.APP_ONLY:
+            return MicrosoftAuth.from_app_only(
+                tenant_id=self.tenant_id,
+                client_id=self.client_id,
+                client_secret=self.client_secret.get_secret_value()
+                if self.client_secret is not None
+                else None,
+                scopes=self.scopes,
+            )
+        else:
+            if self.auth_mode:
+                raise ValueError(f"Unsupported Microsoft auth mode: {self.auth_mode}")
+            else:
+                raise ValueError("SHAREPOINT_AUTH_MODE or AZURE_AUTH_MODE is required for Microsoft authentication.")
 
 
 __all__ = [
