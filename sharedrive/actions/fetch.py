@@ -297,7 +297,9 @@ def fetch(
     if isinstance(entity, DriveResource) and not isinstance(entity, DrivePackage):
         raise ValueError(
             f"Entity '{entity_path or entity_selector}' is a standalone resource. "
-            "Only packages (syncTarget: resources) and catalogs support fetch."
+            "Only packages (syncTarget: resources) and catalogs support fetch. "
+            "Ensure your descriptor uses '$schema: data-package-catalog' and "
+            "lists the entry under 'packages:' instead of 'resources:'."
         )
 
     summaries: list[FetchSummary] = []

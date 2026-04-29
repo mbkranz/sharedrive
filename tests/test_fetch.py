@@ -10,7 +10,7 @@ from sharedrive.actions.download import check_auth, download
 from sharedrive.actions.fetch import fetch
 from sharedrive.clients.googledrive import GDriveItem
 from sharedrive.clients.sharepoint import SharepointItem
-from sharedrive.item import DriveFile, DriveFolder
+from sharedrive.item import DriveFile, DriveFolder, DriveItem
 
 
 def _write_catalog_descriptor(
