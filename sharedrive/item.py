@@ -19,6 +19,8 @@ class DriveItem(ABC):
     old ``DriveFile`` and ``DriveFolder`` sub-ABCs are retained below as thin
     backward-compatible shells so that existing subclasses continue to work
     without modification.
+
+    TODO: decide how to use DriveItem vs just using DriveSource <--> client methods
     """
 
     @property
