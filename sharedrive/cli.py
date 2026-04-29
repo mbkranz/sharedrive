@@ -1,42 +1,40 @@
 from __future__ import annotations
 
 import json
-import os
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 import typer
+from dplib.error import Error
 from dotenv import find_dotenv, load_dotenv
 
 from sharedrive.actions.add import add_resource_to_descriptor
 from sharedrive.actions.download import (
-    check_auth_for_descriptor,
-    download_from_descriptor,
+    check_auth as check_auth_action,
+    download as download_action,
 )
-from sharedrive.actions.fetch import fetch_entity_metadata_in_descriptor
+from sharedrive.actions.fetch import fetch as fetch_action
+from sharedrive.actions.list import list_descriptor_entities
 from sharedrive.exceptions import GoogleApiError, GraphApiError
 from sharedrive.helpers import (
     DESCRIPTOR_DEFAULTS_FILE,
     get_checked_out_entity,
-    load_descriptor_defaults_store,
+    has_saved_global_descriptor,
     resolve_descriptor_path,
     resolve_output_dir,
-    save_descriptor_defaults_store,
+    save_params_for_scope,
+    set_active_descriptor,
 )
 from sharedrive.models import (
-    CATALOG_PROFILE,
     DriveCatalog,
-    load_drive_descriptor,
+    DrivePackage,
+    DriveResource,
     normalize_entity_type,
     normalize_service_type,
     normalize_sync_target,
-    save_drive_descriptor,
+    resolve_entity_reference,
 )
-
-if TYPE_CHECKING:  # pragma: no cover
-    from sharedrive.clients.googledrive import GoogleDriveClient
-    from sharedrive.clients.sharepoint import SharepointClient
 
 load_dotenv(find_dotenv(usecwd=True))
 
@@ -68,82 +66,6 @@ DESCRIPTOR_DEFAULT_HELP = (
 )
 
 
-def load_descriptor_document(path: Path | str) -> dict[str, Any]:
-    """Load descriptor file as a dict, optional fields for CLI manipulation."""
-    descriptor_path = Path(path)
-    if not descriptor_path.exists():
-        return {
-            "$schema": CATALOG_PROFILE,
-            "resources": [],
-            "packages": [],
-            "catalogs": [],
-        }
-    return load_drive_descriptor(descriptor_path).to_dict()
-
-
-def save_descriptor_document(path: Path | str, document: dict[str, Any]) -> None:
-    """Save descriptor dict back to file via dplib models."""
-    save_drive_descriptor(path, DriveCatalog.model_validate(document))
-
-
-def get_descriptor_resources(
-    document: dict[str, Any], *, create: bool = False
-) -> list[dict[str, Any]]:
-    """Get top-level resources array from descriptor dict."""
-    resources = document.get("resources")
-    if resources is None and create:
-        document["resources"] = []
-        resources = document["resources"]
-    if not isinstance(resources, list):
-        raise ValueError("Descriptor must contain a top-level 'resources' array")
-    return resources
-
-
-def get_descriptor_packages(
-    document: dict[str, Any], *, create: bool = False
-) -> list[dict[str, Any]]:
-    """Get top-level packages array from descriptor dict."""
-    packages = document.get("packages")
-    if packages is None and create:
-        document["packages"] = []
-        packages = document["packages"]
-    if packages is None:
-        return []
-    if not isinstance(packages, list):
-        raise ValueError("Descriptor must contain a top-level 'packages' array")
-    return packages
-
-
-def get_descriptor_catalogs(
-    document: dict[str, Any], *, create: bool = False
-) -> list[dict[str, Any]]:
-    """Get top-level catalogs array from descriptor dict."""
-    catalogs = document.get("catalogs")
-    if catalogs is None and create:
-        document["catalogs"] = []
-        catalogs = document["catalogs"]
-    if catalogs is None:
-        return []
-    if not isinstance(catalogs, list):
-        raise ValueError("Descriptor must contain a top-level 'catalogs' array")
-    return catalogs
-
-
-def get_package_resources(
-    resource: dict[str, Any], *, create: bool = False
-) -> list[dict[str, Any]]:
-    """Get nested resources array from a resource dict."""
-    resources = resource.get("resources")
-    if resources is None:
-        if create:
-            resource["resources"] = []
-            return resource["resources"]
-        return []
-    if not isinstance(resources, list):
-        raise ValueError("Resource must contain a 'resources' array")
-    return resources
-
-
 def _examples_epilog(*lines: str) -> str:
     codeblocks = "\n\n".join(f"```bash\n\n\n{line.strip()}\n\n\n```" for line in lines)
     return f"\n\n**Examples**\n\n\n{codeblocks}"
@@ -156,13 +78,6 @@ def _echo_json(payload: Any) -> None:
 def _load_env_file(env_file: Optional[Path]) -> None:
     if env_file is not None:
         load_dotenv(str(env_file), override=True)
-
-
-def _make_sharepoint_client() -> SharepointClient:
-    from sharedrive.auth.settings import MicrosoftAuthConfig
-
-    config = MicrosoftAuthConfig()
-    return SharepointClient(auth=config.to_auth(), host_url=config.host_url)
 
 
 def _run_microsoft_login(
@@ -187,53 +102,6 @@ def _run_microsoft_login(
     config.to_auth()
     typer.echo(
         f"Microsoft login succeeded using {config.auth_mode.value} mode for {config.host_url}"
-    )
-
-
-def _make_gdrive_client(
-    credentials_path: Optional[str], scope: Optional[list[str]] = None
-) -> GoogleDriveClient:
-    from sharedrive.auth.google import GoogleAuth
-    from sharedrive.clients.googledrive import GoogleDriveClient
-
-    if not credentials_path and _has_google_settings_configured():
-        return _make_gdrive_client_from_settings(scope)
-
-    if credentials_path:
-        auth = GoogleAuth.from_service_account(credentials_path, scopes=scope)
-    else:
-        path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
-        if path:
-            auth = GoogleAuth.from_service_account(path, scopes=scope)
-        else:
-            auth = GoogleAuth.from_adc(scopes=scope)
-    return GoogleDriveClient(auth=auth)
-
-
-def _make_gdrive_client_from_settings(
-    scope: Optional[list[str]] = None,
-) -> GoogleDriveClient:
-    from sharedrive.auth.google import GoogleAuth
-    from sharedrive.auth.settings import GoogleAuthConfig
-    from sharedrive.clients.googledrive import GoogleDriveClient
-
-    if scope is None:
-        return GoogleDriveClient(auth=GoogleAuth.from_settings())
-
-    return GoogleDriveClient(auth=GoogleAuth.from_settings(GoogleAuthConfig(scopes=scope)))
-
-
-def _has_google_settings_configured() -> bool:
-    return any(
-        os.getenv(name)
-        for name in (
-            "GOOGLE_AUTH_MODE",
-            "GOOGLE_SERVICE_ACCOUNT_CREDENTIALS",
-            "GOOGLE_OAUTH_CREDENTIALS",
-            "GOOGLE_OAUTH_TOKEN_PATH",
-            "GOOGLE_SCOPES",
-            "GOOGLE_OAUTH_USE_LOCAL_SERVER",
-        )
     )
 
 
@@ -313,150 +181,22 @@ def _parse_set_args(args: list[str]) -> dict[str, Any]:
     return parsed
 
 
-def _set_saved_scope(
-    parsed: dict[str, Any], descriptor: Optional[Path], global_scope: bool
-) -> str:
-    if global_scope and descriptor is not None:
-        raise typer.BadParameter("Use either <descriptor> or --global, not both.")
-
-    store = load_descriptor_defaults_store()
-    if global_scope:
-        target = "global"
-        scope = store.setdefault("global", {})
-    else:
-        if descriptor is None:
-            raise typer.BadParameter("Provide <descriptor> or use --global.")
-        target = str(descriptor)
-        descriptors = store.setdefault("descriptors", {})
-        scope = descriptors.setdefault(target, {})
-
-    if not isinstance(scope, dict):
-        scope = {}
-        if global_scope:
-            store["global"] = scope
-        else:
-            store.setdefault("descriptors", {})[target] = scope
-
-    scope.update(parsed)
-    save_descriptor_defaults_store(store)
-    return target
+def _scoped_selector(selector: str | None) -> str | None:
+    checked_out_entity = get_checked_out_entity()
+    if selector is None:
+        return checked_out_entity
+    return f"{checked_out_entity}.{selector}" if checked_out_entity else selector
 
 
-def _has_saved_global_descriptor() -> bool:
-    store = load_descriptor_defaults_store()
-    global_scope = store.get("global")
-    if not isinstance(global_scope, dict):
-        return False
-
-    descriptor_value = global_scope.get("descriptor")
-    return isinstance(descriptor_value, str) and bool(descriptor_value.strip())
-
-
-def _set_active_descriptor(descriptor_path: Path, *, entity: str | None = None) -> Path:
-    if not descriptor_path.exists():
-        raise typer.BadParameter(f"Descriptor '{descriptor_path}' does not exist.")
-
-    store = load_descriptor_defaults_store()
-    global_scope = store.setdefault("global", {})
-    if not isinstance(global_scope, dict):
-        global_scope = {}
-        store["global"] = global_scope
-
-    global_scope["descriptor"] = descriptor_path.as_posix()
-    if entity is not None and entity.strip():
-        global_scope["entity"] = entity.strip()
-    else:
-        global_scope.pop("entity", None)
-    save_descriptor_defaults_store(store)
-    return descriptor_path
-
-
-def _iter_resource_references(
-    resources: list[dict[str, Any]], *, parent_path: str | None = None
-) -> list[tuple[str, dict[str, Any]]]:
-    references: list[tuple[str, dict[str, Any]]] = []
-    for resource in resources:
-        if not isinstance(resource, dict):
-            continue
-        name = str(resource.get("name", "")).strip()
-        if not name:
-            continue
-
-        selector_path = name if parent_path is None else f"{parent_path}.{name}"
-        references.append((selector_path, resource))
-
-        children = get_package_resources(resource)
-        if children:
-            references.extend(
-                _iter_resource_references(children, parent_path=selector_path)
-            )
-
-    return references
-
-
-def _iter_catalog_references(
-    document: dict[str, Any], *, parent_path: str | None = None
-) -> list[tuple[str, dict[str, Any]]]:
-    references = _iter_resource_references(
-        get_descriptor_resources(document), parent_path=parent_path
+def _resolve_resource_reference(resource_selector: str, descriptor: DriveCatalog):
+    reference = resolve_entity_reference(
+        descriptor,
+        resource_selector,
+        (DriveResource, DrivePackage),
     )
-
-    for package in get_descriptor_packages(document):
-        if not isinstance(package, dict):
-            continue
-        name = str(package.get("name", "")).strip()
-        if not name:
-            continue
-
-        selector_path = name if parent_path is None else f"{parent_path}.{name}"
-        references.append((selector_path, package))
-        references.extend(
-            _iter_resource_references(
-                get_package_resources(package), parent_path=selector_path
-            )
-        )
-
-    for catalog in get_descriptor_catalogs(document):
-        if not isinstance(catalog, dict):
-            continue
-        name = str(catalog.get("name", "")).strip()
-        if not name:
-            continue
-
-        selector_path = name if parent_path is None else f"{parent_path}.{name}"
-        references.append((selector_path, catalog))
-        references.extend(_iter_catalog_references(catalog, parent_path=selector_path))
-
-    return references
-
-
-def _resolve_exact_resource_reference(
-    resource_selector: str, document: dict[str, Any]
-) -> tuple[str, dict[str, Any]]:
-    references = _iter_catalog_references(document)
-    normalized_selector = resource_selector.strip().lower()
-    if not normalized_selector:
-        raise typer.BadParameter("Resource selector must be a non-empty string.")
-
-    matches = [
-        (path, resource)
-        for path, resource in references
-        if path.lower() == normalized_selector
-        or path.split(".")[-1].lower() == normalized_selector
-    ]
-
-    if matches:
-        unique_matches = {
-            (path, id(resource)): (path, resource) for path, resource in matches
-        }
-        resolved_matches = list(unique_matches.values())
-        if len(resolved_matches) > 1 and "." not in resource_selector:
-            raise typer.BadParameter(
-                f'Resource selector "{resource_selector}" is ambiguous. Use the full dot-path selector.'
-            )
-        return resolved_matches[0]
-
-    raise typer.BadParameter(f'Resource selector "{resource_selector}" was not found.')
+    if reference is None:
+        raise typer.BadParameter(f'Resource selector "{resource_selector}" was not found.')
+    return reference
 
 
 def _normalize_update_property(property_name: str, *, resource_target: bool) -> str:
@@ -491,63 +231,6 @@ def _normalize_update_value(property_path: str, value: Any) -> Any:
     if property_path == "sources.0.entityType" and isinstance(value, str):
         return normalize_entity_type(value)
     return value
-
-
-def _set_nested_property(target: Any, property_path: str, value: Any) -> bool:
-    parts = [part.strip() for part in property_path.split(".") if part.strip()]
-    if not parts:
-        raise typer.BadParameter("Property name must be a non-empty string.")
-
-    current = target
-    for segment in parts[:-1]:
-        if isinstance(current, list):
-            if not segment.isdigit():
-                raise typer.BadParameter(
-                    f"List segment '{segment}' in property '{property_path}' must be a numeric index."
-                )
-            index = int(segment)
-            if index >= len(current):
-                raise typer.BadParameter(
-                    f"List index {index} is out of range for property '{property_path}'."
-                )
-            current = current[index]
-            continue
-
-        if not isinstance(current, dict):
-            raise typer.BadParameter(
-                f"Cannot descend into property '{segment}' while updating '{property_path}'."
-            )
-
-        next_value = current.get(segment)
-        if next_value is None:
-            next_value = {}
-            current[segment] = next_value
-        current = next_value
-
-    leaf = parts[-1]
-    if isinstance(current, list):
-        if not leaf.isdigit():
-            raise typer.BadParameter(
-                f"List segment '{leaf}' in property '{property_path}' must be a numeric index."
-            )
-        index = int(leaf)
-        if index >= len(current):
-            raise typer.BadParameter(
-                f"List index {index} is out of range for property '{property_path}'."
-            )
-        if current[index] == value:
-            return False
-        current[index] = value
-        return True
-
-    if not isinstance(current, dict):
-        raise typer.BadParameter(
-            f"Cannot set property '{property_path}' on a non-object value."
-        )
-    if current.get(leaf) == value:
-        return False
-    current[leaf] = value
-    return True
 
 
 def _exit_if_descriptor_missing(descriptor_path: Path) -> None:
@@ -593,8 +276,8 @@ def clone_descriptor(
         typer.echo(f"Would clone descriptor: {source_descriptor} -> {target_path}")
         return
 
-    document = load_descriptor_document(source_descriptor)
-    save_descriptor_document(target_path, document)
+    document = DriveCatalog.load_document(source_descriptor)
+    DriveCatalog.save_document(target_path, document)
     typer.echo(f"Cloned descriptor: {source_descriptor} -> {target_path}")
 
 
@@ -627,12 +310,22 @@ def update_command(
     descriptor_path = resolve_descriptor_path(descriptor)
     _exit_if_descriptor_missing(descriptor_path)
 
-    document = load_descriptor_document(descriptor_path)
+    document = DriveCatalog.load_document(descriptor_path)
     target_label = str(descriptor_path)
     target: dict[str, Any] = document
     if resource is not None:
-        resolved_path, target = _resolve_exact_resource_reference(resource, document)
-        target_label = f"{resolved_path} in {descriptor_path}"
+        descriptor_model = DriveCatalog.model_validate(document)
+        try:
+            descriptor_model.assert_valid_entity_paths()
+        except Error as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        resolved = _resolve_resource_reference(resource, descriptor_model)
+        target = DriveCatalog.get_json_pointer_value(document, resolved.json_pointer)
+        if not isinstance(target, dict):
+            raise typer.BadParameter(
+                f"Resolved resource '{resolved.name_path}' is not an object."
+            )
+        target_label = f"{resolved.name_path} in {descriptor_path}"
 
     changed_properties: list[str] = []
     for property_name, raw_value in parsed.items():
@@ -640,7 +333,11 @@ def update_command(
             property_name, resource_target=resource is not None
         )
         value = _normalize_update_value(property_path, raw_value)
-        if _set_nested_property(target, property_path, value):
+        try:
+            changed = DriveCatalog.set_property_value(target, property_path, value)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        if changed:
             changed_properties.append(
                 f"{property_path} -> {json.dumps(value, default=str)}"
             )
@@ -654,7 +351,7 @@ def update_command(
             typer.echo(f"Would update {target_label}: {change}")
         return
 
-    save_descriptor_document(descriptor_path, document)
+    DriveCatalog.save_document(descriptor_path, document)
     for change in changed_properties:
         typer.echo(f"Updated {target_label}: {change}")
 
@@ -683,32 +380,14 @@ def checkout_command(
     a path relative to the checked-out entity (e.g. ``fetch archive`` becomes
     ``research.archive`` when ``research`` is checked out).
     """
-    descriptor_path = _set_active_descriptor(descriptor, entity=entity)
+    try:
+        descriptor_path = set_active_descriptor(descriptor, entity=entity)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     if entity and entity.strip():
         typer.echo(f"Checked out entity '{entity.strip()}' in {descriptor_path}")
     else:
         typer.echo(f"Checked out descriptor: {descriptor_path}")
-
-
-def _run_download_command(
-    descriptor: Path,
-    package_name: str,
-    output_dir: Path,
-    dry_run: bool,
-    check_auth: bool,
-) -> None:
-    summary = download_from_descriptor(
-        descriptor=descriptor,
-        include=package_name,
-        output_dir=output_dir,
-        dry_run=dry_run,
-        check_auth=check_auth,
-        log=typer.echo,
-        sharepoint_client_factory=_make_sharepoint_client,
-        googledrive_client_factory=lambda: _make_gdrive_client(None),
-    )
-    if not summary.ok:
-        raise typer.Exit(code=1)
 
 
 def _render_auth_results(results: list[Any], output_format: OutputFormat) -> None:
@@ -723,6 +402,74 @@ def _render_auth_results(results: list[Any], output_format: OutputFormat) -> Non
     for result in results:
         status = "ready" if result.ok else "failed"
         typer.echo(f"{result.adapter}: {status} - {result.message}")
+
+
+def _render_source_label(source: Any) -> str:
+    metadata = ", ".join(
+        value
+        for value in (source.adapter, source.service_type, source.entity_type)
+        if value
+    )
+    title = f"{source.title} " if source.title else ""
+    target = f" -> {source.target}" if source.target else ""
+    return f"source[{source.index}] {title}{source.key}: {source.path}{target} ({metadata})"
+
+
+@app.command(
+    "list",
+    epilog=_examples_epilog(
+        "sharedrive list",
+        "sharedrive list resources/descriptor.yaml",
+        "sharedrive list resources/descriptor.yaml --format json",
+    ),
+)
+def list_command(
+    descriptor: Optional[Path] = typer.Argument(
+        None, exists=False, help=DESCRIPTOR_DEFAULT_HELP
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.TEXT, "--format", help="Output format."
+    ),
+) -> None:
+    """List local descriptor entities, paths, and source metadata."""
+    descriptor_path = resolve_descriptor_path(descriptor)
+    _exit_if_descriptor_missing(descriptor_path)
+
+    try:
+        entities = list_descriptor_entities(descriptor_path)
+    except (FileNotFoundError, ValueError, Error) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    if output_format == OutputFormat.JSON:
+        _echo_json(
+            {
+                "descriptor": descriptor_path.as_posix(),
+                "entities": [entity.to_dict() for entity in entities],
+            }
+        )
+        return
+
+    from rich.console import Console
+    from rich.tree import Tree
+
+    root = Tree(f"{descriptor_path}")
+    nodes: dict[str, Any] = {}
+    for entity in entities:
+        parent_path = entity.name_path.rpartition(".")[0]
+        parent_node = nodes.get(parent_path, root) if parent_path else root
+        label = (
+            f"{entity.name} ({entity.entity_type}) "
+            f"[dim]{entity.name_path} {entity.json_pointer}[/dim]"
+        )
+        node = parent_node.add(label)
+        nodes[entity.name_path] = node
+        for source in entity.sources:
+            node.add(_render_source_label(source))
+        if entity.source_error:
+            node.add(f"[red]source error: {entity.source_error}[/red]")
+
+    Console().print(root)
 
 
 @app.command(
@@ -771,20 +518,17 @@ def set_command(
     if not parsed:
         raise typer.BadParameter("Provide one or more values to save.")
 
-    target = _set_saved_scope(parsed, descriptor_scope, global_scope)
+    try:
+        target = save_params_for_scope(
+            parsed, descriptor_scope, global_scope=global_scope
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     typer.echo(
         f"Saved {len(parsed)} parameter(s) for '{target}' in {DESCRIPTOR_DEFAULTS_FILE}."
     )
 
 
-@app.command(
-    "add",
-    epilog=_examples_epilog(
-        "sharedrive add spec-workbook --path background/specs/spec-workbook.xlsx --source https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx",
-        "sharedrive add source-export --path background/exports/source-export.csv --source s3://my-bucket/source-export.csv --service-type S3",
-        "sharedrive add census-docs --path downloads/census --source https://drive.google.com/drive/folders/<id> --service-type GoogleDrive --entity-type Directory --sync-target resources",
-    ),
-)
 @app.command(
     "add",
     epilog=_examples_epilog(
@@ -835,7 +579,7 @@ def add(
 ) -> None:
     """Add a resource or package entry to a descriptor."""
     descriptor_path = resolve_descriptor_path(descriptor)
-    explicit_descriptor = descriptor is not None or _has_saved_global_descriptor()
+    explicit_descriptor = descriptor is not None or has_saved_global_descriptor()
     if explicit_descriptor:
         _exit_if_descriptor_missing(descriptor_path)
 
@@ -863,11 +607,11 @@ def add(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
-    primary_source = resource["sources"][0]
+    created_source = resource["sources"][0]
     typer.echo(
         f"Added resource '{resource['name']}' to {descriptor_path} "
-        f"with serviceType '{primary_source['serviceType']}', "
-        f"entityType '{primary_source['entityType']}'."
+        f"with serviceType '{created_source['serviceType']}', "
+        f"entityType '{created_source['entityType']}'."
         + (" (package)" if "resources" in resource else "")
     )
 
@@ -904,14 +648,7 @@ def fetch(
     _load_env_file(env_file)
     descriptor_path = resolve_descriptor_path(descriptor)
     _exit_if_descriptor_missing(descriptor_path)
-    checked_out_entity = get_checked_out_entity()
-    if entity is None:
-        if checked_out_entity:
-            entity_name = checked_out_entity
-        else:
-            entity_name = None
-    else:
-        entity_name = f"{checked_out_entity}.{entity}" if checked_out_entity else entity
+    entity_name = _scoped_selector(entity)
 
     if entity_name is not None:
         typer.echo(
@@ -921,11 +658,8 @@ def fetch(
         typer.echo(f"Fetching all metadata in {descriptor_path}")
 
     try:
-        summaries = fetch_entity_metadata_in_descriptor(
-            descriptor=descriptor_path,
-            entity_selector=entity_name,
-            dry_run=dry_run,
-            log=None,
+        summaries = fetch_action(
+            descriptor=descriptor_path, selector=entity_name, dry_run=dry_run, log=None
         )
     except (
         FileNotFoundError,
@@ -957,7 +691,8 @@ def fetch(
 )
 def download(
     selector: Optional[str] = typer.Argument(
-        None, help="Selector to download. If omitted, uses the checked-out descriptor."
+        None,
+        help="Selector to download. If omitted, uses the checked-out entity or whole descriptor.",
     ),
     descriptor: Optional[Path] = typer.Option(
         None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP
@@ -975,43 +710,25 @@ def download(
         help="Path to .env file for credentials. Defaults to .env in the current directory.",
     ),
 ) -> None:
-    """Download resources from a selector in the descriptor.
-
-    TODO(manage_todo_list): reconsider direct source-path download flow.
-    """
+    """Download resources from a selector in the descriptor."""
     _load_env_file(env_file)
     descriptor_path = resolve_descriptor_path(descriptor)
-
-    # Resolve the effective selector from the argument and the checked-out entity.
-    # Mirrors the fetch command: the checked-out entity provides the scope and a
-    # selector argument is interpreted as a path relative to that entity.
-    checked_out_entity = get_checked_out_entity()
-    if selector is None:
-        package_name = checked_out_entity  # may remain None → checked later
-    else:
-        package_name = (
-            f"{checked_out_entity}.{selector}" if checked_out_entity else selector
-        )
+    entity_name = _scoped_selector(selector)
 
     output_dir_path = resolve_output_dir(output_dir, descriptor=descriptor_path)
 
     _exit_if_descriptor_missing(descriptor_path)
 
-    if package_name is None:
-        typer.echo(
-            "Error: a selector is required. Pass it as an argument or check out an entity with "
-            "'sharedrive checkout DESCRIPTOR ENTITY'.",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
-    _run_download_command(
+    summary = download_action(
         descriptor=descriptor_path,
-        package_name=package_name,
+        selector=entity_name,
         output_dir=output_dir_path,
         dry_run=dry_run,
         check_auth=check_auth,
+        log=typer.echo,
     )
+    if not summary.ok:
+        raise typer.Exit(code=1)
 
 
 @auth_app.command(
@@ -1049,12 +766,7 @@ def auth_check(
     descriptor_path = resolve_descriptor_path(descriptor)
     _exit_if_descriptor_missing(descriptor_path)
     include_values = _parse_include_values(include)
-    results = check_auth_for_descriptor(
-        descriptor=descriptor_path,
-        include=include_values,
-        sharepoint_client_factory=_make_sharepoint_client,
-        googledrive_client_factory=lambda: _make_gdrive_client(None),
-    )
+    results = check_auth_action(descriptor=descriptor_path, selector=include_values)
     _render_auth_results(results, output_format)
     if any(not result.ok for result in results):
         raise typer.Exit(code=1)

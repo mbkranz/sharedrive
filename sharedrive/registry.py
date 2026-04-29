@@ -6,6 +6,7 @@ T = TypeVar("T")
 
 # Maps provider name → registered client class (populated by @provider decorator).
 _registry: dict[str, type] = {}
+_builtins_loaded = False
 
 
 def provider(name: str) -> Callable[[type[T]], type[T]]:
@@ -51,16 +52,25 @@ def get_provider(name: str) -> type | None:
     client module (e.g. ``sharedrive.clients.googledrive``) before calling
     this function, or rely on the lazy import in :mod:`sharedrive.actions`.
     """
+    ensure_builtin_providers()
     return _registry.get(name)
 
 
 def list_providers() -> list[str]:
     """Return the names of all registered providers."""
+    ensure_builtin_providers()
     return list(_registry.keys())
 
 
-__all__ = [
-    "get_provider",
-    "list_providers",
-    "provider",
-]
+def ensure_builtin_providers() -> None:
+    """Import bundled provider modules so their decorators register classes."""
+    global _builtins_loaded
+    if _builtins_loaded:
+        return
+    import sharedrive.clients.googledrive  # noqa: F401
+    import sharedrive.clients.sharepoint  # noqa: F401
+
+    _builtins_loaded = True
+
+
+__all__ = ["ensure_builtin_providers", "get_provider", "list_providers", "provider"]

@@ -250,11 +250,11 @@ Python API:
 
 ```python
 from pathlib import Path
-from sharedrive.actions.download import download_from_descriptor
+from sharedrive.actions.download import download
 
-summary = download_from_descriptor(
+summary = download(
     descriptor=Path("resources/descriptor.yaml"),
-    include="all",  # or: "sharepoint", "s3", "googledrive", ["s3", "sharepoint"]
+    selector=None,  # or: "sharepoint", "s3", "googledrive", ["s3", "sharepoint"]
     output_dir=Path("resources"),
     dry_run=True,
 )
@@ -293,34 +293,38 @@ Descriptor fetch remains an action-layer workflow: `sharedrive fetch ...` update
 resources:
   - name: spec-workbook
     path: background/specs/spec-workbook.xlsx
-    driveService: sharepoint
     sources:
       - path: https://norc.sharepoint.com/sites/...
+        serviceType: SharePoint
+        entityType: File
 
   - name: source-export
     path: background/exports/source-export.csv
-    driveService: s3
     sources:
       - path: s3://my-bucket/path/to/source-export.csv
+        serviceType: S3
+        entityType: File
 
   - name: census-package
     profile: data-package
     path: downloads/census
-    driveService: googledrive
+    syncTarget: resources
     sources:
       - path: https://drive.google.com/drive/folders/<id>
+        serviceType: GoogleDrive
+        entityType: Directory
     resources: []
 ```
 
 Folder-backed package resources can be authored explicitly with `sharedrive add --package` and then populated with nested resources using `sharedrive fetch <package-name>`. Fetch now supports Google Drive and SharePoint package resources and writes deterministic nested file resources into the descriptor.
 
-Compatibility behavior preserved:
+Source/download behavior:
 
 - `resources` top-level array
-- `sources[].path` and legacy `source`
-- `driveService` canonical service field
-- legacy `x-adapter` override support for existing descriptors
-- `targets` output paths beside `sources` (string, object, or list entries with `path`)
+- every `sources[]` entry is considered during fetch, download, and auth checks
+- single-source resources download to `path` plus optional resource-level `targets`
+- multi-source resources treat `path` as an output root and write each source under a deterministic source key
+- source-level `target` can override the multi-source destination for that source
 
 Add a descriptor resource from the CLI:
 

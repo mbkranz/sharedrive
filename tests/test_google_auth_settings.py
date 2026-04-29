@@ -10,7 +10,6 @@ from sharedrive.auth.settings import (
     GoogleAuthConfig,
     GoogleAuthMode,
 )
-from sharedrive.auth.token_store import JsonTokenStore
 
 
 def _clear_google_auth_env(monkeypatch: pytest.MonkeyPatch) -> None:

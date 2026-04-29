@@ -30,6 +30,67 @@ def descriptor_scope_key(descriptor: Path | str) -> str:
     return str(Path(descriptor))
 
 
+def save_params_for_scope(
+    parsed: dict[str, Any], descriptor: Path | str | None, *, global_scope: bool
+) -> str:
+    """Save reusable CLI params to the global or descriptor-specific scope."""
+    if global_scope and descriptor is not None:
+        raise ValueError("Use either <descriptor> or --global, not both.")
+
+    store = load_descriptor_defaults_store()
+    if global_scope:
+        target = "global"
+        scope = store.setdefault("global", {})
+    else:
+        if descriptor is None:
+            raise ValueError("Provide <descriptor> or use --global.")
+        target = str(descriptor)
+        descriptors = store.setdefault("descriptors", {})
+        scope = descriptors.setdefault(target, {})
+
+    if not isinstance(scope, dict):
+        scope = {}
+        if global_scope:
+            store["global"] = scope
+        else:
+            store.setdefault("descriptors", {})[target] = scope
+
+    scope.update(parsed)
+    save_descriptor_defaults_store(store)
+    return target
+
+
+def has_saved_global_descriptor() -> bool:
+    """Return whether the global defaults include a descriptor path."""
+    store = load_descriptor_defaults_store()
+    global_scope = store.get("global")
+    if not isinstance(global_scope, dict):
+        return False
+
+    descriptor_value = global_scope.get("descriptor")
+    return isinstance(descriptor_value, str) and bool(descriptor_value.strip())
+
+
+def set_active_descriptor(descriptor_path: Path, *, entity: str | None = None) -> Path:
+    """Persist the active descriptor and optional checked-out entity."""
+    if not descriptor_path.exists():
+        raise ValueError(f"Descriptor '{descriptor_path}' does not exist.")
+
+    store = load_descriptor_defaults_store()
+    global_scope = store.setdefault("global", {})
+    if not isinstance(global_scope, dict):
+        global_scope = {}
+        store["global"] = global_scope
+
+    global_scope["descriptor"] = descriptor_path.as_posix()
+    if entity is not None and entity.strip():
+        global_scope["entity"] = entity.strip()
+    else:
+        global_scope.pop("entity", None)
+    save_descriptor_defaults_store(store)
+    return descriptor_path
+
+
 def get_saved_params_for_descriptor(
     descriptor: Path | str | None = None,
 ) -> dict[str, Any]:
@@ -122,9 +183,12 @@ __all__ = [
     "descriptor_scope_key",
     "get_checked_out_entity",
     "get_saved_params_for_descriptor",
+    "has_saved_global_descriptor",
     "load_descriptor_defaults_store",
     "resolve_default_descriptor",
     "resolve_descriptor_path",
     "resolve_output_dir",
+    "save_params_for_scope",
     "save_descriptor_defaults_store",
+    "set_active_descriptor",
 ]

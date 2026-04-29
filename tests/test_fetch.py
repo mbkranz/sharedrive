@@ -1,23 +1,16 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 import pytest
 import yaml
 
-from sharedrive.actions.download import (
-    check_auth_for_descriptor,
-    download_from_descriptor,
-)
-from sharedrive.actions.download import resource_adapter_name
-from sharedrive.actions.fetch import (
-    fetch_entity_metadata_in_descriptor,
-    fetch_resource_metadata_in_descriptor,
-)
+from sharedrive.actions.download import check_auth, download
+from sharedrive.actions.fetch import fetch
 from sharedrive.clients.googledrive import GDriveItem
 from sharedrive.clients.sharepoint import SharepointItem
 from sharedrive.item import DriveFile, DriveFolder
-from sharedrive.models import DriveResource
 
 
 def _write_catalog_descriptor(
@@ -91,10 +84,10 @@ def _patch_fetch_registry(
 ) -> None:
     """Patch ``get_provider`` inside fetch.py for unit tests."""
     fake = _make_fake_provider(
-        googledrive_factory=googledrive_factory,
-        sharepoint_factory=sharepoint_factory,
+        googledrive_factory=googledrive_factory, sharepoint_factory=sharepoint_factory
     )
-    monkeypatch.setattr("sharedrive.actions.fetch.get_provider", fake)
+    fetch_module = importlib.import_module("sharedrive.actions.fetch")
+    monkeypatch.setattr(fetch_module, "get_provider", fake)
 
 
 def _patch_download_client(
@@ -105,10 +98,16 @@ def _patch_download_client(
 ) -> None:
     """Patch ``get_provider`` inside download.py for unit tests."""
     fake = _make_fake_provider(
-        googledrive_factory=googledrive_factory,
-        sharepoint_factory=sharepoint_factory,
+        googledrive_factory=googledrive_factory, sharepoint_factory=sharepoint_factory
     )
-    monkeypatch.setattr("sharedrive.actions.download.get_provider", fake)
+    download_module = importlib.import_module("sharedrive.actions.download")
+    monkeypatch.setattr(download_module, "get_provider", fake)
+
+
+def _fetch_one(descriptor: Path, selector: str, **kwargs):
+    summaries = fetch(descriptor, selector, **kwargs)
+    assert len(summaries) == 1
+    return summaries[0]
 
 
 def test_drive_file_refresh_returns_self() -> None:
@@ -801,9 +800,8 @@ def _write_descriptor(path: Path) -> None:
     )
 
 
-def test_check_auth_for_descriptor_limits_checks_to_selected_adapters(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+def test_check_auth_limits_checks_to_selected_adapters(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(descriptor)
@@ -815,10 +813,7 @@ def test_check_auth_for_descriptor_limits_checks_to_selected_adapters(
 
     _patch_download_client(monkeypatch, sharepoint_factory=sharepoint_factory)
 
-    results = check_auth_for_descriptor(
-        descriptor,
-        include=["sharepoint"],
-    )
+    results = check_auth(descriptor, selector=["sharepoint"])
 
     assert calls == ["sharepoint"]
     assert [result.adapter for result in results] == ["sharepoint"]
@@ -826,8 +821,7 @@ def test_check_auth_for_descriptor_limits_checks_to_selected_adapters(
 
 
 def test_fetch_from_descriptor_check_auth_stops_before_download_on_failure(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(descriptor)
@@ -838,9 +832,9 @@ def test_fetch_from_descriptor_check_auth_stops_before_download_on_failure(
 
     _patch_download_client(monkeypatch, sharepoint_factory=failing_sharepoint_factory)
 
-    summary = download_from_descriptor(
+    summary = download(
         descriptor,
-        include=["sharepoint"],
+        selector=["sharepoint"],
         output_dir=tmp_path / "resources",
         dry_run=False,
         check_auth=True,
@@ -855,8 +849,7 @@ def test_fetch_from_descriptor_check_auth_stops_before_download_on_failure(
 
 
 def test_fetch_from_descriptor_check_auth_allows_download_when_ready(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(descriptor)
@@ -887,9 +880,9 @@ def test_fetch_from_descriptor_check_auth_allows_download_when_ready(
 
     _patch_download_client(monkeypatch, googledrive_factory=lambda: client)
 
-    summary = download_from_descriptor(
+    summary = download(
         descriptor,
-        include=["googledrive"],
+        selector=["googledrive"],
         output_dir=tmp_path / "resources",
         dry_run=False,
         check_auth=True,
@@ -906,8 +899,7 @@ def test_fetch_from_descriptor_check_auth_allows_download_when_ready(
 
 
 def test_fetch_from_descriptor_materializes_google_drive_directory_resources(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
@@ -968,9 +960,9 @@ def test_fetch_from_descriptor_materializes_google_drive_directory_resources(
 
     _patch_download_client(monkeypatch, googledrive_factory=lambda: client)
 
-    summary = download_from_descriptor(
+    summary = download(
         descriptor,
-        include=["googledrive"],
+        selector=["googledrive"],
         output_dir=tmp_path / "resources",
         dry_run=False,
         log=lambda _message: None,
@@ -994,8 +986,7 @@ def test_fetch_from_descriptor_materializes_google_drive_directory_resources(
 
 
 def test_fetch_from_descriptor_materializes_google_drive_directory_path_target(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
@@ -1053,9 +1044,9 @@ def test_fetch_from_descriptor_materializes_google_drive_directory_path_target(
 
     _patch_download_client(monkeypatch, googledrive_factory=lambda: client)
 
-    summary = download_from_descriptor(
+    summary = download(
         descriptor,
-        include=["googledrive"],
+        selector=["googledrive"],
         output_dir=tmp_path / "resources",
         dry_run=False,
         log=lambda _message: None,
@@ -1146,9 +1137,9 @@ def test_fetch_from_descriptor_fetches_nested_package_resources(
 
     _patch_download_client(monkeypatch, googledrive_factory=lambda: client)
 
-    summary = download_from_descriptor(
+    summary = download(
         descriptor,
-        include=["selected-export"],
+        selector=["selected-export"],
         output_dir=tmp_path / "resources",
         dry_run=False,
         log=lambda _message: None,
@@ -1232,9 +1223,9 @@ def test_fetch_from_descriptor_matches_nested_dot_path_include(
 
     _patch_download_client(monkeypatch, googledrive_factory=lambda: client)
 
-    summary = download_from_descriptor(
+    summary = download(
         descriptor,
-        include=["analytics-docs.selected-export"],
+        selector=["analytics-docs.selected-export"],
         output_dir=tmp_path / "resources",
         dry_run=False,
         log=lambda _message: None,
@@ -1306,9 +1297,9 @@ def test_fetch_from_descriptor_matches_top_level_package_name(
 
     _patch_download_client(monkeypatch, googledrive_factory=lambda: client)
 
-    summary = download_from_descriptor(
+    summary = download(
         descriptor,
-        include=["analytics-docs"],
+        selector=["analytics-docs"],
         output_dir=tmp_path / "resources",
         dry_run=False,
         log=lambda _message: None,
@@ -1322,9 +1313,8 @@ def test_fetch_from_descriptor_matches_top_level_package_name(
     ]
 
 
-def test_download_from_descriptor_matches_nested_catalog_package_name(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+def test_download_matches_nested_catalog_package_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
@@ -1391,9 +1381,9 @@ def test_download_from_descriptor_matches_nested_catalog_package_name(
 
     _patch_download_client(monkeypatch, googledrive_factory=lambda: client)
 
-    summary = download_from_descriptor(
+    summary = download(
         descriptor,
-        include=["research.archive.analytics-docs"],
+        selector=["research.archive.analytics-docs"],
         output_dir=tmp_path / "resources",
         dry_run=False,
         log=lambda _message: None,
@@ -1407,9 +1397,8 @@ def test_download_from_descriptor_matches_nested_catalog_package_name(
     ]
 
 
-def test_download_from_descriptor_selecting_catalog_includes_nested_package_resources(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+def test_download_selecting_catalog_includes_nested_package_resources(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
@@ -1476,9 +1465,9 @@ def test_download_from_descriptor_selecting_catalog_includes_nested_package_reso
 
     _patch_download_client(monkeypatch, googledrive_factory=lambda: client)
 
-    summary = download_from_descriptor(
+    summary = download(
         descriptor,
-        include=["research"],
+        selector=["research"],
         output_dir=tmp_path / "resources",
         dry_run=False,
         log=lambda _message: None,
@@ -1492,7 +1481,7 @@ def test_download_from_descriptor_selecting_catalog_includes_nested_package_reso
     ]
 
 
-def test_fetch_resource_metadata_supports_sharepoint_directory(
+def test_fetch_supports_sharepoint_directory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
@@ -1616,9 +1605,9 @@ def test_fetch_resource_metadata_supports_sharepoint_directory(
         monkeypatch, sharepoint_factory=lambda: DummySharepointClient()
     )
 
-    summary = fetch_resource_metadata_in_descriptor(
+    summary = _fetch_one(
         descriptor=descriptor,
-        resource_name="shared-specs",
+        selector="shared-specs",
         dry_run=False,
         log=lambda _message: None,
     )
@@ -1631,7 +1620,7 @@ def test_fetch_resource_metadata_supports_sharepoint_directory(
     assert "serviceType: SharePoint" in document
 
 
-def test_fetch_resource_metadata_resolves_nested_catalog_package_selector(
+def test_fetch_resolves_nested_catalog_package_selector(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
@@ -1699,9 +1688,9 @@ def test_fetch_resource_metadata_resolves_nested_catalog_package_selector(
         monkeypatch, sharepoint_factory=lambda: DummySharepointClient()
     )
 
-    summary = fetch_resource_metadata_in_descriptor(
+    summary = _fetch_one(
         descriptor=descriptor,
-        resource_name="research.archive.shared-specs",
+        selector="research.archive.shared-specs",
         dry_run=False,
         log=lambda _message: None,
     )
@@ -1711,9 +1700,7 @@ def test_fetch_resource_metadata_resolves_nested_catalog_package_selector(
     assert "spec.xlsx" in descriptor.read_text(encoding="utf-8")
 
 
-def test_fetch_resource_metadata_rejects_legacy_package_root_descriptor(
-    tmp_path: Path,
-) -> None:
+def test_fetch_rejects_legacy_package_root_descriptor(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     descriptor.write_text(
         """
@@ -1730,9 +1717,9 @@ resources:
     )
 
     try:
-        fetch_resource_metadata_in_descriptor(
+        _fetch_one(
             descriptor=descriptor,
-            resource_name="legacy-package",
+            selector="legacy-package",
             dry_run=True,
             log=lambda _message: None,
         )
@@ -1745,58 +1732,32 @@ resources:
         )
 
 
-def test_resource_adapter_name_prefers_drive_service_over_legacy_adapter() -> None:
-    resource = {
-        "sources": [
-            {"serviceType": "SharePoint", "path": "https://example.invalid/file.xlsx"}
-        ],
-        "x-adapter": "s3",
-    }
-
-    assert resource_adapter_name(resource, "s3://bucket/raw.csv") == "sharepoint"
-
-
-def test_resource_adapter_name_supports_legacy_x_adapter() -> None:
-    resource = {"x-adapter": "googledrive"}
-
-    assert (
-        resource_adapter_name(resource, "https://example.invalid/path.csv")
-        == "googledrive"
-    )
-
-
-def test_resource_adapter_name_supports_model_resources_without_mapping_api() -> None:
-    resource = DriveResource(name="model-resource", path="downloads/model-resource.csv")
-
-    assert resource_adapter_name(resource, None) == "unknown"
-
-
-def test_download_from_descriptor_requires_existing_descriptor(tmp_path: Path) -> None:
+def test_download_requires_existing_descriptor(tmp_path: Path) -> None:
     missing = tmp_path / "missing.yaml"
 
     try:
-        download_from_descriptor(missing, output_dir=tmp_path / "resources")
+        download(missing, output_dir=tmp_path / "resources")
     except FileNotFoundError as exc:
         assert "does not exist" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("Expected FileNotFoundError for missing descriptor")
 
 
-def test_check_auth_for_descriptor_requires_existing_descriptor(tmp_path: Path) -> None:
+def test_check_auth_requires_existing_descriptor(tmp_path: Path) -> None:
     missing = tmp_path / "missing.yaml"
 
     try:
-        check_auth_for_descriptor(missing)
+        check_auth(missing)
     except FileNotFoundError as exc:
         assert "does not exist" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("Expected FileNotFoundError for missing descriptor")
 
 
-def test_fetch_entity_metadata_fetches_all_packages_in_catalog(
+def test_fetch_fetches_all_packages_in_catalog(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """fetch_entity_metadata_in_descriptor with a DriveCatalog selector fetches each package."""
+    """fetch with a DriveCatalog selector fetches each package."""
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
         descriptor,
@@ -1872,8 +1833,8 @@ def test_fetch_entity_metadata_fetches_all_packages_in_catalog(
 
     _patch_fetch_registry(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
 
-    summaries = fetch_entity_metadata_in_descriptor(
-        descriptor=descriptor, entity_selector="research", dry_run=False, log=None
+    summaries = fetch(
+        descriptor=descriptor, selector="research", dry_run=False, log=None
     )
 
     assert len(summaries) == 2
@@ -1895,7 +1856,7 @@ def test_fetch_entity_metadata_fetches_all_packages_in_catalog(
     assert catalog["packages"][1]["resources"][0]["name"] == "report.csv"
 
 
-def test_fetch_entity_metadata_dry_run_does_not_write_catalog(
+def test_fetch_dry_run_does_not_write_catalog(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Catalog fetch with dry_run=True does not modify the descriptor."""
@@ -1959,8 +1920,8 @@ def test_fetch_entity_metadata_dry_run_does_not_write_catalog(
 
     _patch_fetch_registry(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
 
-    summaries = fetch_entity_metadata_in_descriptor(
-        descriptor=descriptor, entity_selector="research", dry_run=True, log=None
+    summaries = fetch(
+        descriptor=descriptor, selector="research", dry_run=True, log=None
     )
 
     assert len(summaries) == 1
@@ -1969,7 +1930,7 @@ def test_fetch_entity_metadata_dry_run_does_not_write_catalog(
     assert descriptor.read_text(encoding="utf-8") == before
 
 
-def test_fetch_entity_metadata_fetches_source_backed_catalog_children(
+def test_fetch_fetches_source_backed_catalog_children(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
@@ -2043,8 +2004,8 @@ def test_fetch_entity_metadata_fetches_source_backed_catalog_children(
 
     _patch_fetch_registry(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
 
-    summaries = fetch_entity_metadata_in_descriptor(
-        descriptor=descriptor, entity_selector="research", dry_run=False, log=None
+    summaries = fetch(
+        descriptor=descriptor, selector="research", dry_run=False, log=None
     )
 
     assert len(summaries) == 1
@@ -2061,7 +2022,7 @@ def test_fetch_entity_metadata_fetches_source_backed_catalog_children(
     assert not catalog.get("packages")
 
 
-def test_fetch_entity_metadata_from_root_fetches_immediate_source_backed_catalogs(
+def test_fetch_from_root_fetches_immediate_source_backed_catalogs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
@@ -2120,9 +2081,7 @@ def test_fetch_entity_metadata_from_root_fetches_immediate_source_backed_catalog
 
     _patch_fetch_registry(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
 
-    summaries = fetch_entity_metadata_in_descriptor(
-        descriptor=descriptor, entity_selector=None, dry_run=False, log=None
-    )
+    summaries = fetch(descriptor=descriptor, selector=None, dry_run=False, log=None)
 
     assert len(summaries) == 1
     assert summaries[0].resource_name == "research"
@@ -2131,7 +2090,7 @@ def test_fetch_entity_metadata_from_root_fetches_immediate_source_backed_catalog
     assert document["catalogs"][0]["resources"][0]["name"] == "report.csv"
 
 
-def test_fetch_entity_metadata_with_depth_recurses_sub_catalogs(
+def test_fetch_with_depth_recurses_sub_catalogs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """depth=1 causes fetch to recurse one level into nested catalogs."""
@@ -2218,31 +2177,23 @@ def test_fetch_entity_metadata_with_depth_recurses_sub_catalogs(
     # depth=0 (default): only top-level package
     _patch_fetch_registry(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
 
-    summaries_flat = fetch_entity_metadata_in_descriptor(
-        descriptor=descriptor,
-        entity_selector="research",
-        dry_run=True,
-        depth=0,
-        log=None,
+    summaries_flat = fetch(
+        descriptor=descriptor, selector="research", dry_run=True, depth=0, log=None
     )
     assert len(summaries_flat) == 1
     assert summaries_flat[0].resource_name == "top-docs"
 
     # depth=1: top-level package AND packages in direct sub-catalogs
-    summaries_deep = fetch_entity_metadata_in_descriptor(
-        descriptor=descriptor,
-        entity_selector="research",
-        dry_run=True,
-        depth=1,
-        log=None,
+    summaries_deep = fetch(
+        descriptor=descriptor, selector="research", dry_run=True, depth=1, log=None
     )
     assert len(summaries_deep) == 2
     assert summaries_deep[0].resource_name == "top-docs"
     assert summaries_deep[1].resource_name == "archive-docs"
 
 
-def test_fetch_entity_metadata_raises_for_standalone_resource(tmp_path: Path) -> None:
-    """fetch_entity_metadata_in_descriptor raises ValueError for standalone DriveResource."""
+def test_fetch_raises_for_standalone_resource(tmp_path: Path) -> None:
+    """fetch raises ValueError for standalone DriveResource."""
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(
         descriptor,
@@ -2262,10 +2213,253 @@ def test_fetch_entity_metadata_raises_for_standalone_resource(tmp_path: Path) ->
     )
 
     try:
-        fetch_entity_metadata_in_descriptor(
-            descriptor=descriptor, entity_selector="my-file", log=None
-        )
+        fetch(descriptor=descriptor, selector="my-file", log=None)
     except ValueError as exc:
         assert "standalone resource" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("Expected ValueError for standalone resource")
+
+
+def test_download_multiple_file_sources_uses_source_key_directories(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_catalog_descriptor(
+        descriptor,
+        resources=[
+            {
+                "name": "combined",
+                "path": "downloads/combined",
+                "sources": [
+                    {
+                        "title": "First Source",
+                        "path": "https://drive.google.com/files/a.csv",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "File",
+                    },
+                    {
+                        "title": "Second Source",
+                        "path": "https://drive.google.com/files/b.csv",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "File",
+                    },
+                ],
+            }
+        ],
+    )
+
+    class DummyDriveClient:
+        def get_from_weburl(self, url: str):
+            class DummyFile:
+                @property
+                def is_directory(self) -> bool:
+                    return False
+
+                def download(self, target_path: str) -> None:
+                    Path(target_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(target_path).write_text(url, encoding="utf-8")
+
+            return DummyFile()
+
+    _patch_download_client(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
+
+    summary = download(descriptor, output_dir=tmp_path / "resources", log=None)
+
+    assert summary.ok
+    assert summary.downloaded == 2
+    assert (
+        tmp_path / "resources" / "downloads" / "combined" / "first-source" / "a.csv"
+    ).read_text(encoding="utf-8") == "https://drive.google.com/files/a.csv"
+    assert (
+        tmp_path / "resources" / "downloads" / "combined" / "second-source" / "b.csv"
+    ).read_text(encoding="utf-8") == "https://drive.google.com/files/b.csv"
+
+
+def test_download_source_target_override_and_collision(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_catalog_descriptor(
+        descriptor,
+        resources=[
+            {
+                "name": "combined",
+                "path": "downloads/combined",
+                "sources": [
+                    {
+                        "path": "https://drive.google.com/files/a.csv",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "File",
+                        "target": "custom/a.csv",
+                    },
+                    {
+                        "path": "https://drive.google.com/files/b.csv",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "File",
+                        "target": "custom/b.csv",
+                    },
+                ],
+            }
+        ],
+    )
+
+    class DummyDriveClient:
+        def get_from_weburl(self, url: str):
+            class DummyFile:
+                @property
+                def is_directory(self) -> bool:
+                    return False
+
+                def download(self, target_path: str) -> None:
+                    Path(target_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(target_path).write_text(url, encoding="utf-8")
+
+            return DummyFile()
+
+    _patch_download_client(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
+
+    summary = download(descriptor, output_dir=tmp_path / "resources", log=None)
+
+    assert summary.ok
+    assert (tmp_path / "resources" / "custom" / "a.csv").exists()
+    assert (tmp_path / "resources" / "custom" / "b.csv").exists()
+
+    collision_descriptor = tmp_path / "collision.yaml"
+    _write_catalog_descriptor(
+        collision_descriptor,
+        resources=[
+            {
+                "name": "combined",
+                "path": "downloads/combined",
+                "sources": [
+                    {
+                        "path": "https://drive.google.com/files/a.csv",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "File",
+                        "target": "custom/same.csv",
+                    },
+                    {
+                        "path": "https://drive.google.com/files/b.csv",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "File",
+                        "target": "custom/same.csv",
+                    },
+                ],
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="Output collision"):
+        download(collision_descriptor, output_dir=tmp_path / "resources", log=None)
+
+
+def test_fetch_multiple_directory_sources_namespaces_generated_resources(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_catalog_descriptor(
+        descriptor,
+        packages=[
+            {
+                "name": "docs",
+                "path": "downloads/docs",
+                "syncTarget": "resources",
+                "sources": [
+                    {
+                        "title": "First Source",
+                        "path": "https://drive.google.com/drive/folders/first",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "Directory",
+                    },
+                    {
+                        "title": "Second Source",
+                        "path": "https://drive.google.com/drive/folders/second",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "Directory",
+                    },
+                ],
+            }
+        ],
+    )
+
+    class DummyDriveClient:
+        def get_from_weburl(self, url: str):
+            class DummyItem:
+                path = "report.csv"
+                is_directory = False
+
+                def to_resource(self):
+                    from sharedrive.models import DriveResource, DriveSource
+
+                    return DriveResource(
+                        name="report.csv",
+                        path="report.csv",
+                        sources=[
+                            DriveSource(
+                                path=f"{url}/report.csv",
+                                serviceType="GoogleDrive",
+                                entityType="File",
+                            )
+                        ],
+                    )
+
+            class DummyFolder:
+                @property
+                def is_directory(self):
+                    return True
+
+                @property
+                def children(self):
+                    return [DummyItem()]
+
+            return DummyFolder()
+
+    _patch_fetch_registry(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
+
+    summaries = fetch(descriptor, "docs", log=None)
+    document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
+
+    assert summaries[0].generated_resources == 2
+    assert [item["path"] for item in document["packages"][0]["resources"]] == [
+        "first-source/report.csv",
+        "second-source/report.csv",
+    ]
+
+
+def test_check_auth_dedupes_adapters_across_sources(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_catalog_descriptor(
+        descriptor,
+        resources=[
+            {
+                "name": "combined",
+                "path": "downloads/combined",
+                "sources": [
+                    {
+                        "path": "https://drive.google.com/files/a.csv",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "File",
+                    },
+                    {
+                        "path": "https://drive.google.com/files/b.csv",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "File",
+                    },
+                ],
+            }
+        ],
+    )
+    calls: list[str] = []
+
+    def googledrive_factory():
+        calls.append("googledrive")
+        return object()
+
+    _patch_download_client(monkeypatch, googledrive_factory=googledrive_factory)
+
+    results = check_auth(descriptor)
+
+    assert [result.adapter for result in results] == ["googledrive"]
+    assert calls == ["googledrive"]

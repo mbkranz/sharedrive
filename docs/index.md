@@ -73,7 +73,7 @@ for child in item.children:
 item.refresh_tree()
 ```
 
-Runtime items use `refresh()` to reload remote state in memory and `refresh_tree()` to hydrate an entire folder subtree before traversal. Descriptor metadata updates remain action-level operations such as `fetch_entity_metadata_in_descriptor()`.
+Runtime items use `refresh()` to reload remote state in memory and `refresh_tree()` to hydrate an entire folder subtree before traversal. Descriptor metadata updates remain action-level operations such as `fetch()`.
 
 ## Docs site
 

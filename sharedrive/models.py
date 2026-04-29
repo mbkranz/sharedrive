@@ -1,80 +1,33 @@
 from __future__ import annotations
 
 import json
+import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Annotated, Any, Iterable, Optional, TypeVar
+from urllib.parse import unquote, urlparse
 
 import pydantic
+from pydantic.alias_generators import to_pascal,to_camel
+from pydantic import AliasChoices, Field
 import yaml
 from dplib.models.catalog import Catalog
 from dplib.models.package import Package
 from dplib.models.resource import Resource
 from dplib.models.source import Source
-from dplib.system import Model
+from dplib.system import EntityReference, Model
 
 
 CATALOG_PROFILE = "data-package-catalog"
+T = TypeVar("T", bound=Model)
+Entry = Model | dict[str, Any]
 
-
-SERVICE_TYPE_ALIASES = {
-    "googledrive": "GoogleDrive",
-    "google-drive": "GoogleDrive",
-    "google drive": "GoogleDrive",
-    "sharepoint": "SharePoint",
-    "share-point": "SharePoint",
-    "s3": "S3",
-}
-
-ENTITY_TYPE_ALIASES = {
-    "file": "File",
-    "directory": "Directory",
-    "folder": "Directory",
-    "container": "Container",
-}
 
 SYNC_TARGET_ALIASES = {
     "path": "path",
     "resource": "resources",
     "resources": "resources",
 }
-
-
-def normalize_service_type(service_type: str) -> str:
-    normalized = service_type.strip()
-    if not normalized:
-        raise ValueError("serviceType must be a non-empty string")
-
-    alias = SERVICE_TYPE_ALIASES.get(normalized.lower())
-    if alias is not None:
-        return alias
-    if normalized in set(SERVICE_TYPE_ALIASES.values()):
-        return normalized
-    raise NotImplementedError(f"Service type '{service_type}' is not implemented.")
-
-
-def normalize_entity_type(entity_type: str) -> str:
-    """Normalize source entity type to OpenMetadata-style class naming.
-
-    Known aliases (e.g. ``"file"`` → ``"File"``, ``"folder"`` → ``"Directory"``)
-    are canonicalized.  Unknown values are returned as-is to preserve
-    forward compatibility with service-specific types that are not yet
-    enumerated here (e.g. ``"Bundle"``, ``"Container"``, vendor extensions).
-    Callers that need strict validation should check the returned value against
-    their own allow-list.
-    """
-    normalized = entity_type.strip()
-    if not normalized:
-        raise ValueError("entityType must be a non-empty string")
-
-    alias = ENTITY_TYPE_ALIASES.get(normalized.lower())
-    if alias is not None:
-        return alias
-    if normalized in set(ENTITY_TYPE_ALIASES.values()):
-        return normalized
-    # Accept unknown entity types as-is for forward compatibility with
-    # service-specific types (e.g. "Container", "Bundle", etc.)
-    return normalized
-
 
 def normalize_sync_target(sync_target: str) -> str:
     """Normalize syncTarget to the sharedrive descriptor contract."""
@@ -89,44 +42,6 @@ def normalize_sync_target(sync_target: str) -> str:
     raise ValueError(f"Unsupported syncTarget '{sync_target}'.")
 
 
-def service_type_adapter_name(service_type: str) -> str:
-    """Return the runtime adapter name for a canonical service type."""
-    normalized = normalize_service_type(service_type)
-    return {
-        "GoogleDrive": "googledrive",
-        "SharePoint": "sharepoint",
-        "S3": "s3",
-    }[normalized]
-
-
-def _resolve_entity_reference[T: Model](
-    model: Model,
-    selector: str,
-    entity_types: tuple[type[T], ...],
-) -> tuple[str, T] | None:
-    normalized_selector = selector.strip()
-    if not normalized_selector:
-        return None
-
-    lowered_selector = normalized_selector.lower()
-    matches = [
-        (path, item)
-        for path, item in model.iter_entity_references()
-        if isinstance(item, entity_types)
-        and (
-            path.strip().lower() == lowered_selector
-            or path.strip().lower().split(".")[-1] == lowered_selector
-        )
-    ]
-    if not matches:
-        return None
-    if len(matches) > 1 and "." not in normalized_selector:
-        raise ValueError(
-            f'Resource selector "{selector}" is ambiguous. Use the full dot-path selector.'
-        )
-    return matches[0]
-
-
 def _empty_catalog_document() -> dict[str, Any]:
     return {
         "$schema": CATALOG_PROFILE,
@@ -136,47 +51,32 @@ def _empty_catalog_document() -> dict[str, Any]:
     }
 
 
-def _legacy_descriptor_message(descriptor_path: Path) -> str:
-    return (
-        f"Descriptor '{descriptor_path}' must use a catalog root with '$schema: {CATALOG_PROFILE}'. "
-        "Legacy package-root descriptors are no longer supported. "
-        "Wrap top-level package entries under 'packages:' (or standalone assets under 'resources:') "
-        "and set '$schema: data-package-catalog' at the root."
-    )
-
-
-def _load_raw_descriptor_document(path: Path) -> dict[str, Any]:
-    suffix = path.suffix.lower()
-    raw_text = path.read_text(encoding="utf-8")
-    if suffix == ".json":
-        data = json.loads(raw_text)
-    else:
-        data = yaml.safe_load(raw_text)
-
-    if not isinstance(data, dict):
-        raise ValueError(
-            f"Descriptor '{path}' must be an object at the document root."
-        )
-    return data
-
-
 class DriveSource(Source):
-    serviceType: Optional[str] = pydantic.Field(default=None)
-    entityType: Optional[str] = pydantic.Field(default=None)
+    path: Annotated[str|None,Field(AliasChoices("path", "url","uri"))] = None
+    serviceType: Annotated[str, pydantic.BeforeValidator(to_pascal)]
+    entityType: Annotated[str, pydantic.BeforeValidator(to_pascal)]
 
-    @pydantic.field_validator("serviceType")
-    @classmethod
-    def _normalize_service_type(cls, value: Optional[str]) -> Optional[str]:
-        if value is None:
-            return value
-        return normalize_service_type(value)
+    @property
+    def adapter_name(self) -> str:
+        if self.serviceType is not None:
+            return self.serviceType.lower()
+        elif self.path is not None:
+            source_path = self.path or ""
+            parsed = urlparse(source_path)
+            host = parsed.netloc.lower()
+            if parsed.scheme.lower() == "s3":
+                return "s3"
+            elif "sharepoint.com" in host:
+                return "sharepoint"
+            elif "drive.google.com" in host:
+                return "googledrive"
+            else:
+                raise ValueError("Source must declare a serviceType or a path with a recognizable host")
+        else:
+            raise ValueError("Source must declare a serviceType or a path with a recognizable host")
 
-    @pydantic.field_validator("entityType")
-    @classmethod
-    def _normalize_entity_type(cls, value: Optional[str]) -> Optional[str]:
-        if value is None:
-            return value
-        return normalize_entity_type(value)
+        
+
 
 
 class DriveResource(Resource):
@@ -192,25 +92,6 @@ class DriveResource(Resource):
         if not isinstance(value, list):
             raise ValueError("sources must be a list")
         return [item if isinstance(item, DriveSource) else DriveSource.model_validate(item) for item in value]
-
-    @property
-    def primary_source(self) -> Optional[DriveSource]:
-        return self.sources[0] if self.sources else None
-
-    @property
-    def source_path(self) -> Optional[str]:
-        source = self.primary_source
-        return source.path if source is not None else None
-
-    @property
-    def source_service_type(self) -> Optional[str]:
-        source = self.primary_source
-        return source.serviceType if source is not None else None
-
-    @property
-    def source_entity_type(self) -> Optional[str]:
-        source = self.primary_source
-        return source.entityType if source is not None else None
 
     @property
     def sync_target(self) -> str:
@@ -319,27 +200,16 @@ class DrivePackage(Package):
             raise ValueError("resources must be a list")
         return [_coerce_drive_entry(item) for item in value]
 
-    @property
-    def primary_source(self) -> Optional[DriveSource]:
-        return self.sources[0] if self.sources else None
-
-    @property
-    def source_path(self) -> Optional[str]:
-        source = self.primary_source
-        return source.path if source is not None else None
-
-    @property
-    def source_service_type(self) -> Optional[str]:
-        source = self.primary_source
-        return source.serviceType if source is not None else None
-
-    @property
-    def source_entity_type(self) -> Optional[str]:
-        source = self.primary_source
-        return source.entityType if source is not None else None
-
     def to_dict(self):
         return Model.to_dict(self)
+
+    @property
+    def sync_target(self) -> str:
+        """Return the declared sync target for a package-like resource."""
+        declared = getattr(self, "syncTarget", None)
+        if isinstance(declared, str) and declared.strip():
+            return normalize_sync_target(declared)
+        return "resources"
 
     @property
     def is_package(self) -> bool:
@@ -349,125 +219,44 @@ class DrivePackage(Package):
         self,
         resource_selector: str,
     ) -> tuple[str, DriveResource | DrivePackage] | None:
-        return _resolve_entity_reference(
+        reference = _resolve_entity_reference(
             self,
             resource_selector,
             (DriveResource, DrivePackage),
         )
+        if reference is None:
+            return None
+        return reference.name_path, reference.model
 
 
-class DriveCatalog(Catalog):
+class DriveCatalog(Catalog,json_schema_extra={"$schema": CATALOG_PROFILE}):
     profile: str = pydantic.Field(default=CATALOG_PROFILE, alias="$schema")
     resources: list[DriveResource] = pydantic.Field(default_factory=list)
     packages: list[DrivePackage] = pydantic.Field(default_factory=list)
     catalogs: list["DriveCatalog"] = pydantic.Field(default_factory=list)
 
-    @pydantic.field_validator("resources", mode="before")
     @classmethod
-    def _coerce_resources(cls, value: Any) -> list[DriveResource]:
-        if value is None:
-            return []
-        if not isinstance(value, list):
-            raise ValueError("resources must be a list")
-        return [
-            item if isinstance(item, DriveResource) else DriveResource.model_validate(item)
-            for item in value
-        ]
-
-    @pydantic.field_validator("packages", mode="before")
-    @classmethod
-    def _coerce_packages(cls, value: Any) -> list[DrivePackage]:
-        if value is None:
-            return []
-        if not isinstance(value, list):
-            raise ValueError("packages must be a list")
-        return [
-            item if isinstance(item, DrivePackage) else DrivePackage.model_validate(item)
-            for item in value
-        ]
-
-    @pydantic.field_validator("catalogs", mode="before")
-    @classmethod
-    def _coerce_catalogs(cls, value: Any) -> list["DriveCatalog"]:
-        if value is None:
-            return []
-        if not isinstance(value, list):
-            raise ValueError("catalogs must be a list")
-        return [
-            item if isinstance(item, DriveCatalog) else DriveCatalog.model_validate(item)
-            for item in value
-        ]
-
-    def to_dict(self):
-        data = {"$schema": CATALOG_PROFILE}
-        data.update(Model.to_dict(self))
-        return data
-
-    def get_entity_reference(
-        self,
-        selector: str,
-    ) -> tuple[str, DriveResource | DrivePackage | "DriveCatalog"] | None:
-        return _resolve_entity_reference(
-            self,
-            selector,
-            (DriveResource, DrivePackage, DriveCatalog),
-        )
-
-    def get_resource_reference(
-        self,
-        selector: str,
-    ) -> tuple[str, DriveResource | DrivePackage] | None:
-        resolved = self.get_entity_reference(selector)
-        if resolved is None:
-            return None
-        path, item = resolved
-        if isinstance(item, DriveCatalog):
-            return None
-        return path, item
+    def from_descriptor(cls, path: Path | str) -> dict[str, Any]:
+        """Load a sharedrive descriptor as a mutable document."""
+        descriptor = yaml.safe_load(Path(path).read_text())
+        return cls.model_validate(descriptor)
+    
+    def save_descriptor(self, path: Path | str, serialization_config) -> None:
+        """Save the catalog as a sharedrive descriptor."""
+        descriptor = self.model_dump()
+        Path(path).write_text(yaml.safe_dump(descriptor, sort_keys=False))
+        return self
 
 
-DriveDescriptor = DriveCatalog
-
-
-def load_drive_descriptor(
-    path: Path | str,
-    *,
-    create_if_missing: bool = False,
-) -> DriveCatalog:
-    descriptor_path = Path(path)
-    if not descriptor_path.exists():
-        if create_if_missing:
-            return DriveCatalog.model_validate(_empty_catalog_document())
-        raise FileNotFoundError(f"Descriptor '{descriptor_path}' does not exist.")
-
-    document = _load_raw_descriptor_document(descriptor_path)
-    if document.get("$schema") != CATALOG_PROFILE:
-        raise ValueError(_legacy_descriptor_message(descriptor_path))
-
-    return DriveCatalog.model_validate(document)
-
-
-def save_drive_descriptor(path: Path | str, descriptor: DriveCatalog) -> None:
-    descriptor_path = Path(path)
-    descriptor_path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor.to_path(str(descriptor_path))
-
-
+DriveResource.model_rebuild()
 DrivePackage.model_rebuild()
 DriveCatalog.model_rebuild()
 
 
 __all__ = [
-    "CATALOG_PROFILE",
-    "DriveDescriptor",
     "DriveCatalog",
     "DrivePackage",
     "DriveResource",
     "DriveSource",
-    "ENTITY_TYPE_ALIASES",
-    "SERVICE_TYPE_ALIASES",
-    "load_drive_descriptor",
-    "normalize_entity_type",
-    "normalize_service_type",
-    "save_drive_descriptor",
+
 ]

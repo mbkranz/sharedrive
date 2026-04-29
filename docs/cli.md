@@ -18,6 +18,7 @@ Options:
 Commands:
   update    Update descriptor-root or resource properties using flag-style...
   checkout  Activate a descriptor and optionally an entity within it for...
+  list      List local descriptor entities, paths, and source metadata.
   set       Set reusable key/value parameters for sharedrive descriptor...
   add       Add a resource or package entry to a descriptor.
   fetch     Fetch remote metadata for one selector into the descriptor.
@@ -322,23 +323,15 @@ Options:
 
   ```bash
 
-  sharedrive add spec-workbook --path background/specs/spec-workbook.xlsx
-  --source https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx
+  sharedrive add my-resource --path /data/file.csv --source
+  https://drive.google.com/file/d/123...
 
   ```
 
   ```bash
 
-  sharedrive add source-export --path background/exports/source-export.csv
-  --source s3://my-bucket/source-export.csv --service-type S3
-
-  ```
-
-  ```bash
-
-  sharedrive add census-docs --path downloads/census --source
-  https://drive.google.com/drive/folders/<id> --service-type GoogleDrive
-  --entity-type Directory --sync-target resources
+  sharedrive add my-package --package --path /data/ --source
+  https://drive.google.com/drive/folders/abc...
 
   ```
 ```
@@ -395,10 +388,9 @@ Usage: sharedrive download [OPTIONS] [SELECTOR]
 
   Download resources from a selector in the descriptor.
 
-  TODO(manage_todo_list): reconsider direct source-path download flow.
-
 Arguments:
-  [SELECTOR]  Selector to download. If omitted, uses the checked-out descriptor.
+  [SELECTOR]  Selector to download. If omitted, uses the checked-out entity or
+              whole descriptor.
 
 Options:
   --descriptor PATH         Descriptor file path. Defaults to the saved

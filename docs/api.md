@@ -16,6 +16,8 @@ Auto-generated from source signatures and docstrings.
   - Return the currently checked-out entity dot-path, or None if no entity is active.
 - `def get_saved_params_for_descriptor(descriptor: Path | str | None = None) -> dict[str, Any]`
   - Return merged global and descriptor-scoped saved params.
+- `def has_saved_global_descriptor() -> bool`
+  - Return whether the global defaults include a descriptor path.
 - `def load_descriptor_defaults_store() -> dict[str, Any]`
   - Load persisted descriptor defaults for global and descriptor scopes.
 - `def resolve_default_descriptor() -> Path`
@@ -24,8 +26,12 @@ Auto-generated from source signatures and docstrings.
   - Resolve descriptor path from explicit input, saved defaults, or standard locations.
 - `def resolve_output_dir(output_dir: Path | str | None = None, *, descriptor: Path | str | None = None) -> Path`
   - Resolve output_dir from explicit input, saved defaults, or the standard path.
+- `def save_params_for_scope(parsed: dict[str, Any], descriptor: Path | str | None, *, global_scope: bool) -> str`
+  - Save reusable CLI params to the global or descriptor-specific scope.
 - `def save_descriptor_defaults_store(data: dict[str, Any]) -> None`
   - Persist descriptor defaults store to disk.
+- `def set_active_descriptor(descriptor_path: Path, *, entity: str | None = None) -> Path`
+  - Persist the active descriptor and optional checked-out entity.
 
 
 ## `sharedrive.models`
@@ -38,11 +44,24 @@ Auto-generated from source signatures and docstrings.
 
 ### Functions
 
+- `def contained_entries(container: Entry) -> list[Entry]`
+- `def entry_to_dict(entry: Entry) -> dict[str, Any]`
+- `def inherited_entry(resource: Entry, *, parent: Entry | None = None) -> dict[str, Any]`
+- `def iter_source_refs(resource: Entry, parent: Entry | None = None) -> list[DriveSourceReference]`
 - `def load_drive_descriptor(path: Path | str, *, create_if_missing: bool = False) -> DriveCatalog`
+- `def normalize_selector(selector: str | Iterable[str] | None) -> set[str]`
 - `def normalize_entity_type(entity_type: str) -> str`
   - Normalize source entity type to OpenMetadata-style class naming.
 - `def normalize_service_type(service_type: str) -> str`
+- `def remote_basename(source_path: str) -> str`
+- `def resolve_entity_reference(model: Model, selector: str, entity_types: tuple[type[T], ...]) -> EntityReference | None`
+  - Resolve a dot-path selector to an entity reference.
+- `def resource_matches_selector(resource: Entry, selector_set: set[str], *, selector_path: str | None = None) -> bool`
+- `def resource_or_descendant_matches_selector(resource: Entry, selector_set: set[str], *, parent_selector_path: str | None = None) -> bool`
+- `def resource_selector_path(resource: Entry, parent_selector_path: str | None = None) -> str`
 - `def save_drive_descriptor(path: Path | str, descriptor: DriveCatalog) -> None`
+- `def selected_adapter_names(resources: Iterable[Entry], selector: str | Iterable[str] | None = None) -> list[str]`
+- `def sync_target(resource: Entry) -> str`
 
 ### Classes
 
@@ -56,6 +75,10 @@ Auto-generated from source signatures and docstrings.
   - `def to_dict(self)`
   - `def get_entity_reference(self, selector: str) -> tuple[str, DriveResource | DrivePackage | 'DriveCatalog'] | None`
   - `def get_resource_reference(self, selector: str) -> tuple[str, DriveResource | DrivePackage] | None`
+  - `def load_document(cls, path: Path | str) -> dict[str, Any]`
+    - Load a sharedrive descriptor as a mutable document.
+  - `def save_document(cls, path: Path | str, document: dict[str, Any]) -> None`
+    - Validate and save a mutable sharedrive descriptor document.
 
 #### `DriveCatalog`
 - Fields:
@@ -67,6 +90,10 @@ Auto-generated from source signatures and docstrings.
   - `def to_dict(self)`
   - `def get_entity_reference(self, selector: str) -> tuple[str, DriveResource | DrivePackage | 'DriveCatalog'] | None`
   - `def get_resource_reference(self, selector: str) -> tuple[str, DriveResource | DrivePackage] | None`
+  - `def load_document(cls, path: Path | str) -> dict[str, Any]`
+    - Load a sharedrive descriptor as a mutable document.
+  - `def save_document(cls, path: Path | str, document: dict[str, Any]) -> None`
+    - Validate and save a mutable sharedrive descriptor document.
 
 #### `DrivePackage`
 - Fields:
@@ -76,11 +103,9 @@ Auto-generated from source signatures and docstrings.
   - `resources: list['DriveResource | DrivePackage']`
   - `profile: Optional[str]`
 - Methods:
-  - `def primary_source(self) -> Optional[DriveSource]`
-  - `def source_path(self) -> Optional[str]`
-  - `def source_service_type(self) -> Optional[str]`
-  - `def source_entity_type(self) -> Optional[str]`
   - `def to_dict(self)`
+  - `def sync_target(self) -> str`
+    - Return the declared sync target for a package-like resource.
   - `def is_package(self) -> bool`
   - `def get_resource_reference(self, resource_selector: str) -> tuple[str, DriveResource | DrivePackage] | None`
 
@@ -90,10 +115,6 @@ Auto-generated from source signatures and docstrings.
   - `drive_id: Optional[str]`
   - `profile: Optional[str]`
 - Methods:
-  - `def primary_source(self) -> Optional[DriveSource]`
-  - `def source_path(self) -> Optional[str]`
-  - `def source_service_type(self) -> Optional[str]`
-  - `def source_entity_type(self) -> Optional[str]`
   - `def sync_target(self) -> str`
     - Return the declared sync target for a resource.
   - `def syncs_to_resources(self) -> bool`
@@ -106,6 +127,26 @@ Auto-generated from source signatures and docstrings.
 - Fields:
   - `serviceType: Optional[str]`
   - `entityType: Optional[str]`
+- Methods:
+  - `def adapter_name(self, service_type: str | None = None) -> str`
+    - Return the runtime adapter for this source.
+  - `def key(self, *, index: int, adapter: str | None = None) -> str`
+    - Return a deterministic path segment for namespacing this source.
+  - `def target_path(self) -> str | None`
+    - Return a source-level output override path, when declared.
+
+#### `DriveSourceReference`
+- A source selected in the context of an entity and source index.
+- Fields:
+  - `index: int`
+  - `source: DriveSource`
+  - `service_type: str | None`
+  - `entity_type: str | None`
+- Methods:
+  - `def path(self) -> str`
+  - `def adapter(self) -> str`
+  - `def key(self) -> str`
+  - `def target(self) -> str | None`
 
 
 ## `sharedrive.item`
@@ -113,25 +154,18 @@ Auto-generated from source signatures and docstrings.
 ### Classes
 
 #### `DriveFile`
+- Backward-compatible shell for a leaf (non-directory) drive item.
 - Methods:
   - `def is_directory(self) -> bool`
-  - `def to_source(self) -> DriveSource`
-  - `def to_resource(self) -> DriveResource`
-  - `def to_dp(self) -> DriveResource` *(deprecated alias for `to_resource`)*
-  - `def refresh(self, *, include_children: bool = True) -> 'DriveFile'`
 
 #### `DriveFolder`
+- Backward-compatible shell for a directory drive item.
 - Methods:
   - `def is_directory(self) -> bool`
   - `def children(self) -> list[DriveItem]`
-  - `def iter_files(self) -> Iterable[DriveFile]`
-  - `def refresh_tree(self) -> 'DriveFolder'`
-  - `def download(self, target: Path | str) -> None`
-  - `def to_source(self) -> DriveSource`
-  - `def to_resource(self) -> DrivePackage`
-  - `def to_dp(self) -> DrivePackage` *(deprecated alias for `to_resource`)*
 
 #### `DriveItem`
+- Abstract base for a single item (file or directory) on a remote drive.
 - Methods:
   - `def id(self) -> str`
   - `def name(self) -> str`
@@ -139,16 +173,22 @@ Auto-generated from source signatures and docstrings.
   - `def service_type(self) -> str`
   - `def source_url(self) -> str`
   - `def is_directory(self) -> bool`
-  - `def download(self, target: Path | str) -> None`
   - `def refresh(self, *, include_children: bool = True) -> 'DriveItem'`
     - Refresh this runtime item from its backing service.
+  - `def children(self) -> list['DriveItem']`
+    - Direct child items for directories; always empty for files.
+  - `def iter_files(self) -> Iterable['DriveItem']`
+    - Recursively yield all leaf (non-directory) items.
   - `def refresh_tree(self) -> 'DriveItem'`
-    - Recursively refresh this runtime item and any descendant items.
+    - Recursively refresh this item and all of its descendants.
+  - `def download(self, target: Path | str) -> None`
+    - Download this item to *target*.
   - `def to_source(self) -> DriveSource`
-    - Convert to a `DriveSource` remote pointer (url, serviceType, entityType only).
+    - Convert to a :class:`~sharedrive.models.DriveSource` remote pointer.
   - `def to_resource(self) -> DriveResource | DrivePackage | DriveCatalog`
     - Convert to a descriptor resource, package, or catalog entry.
-  - `def to_dp(self) -> DriveResource | DrivePackage` *(deprecated alias for `to_resource`)*
+  - `def to_dp(self) -> DriveResource | DrivePackage`
+    - Deprecated alias for :meth:`to_resource`.
 
 
 ## `sharedrive.actions.add`
@@ -177,21 +217,10 @@ Auto-generated from source signatures and docstrings.
 
 ### Functions
 
-- `def check_auth_for_adapters(adapters: Iterable[str], *, sharepoint_client_factory: Callable[[], Any] | None = None, googledrive_client_factory: Callable[[], Any] | None = None, s3_auth_checker: Callable[[], None] | None = None) -> list[AuthCheckResult]`
-- `def check_auth_for_descriptor(descriptor: Path | str, include: str | Iterable[str] = 'all', *, sharepoint_client_factory: Callable[[], Any] | None = None, googledrive_client_factory: Callable[[], Any] | None = None, s3_auth_checker: Callable[[], None] | None = None) -> list[AuthCheckResult]`
-- `def download_from_descriptor(descriptor: Path | str, include: str | Iterable[str] = 'all', output_dir: Path | str = Path('resources'), dry_run: bool = False, *, check_auth: bool = False, log: LogFn | None = print, sharepoint_client_factory: Callable[[], Any] | None = None, googledrive_client_factory: Callable[[], Any] | None = None, use_cloudpathlib: bool = True) -> DownloadSummary`
-  - Download resources from a descriptor using adapter-specific clients.
-- `def download_resources(descriptor: Path | str, include: str | Iterable[str] = 'all', output_dir: Path | str = Path('resources'), dry_run: bool = False, *, check_auth: bool = False, log: LogFn | None = print) -> DownloadSummary`
-  - Convenience alias for download_from_descriptor.
-- `def load_descriptor(path: Path | str) -> DriveCatalog`
-- `def resource_adapter_name(resource: Any, source_url: str | None) -> str`
-  - Resolve runtime adapter name from source serviceType or fallback inference.
-- `def resource_output_path(resource: Entry, output_dir: Path) -> Path`
-  - Resolve resource.path against output_dir unless path is absolute.
-- `def resource_output_paths(resource: Entry, output_dir: Path) -> list[Path]`
-  - Resolve primary resource.path plus optional targets[] into local output paths.
-- `def resource_source_url(resource: Any) -> str | None`
-  - Resolve the primary source locator for a resource.
+- `def check_auth(descriptor: Path | str | None = None, selector: str | Iterable[str] | None = None, *, adapters: Iterable[str] | None = None) -> list[AuthCheckResult]`
+  - Validate credentials for selected descriptor sources or explicit adapters.
+- `def download(descriptor: Path | str, selector: str | Iterable[str] | None = None, *, output_dir: Path | str = Path('resources'), dry_run: bool = False, check_auth: bool = False, log: LogFn | None = print, use_cloudpathlib: bool = True) -> DownloadSummary`
+  - Download all sources selected from a descriptor.
 
 ### Classes
 
@@ -218,11 +247,8 @@ Auto-generated from source signatures and docstrings.
 
 ### Functions
 
-- `def fetch_entity_metadata_in_descriptor(descriptor: Path | str, entity_selector: str | None, *, dry_run: bool = False, depth: int = 0, log: LogFn | None = print, googledrive_client_factory: Callable[[], Any] | None = None, sharepoint_client_factory: Callable[[], Any] | None = None) -> list[FetchSummary]`
-  - Fetch remote metadata for one entity (package or catalog) in a descriptor.
-- `def fetch_resource_metadata_in_descriptor(descriptor: Path | str, resource_name: str, *, dry_run: bool = False, log: LogFn | None = print, googledrive_client_factory: Callable[[], Any] | None = None, sharepoint_client_factory: Callable[[], Any] | None = None) -> FetchSummary`
-  - Fetch metadata for one package resource into nested descriptor resources.
-- `def fetch_package_metadata_in_descriptor(descriptor: Path | str, package_name: str, *, dry_run: bool = False, log: LogFn | None = print, googledrive_client_factory: Callable[[], Any] | None = None, sharepoint_client_factory: Callable[[], Any] | None = None) -> FetchSummary`
+- `def fetch(descriptor: Path | str, selector: str | None = None, *, dry_run: bool = False, depth: int = 0, log: LogFn | None = print) -> list[FetchSummary]`
+  - Fetch remote metadata for one selector in a descriptor.
 
 ### Classes
 
@@ -232,6 +258,10 @@ Auto-generated from source signatures and docstrings.
   - `generated_resources: int`
   - `dry_run: bool`
   - `changed: bool`
+  - `failures: int`
+  - `errors: list[str]`
+- Methods:
+  - `def ok(self) -> bool`
 
 
 ## `sharedrive.clients.aws`
@@ -247,10 +277,17 @@ Auto-generated from source signatures and docstrings.
 ### Classes
 
 #### `GoogleBaseClient`
-- Shared Google client base for auth lifecycle and HTTP transport helpers.
+- Shared Google client base: auth lifecycle and HTTP transport helpers.
+- Fields:
+  - `auth_methods: ClassVar[list[str]]`
+- Methods:
+  - `def build_default(cls) -> 'GoogleBaseClient'`
+    - Construct from environment variables / settings.
+  - `def check_auth(cls) -> None`
+    - Validate that Google credentials are available.
 
 #### `GoogleDriveClient`
-- Minimal Google Drive client (ID-first) with read/write and full export coverage for Google-native files.
+- Google Drive client (ID-first) with read/write and full export coverage.
 - Methods:
   - `def list_files(self, *, query: str | None = None, fields: str = 'id, name, mimeType, parents', page_size: int = 100)`
     - List all files the authenticated user has access to.
@@ -273,6 +310,54 @@ Auto-generated from source signatures and docstrings.
   - `def export_from_weburl(self, web_url: str, mime_type: Optional[str] = None, **kwargs) -> Union[bytes, str]`
   - `def update_from_weburl(self, web_url: str, **kwargs) -> Dict[str, Any]`
 
+#### `GDriveItem`
+- A Google Drive file or folder item backed by the Drive REST API.
+- Methods:
+  - `def id(self) -> str`
+  - `def name(self) -> str`
+  - `def path(self) -> str`
+  - `def service_type(self) -> str`
+  - `def source_url(self) -> str`
+  - `def is_directory(self) -> bool`
+  - `def children(self) -> list['GDriveItem']`
+    - Direct children of this directory; empty list for files.
+  - `def refresh(self, *, include_children: bool = True) -> 'GDriveItem'`
+    - Re-fetch raw metadata (and optionally children) from the API.
+  - `def download(self, target_dir: str | Path) -> None`
+    - Download this item.
+
+#### `GDriveFile`
+- A Google Drive file or folder item backed by the Drive REST API.
+- Methods:
+  - `def id(self) -> str`
+  - `def name(self) -> str`
+  - `def path(self) -> str`
+  - `def service_type(self) -> str`
+  - `def source_url(self) -> str`
+  - `def is_directory(self) -> bool`
+  - `def children(self) -> list['GDriveItem']`
+    - Direct children of this directory; empty list for files.
+  - `def refresh(self, *, include_children: bool = True) -> 'GDriveItem'`
+    - Re-fetch raw metadata (and optionally children) from the API.
+  - `def download(self, target_dir: str | Path) -> None`
+    - Download this item.
+
+#### `GDriveFolder`
+- A Google Drive file or folder item backed by the Drive REST API.
+- Methods:
+  - `def id(self) -> str`
+  - `def name(self) -> str`
+  - `def path(self) -> str`
+  - `def service_type(self) -> str`
+  - `def source_url(self) -> str`
+  - `def is_directory(self) -> bool`
+  - `def children(self) -> list['GDriveItem']`
+    - Direct children of this directory; empty list for files.
+  - `def refresh(self, *, include_children: bool = True) -> 'GDriveItem'`
+    - Re-fetch raw metadata (and optionally children) from the API.
+  - `def download(self, target_dir: str | Path) -> None`
+    - Download this item.
+
 
 ## `sharedrive.auth.google`
 
@@ -283,38 +368,25 @@ Auto-generated from source signatures and docstrings.
 
 ### Functions
 
-- `def default_drive_strategy(credentials_path: str | Path | None = None, scopes: Sequence[str] | str | None = None) -> CredentialStrategy`
 - `def normalize_google_scopes(scopes: Sequence[str] | str | None, *, default: Sequence[str] = DEFAULT_DRIVE_SCOPES) -> list[str]`
 
 ### Classes
 
-#### `AdcStrategy`
-- Fields:
-  - `scopes: Sequence[str] | str | None`
+#### `GoogleAuth`
+- Google credential holder with named constructors for each auth mode.
 - Methods:
-  - `def build(self) -> Credentials`
-
-#### `ChainedStrategy`
-- Fields:
-  - `strategies: Sequence[CredentialStrategy]`
-- Methods:
-  - `def build(self) -> Credentials`
-
-#### `ServiceAccountStrategy`
-- Fields:
-  - `credentials_path: str | Path`
-  - `scopes: Sequence[str] | str | None`
-- Methods:
-  - `def build(self) -> Credentials`
-
-#### `UserOAuthStrategy`
-- Fields:
-  - `client_secrets_path: str | Path`
-  - `scopes: Sequence[str] | str | None`
-  - `token_store: TokenStore | None`
-  - `use_local_server: bool`
-- Methods:
-  - `def build(self) -> Credentials`
+  - `def from_adc(cls, scopes: Sequence[str] | str | None = None) -> 'GoogleAuth'`
+    - Build from Application Default Credentials (``gcloud auth application-default login``).
+  - `def from_service_account(cls, credentials_path: str | Path, scopes: Sequence[str] | str | None = None) -> 'GoogleAuth'`
+    - Build from a service account JSON key file.
+  - `def from_user_oauth(cls, client_secrets_path: str | Path, scopes: Sequence[str] | str | None = None, token_store: TokenStore | None = None, use_local_server: bool = True) -> 'GoogleAuth'`
+    - Build via the OAuth installed-app flow.
+  - `def from_settings(cls, config: object | None = None) -> 'GoogleAuth'`
+    - Build from environment variables or a :class:`~sharedrive.auth.settings.GoogleAuthConfig`.
+  - `def credentials(self) -> Credentials`
+    - The underlying :class:`~google.auth.credentials.Credentials` object.
+  - `def ensure_valid(self) -> None`
+    - Refresh the credential token if it has expired.
 
 
 ## `sharedrive.auth.microsoft`
@@ -329,23 +401,17 @@ Auto-generated from source signatures and docstrings.
 
 ### Classes
 
-#### `AppOnlyStrategy`
-- Fields:
-  - `client_secret: str | None`
+#### `MicrosoftAuth`
+- Microsoft access-token holder with named constructors for each auth mode.
 - Methods:
-  - `def build(self) -> str`
-
-#### `DelegatedStrategy`
-- Methods:
-  - `def build(self) -> str`
-
-#### `MicrosoftTokenStrategy`
-- Fields:
-  - `tenant_id: str`
-  - `client_id: str`
-  - `scopes: Sequence[str] | str | None`
-- Methods:
-  - `def normalized_scopes(self) -> list[str]`
+  - `def from_app_only(cls, tenant_id: str, client_id: str, client_secret: str, scopes: Sequence[str] | str | None = None) -> 'MicrosoftAuth'`
+    - Build using client-credential (app-only) flow via MSAL.
+  - `def from_delegated(cls, tenant_id: str, client_id: str, scopes: Sequence[str] | str | None = None) -> 'MicrosoftAuth'`
+    - Build using interactive delegated (user) flow via MSAL.
+  - `def from_settings(cls, config: object | None = None) -> 'MicrosoftAuth'`
+    - Build from environment variables or a :class:`~sharedrive.auth.settings.MicrosoftAuthConfig`.
+  - `def access_token(self) -> str`
+    - The raw Bearer access token string.
 
 
 ## `sharedrive.auth.token_store`
@@ -358,14 +424,13 @@ Auto-generated from source signatures and docstrings.
   - `def load(self) -> Credentials | None`
   - `def save(self, creds: Credentials) -> None`
 
+#### `TokenStore`
+- Methods:
+  - `def load(self) -> Credentials | None`
+  - `def save(self, creds: Credentials) -> None`
+
 
 ## `sharedrive.auth.settings`
-
-### Functions
-
-- `def make_google_drive_client_from_settings(config: GoogleAuthConfig | None = None)`
-- `def make_sharepoint_client_from_microsoft_auth(config: MicrosoftAuthConfig | None = None)`
-- `def make_sharepoint_client_from_settings(config: MicrosoftAuthConfig | None = None)`
 
 ### Classes
 
@@ -380,7 +445,8 @@ Auto-generated from source signatures and docstrings.
 - Methods:
   - `def to_scope_list(cls, value: str | list[str] | tuple[str, ...] | None) -> list[str]`
   - `def validate_for_mode(self) -> GoogleAuthConfig`
-  - `def to_strategy(self) -> CredentialStrategy`
+  - `def to_auth(self) -> GoogleAuth`
+    - Return a :class:`~sharedrive.auth.google.GoogleAuth` for this configuration.
 
 #### `GoogleAuthMode`
 
@@ -397,26 +463,10 @@ Auto-generated from source signatures and docstrings.
   - `def normalize_host_url(cls, value: str | None) -> str`
   - `def to_scope_list(cls, value: str | list[str] | tuple[str, ...] | None) -> list[str]`
   - `def validate_for_mode(self) -> MicrosoftAuthConfig`
-  - `def to_strategy(self) -> AppOnlyStrategy | DelegatedStrategy`
+  - `def to_auth(self) -> MicrosoftAuth`
+    - Return a :class:`~sharedrive.auth.microsoft.MicrosoftAuth` for this configuration.
 
 #### `MicrosoftAuthMode`
-
-#### `SharepointAuthConfig`
-- Fields:
-  - `auth_mode: MicrosoftAuthMode`
-  - `tenant_id: str | None`
-  - `client_id: str | None`
-  - `client_secret: SecretStr | None`
-  - `host_url: str`
-  - `scopes: Annotated[list[str], NoDecode]`
-- Methods:
-  - `def empty_string_to_none(cls, value: str | None) -> str | None`
-  - `def normalize_host_url(cls, value: str | None) -> str`
-  - `def to_scope_list(cls, value: str | list[str] | tuple[str, ...] | None) -> list[str]`
-  - `def validate_for_mode(self) -> MicrosoftAuthConfig`
-  - `def to_strategy(self) -> AppOnlyStrategy | DelegatedStrategy`
-
-#### `SharepointAuthMode`
 
 
 ## `sharedrive.clients.sharepoint`
@@ -424,8 +474,14 @@ Auto-generated from source signatures and docstrings.
 ### Classes
 
 #### `SharepointClient`
-- TODO: look into for local dev: https://learn.microsoft.com/en-us/powershell/microsoftgraph/overview?view=graph-powershell-1.0
+- SharePoint / OneDrive client backed by the Microsoft Graph API.
+- Fields:
+  - `auth_methods: ClassVar[list[str]]`
 - Methods:
+  - `def build_default(cls) -> 'SharepointClient'`
+    - Construct from environment variables / settings.
+  - `def check_auth(cls) -> None`
+    - Validate that Microsoft Graph credentials are available.
   - `def get_site_id(self, site_name)`
   - `def list_site_drives(self, site_id: str) -> list[dict[str, Any]]`
   - `def get_drive_id(self, site_id, drive_name: str | None = None)`
@@ -445,3 +501,51 @@ Auto-generated from source signatures and docstrings.
     - [IN DEVELOPMENT] Uploads a file to a specified SharePoint folder with proper Content-Type.
   - `def update_content(self, site_name, folder_path, local_file_path, create_if_missing = False)`
     - [IN DEVELOPMENT] Updates an existing file in SharePoint, or creates it if not found (optional).
+
+#### `SharepointItem`
+- A SharePoint file or folder item backed by the Graph API.
+- Methods:
+  - `def id(self) -> str`
+  - `def name(self) -> str`
+  - `def path(self) -> str`
+  - `def service_type(self) -> str`
+  - `def source_url(self) -> str`
+  - `def is_directory(self) -> bool`
+  - `def children(self) -> list['SharepointItem']`
+    - Direct children of this directory; empty list for files.
+  - `def refresh(self, *, include_children: bool = True) -> 'SharepointItem'`
+    - Re-fetch raw metadata (and optionally children) from the Graph API.
+  - `def download(self, target_dir: str | Path) -> None`
+    - Download this item.
+
+#### `SharepointFile`
+- A SharePoint file or folder item backed by the Graph API.
+- Methods:
+  - `def id(self) -> str`
+  - `def name(self) -> str`
+  - `def path(self) -> str`
+  - `def service_type(self) -> str`
+  - `def source_url(self) -> str`
+  - `def is_directory(self) -> bool`
+  - `def children(self) -> list['SharepointItem']`
+    - Direct children of this directory; empty list for files.
+  - `def refresh(self, *, include_children: bool = True) -> 'SharepointItem'`
+    - Re-fetch raw metadata (and optionally children) from the Graph API.
+  - `def download(self, target_dir: str | Path) -> None`
+    - Download this item.
+
+#### `SharepointFolder`
+- A SharePoint file or folder item backed by the Graph API.
+- Methods:
+  - `def id(self) -> str`
+  - `def name(self) -> str`
+  - `def path(self) -> str`
+  - `def service_type(self) -> str`
+  - `def source_url(self) -> str`
+  - `def is_directory(self) -> bool`
+  - `def children(self) -> list['SharepointItem']`
+    - Direct children of this directory; empty list for files.
+  - `def refresh(self, *, include_children: bool = True) -> 'SharepointItem'`
+    - Re-fetch raw metadata (and optionally children) from the Graph API.
+  - `def download(self, target_dir: str | Path) -> None`
+    - Download this item.

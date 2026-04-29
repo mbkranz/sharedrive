@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 import pytest
 import yaml
 
-from sharedrive.actions.fetch import fetch_resource_metadata_in_descriptor
+from sharedrive.actions.fetch import fetch
 from sharedrive.registry import get_provider as _real_get_provider
 
 
@@ -66,10 +67,17 @@ def _patch_fetch_registry(
 
         return _real_get_provider(name)
 
-    monkeypatch.setattr("sharedrive.actions.fetch.get_provider", fake_get_provider)
+    fetch_module = importlib.import_module("sharedrive.actions.fetch")
+    monkeypatch.setattr(fetch_module, "get_provider", fake_get_provider)
 
 
-def test_fetch_resource_metadata_in_descriptor_writes_nested_resources(
+def _fetch_one(descriptor: Path, selector: str, **kwargs):
+    summaries = fetch(descriptor, selector, **kwargs)
+    assert len(summaries) == 1
+    return summaries[0]
+
+
+def test_fetch_in_descriptor_writes_nested_resources(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
@@ -115,7 +123,7 @@ def test_fetch_resource_metadata_in_descriptor_writes_nested_resources(
 
     _patch_fetch_registry(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
 
-    summary = fetch_resource_metadata_in_descriptor(descriptor, "census-docs", log=None)
+    summary = _fetch_one(descriptor, "census-docs", log=None)
 
     document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
 
@@ -148,7 +156,7 @@ def test_fetch_resource_metadata_in_descriptor_writes_nested_resources(
     ]
 
 
-def test_fetch_resource_metadata_in_descriptor_dry_run_does_not_write(
+def test_fetch_in_descriptor_dry_run_does_not_write(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
@@ -190,18 +198,14 @@ def test_fetch_resource_metadata_in_descriptor_dry_run_does_not_write(
 
     _patch_fetch_registry(monkeypatch, googledrive_factory=lambda: DummyDriveClient())
 
-    summary = fetch_resource_metadata_in_descriptor(
-        descriptor, "census-docs", dry_run=True, log=None
-    )
+    summary = _fetch_one(descriptor, "census-docs", dry_run=True, log=None)
 
     assert summary.dry_run is True
     assert summary.changed is False
     assert descriptor.read_text(encoding="utf-8") == before
 
 
-def test_fetch_resource_metadata_in_descriptor_rejects_path_sync_target(
-    tmp_path: Path,
-) -> None:
+def test_fetch_in_descriptor_rejects_path_sync_target(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     descriptor.write_text(
         yaml.safe_dump(
@@ -229,14 +233,12 @@ def test_fetch_resource_metadata_in_descriptor_rejects_path_sync_target(
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="syncTarget 'resources'"):
-        fetch_resource_metadata_in_descriptor(descriptor, "drive-export", log=None)
+    with pytest.raises(ValueError, match="standalone resource"):
+        fetch(descriptor, "drive-export", log=None)
 
 
-def test_fetch_resource_metadata_in_descriptor_requires_existing_descriptor(
-    tmp_path: Path,
-) -> None:
+def test_fetch_in_descriptor_requires_existing_descriptor(tmp_path: Path) -> None:
     missing = tmp_path / "missing.yaml"
 
     with pytest.raises(FileNotFoundError, match="does not exist"):
-        fetch_resource_metadata_in_descriptor(missing, "census-docs", log=None)
+        fetch(missing, "census-docs", log=None)

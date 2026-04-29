@@ -4,124 +4,27 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
-from urllib.parse import urlparse
 
-from dplib.system import Model
-
-import sharedrive.clients.googledrive  # noqa: F401 — trigger @provider registration
-import sharedrive.clients.sharepoint  # noqa: F401 — trigger @provider registration
-from sharedrive.clients.aws import check_s3_credentials, download_s3_url
-from sharedrive.helpers import resolve_default_descriptor
 from sharedrive.models import (
-    DriveCatalog,
+    Entry,
+    DriveSourceReference,
+    contained_entries,
+    entry_to_dict,
+    inherited_entry,
+    iter_source_refs,
     load_drive_descriptor,
-    normalize_entity_type,
-    normalize_service_type,
-    service_type_adapter_name,
+    normalize_selector,
+    remote_basename,
+    resource_matches_selector,
+    resource_or_descendant_matches_selector,
+    resource_selector_path,
+    selected_adapter_names,
+    sync_target,
 )
+from sharedrive.clients.aws import check_s3_credentials, download_s3_url
 from sharedrive.registry import get_provider
 
 LogFn = Callable[[str], None]
-Entry = Model | dict[str, Any]
-
-
-def load_descriptor(path: Path | str) -> DriveCatalog:
-    return load_drive_descriptor(path)
-
-
-def _contained_entries(container: Entry) -> list[Entry]:
-    entries: list[Entry] = []
-    if isinstance(container, dict):
-        for key in ("resources", "packages", "catalogs"):
-            values = container.get(key)
-            if not isinstance(values, list):
-                continue
-            entries.extend(value for value in values if isinstance(value, dict))
-        return entries
-
-    entries.extend(
-        child for child in container.entity_children() if isinstance(child, Model)
-    )
-    return entries
-
-
-def _entry_to_dict(entry: Entry) -> dict[str, Any]:
-    return dict(entry) if isinstance(entry, dict) else entry.to_dict()
-
-
-def get_primary_source(
-    resource: Entry, *, create: bool = False
-) -> dict[str, Any] | None:
-    if not isinstance(resource, dict):
-        resource = resource.to_dict()
-
-    sources = resource.get("sources")
-    if sources is None:
-        if create:
-            resource["sources"] = [{}]
-            return resource["sources"][0]
-        return None
-    if not isinstance(sources, list):
-        raise ValueError("Resource must contain a 'sources' array")
-    if not sources:
-        if create:
-            sources.append({})
-            return sources[0]
-        return None
-    primary = sources[0]
-    if not isinstance(primary, dict):
-        raise ValueError("Resource source entries must be objects")
-    return primary
-
-
-def source_path(resource: Any) -> str | None:
-    source_value = getattr(resource, "source_path", None)
-    if isinstance(source_value, str) and source_value.strip():
-        return source_value.strip()
-
-    primary = get_primary_source(resource)
-    if primary is None:
-        return None
-    value = primary.get("path")
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return None
-
-
-def source_service_type(resource: Any) -> str | None:
-    service_value = getattr(resource, "source_service_type", None)
-    if isinstance(service_value, str) and service_value.strip():
-        return normalize_service_type(service_value)
-
-    primary = get_primary_source(resource)
-    if primary is None:
-        return None
-    value = primary.get("serviceType")
-    if isinstance(value, str) and value.strip():
-        return normalize_service_type(value)
-    return None
-
-
-def source_entity_type(resource: Any) -> str | None:
-    entity_value = getattr(resource, "source_entity_type", None)
-    if isinstance(entity_value, str) and entity_value.strip():
-        return normalize_entity_type(entity_value)
-
-    primary = get_primary_source(resource)
-    if primary is None:
-        return None
-    value = primary.get("entityType")
-    if isinstance(value, str) and value.strip():
-        return normalize_entity_type(value)
-    return None
-
-
-def resource_sync_target(resource: Entry) -> str:
-    resource_dict = _entry_to_dict(resource)
-    declared = resource_dict.get("syncTarget")
-    if declared == "resources":
-        return "resources"
-    return "resources" if isinstance(resource_dict.get("resources"), list) else "path"
 
 
 @dataclass(slots=True)
@@ -147,35 +50,24 @@ class AuthCheckResult:
         return {"adapter": self.adapter, "ok": self.ok, "message": self.message}
 
 
-def resource_source_url(resource: Any) -> str | None:
-    """Resolve the primary source locator for a resource."""
-    return source_path(resource)
-
-
-def resource_output_path(resource: Entry, output_dir: Path) -> Path:
-    """Resolve resource.path against output_dir unless path is absolute."""
-    resource_dict = _entry_to_dict(resource)
-    path_value = resource_dict.get("path")
-    if not isinstance(path_value, str) or not path_value.strip():
-        raise ValueError("Resource is missing required string field 'path'")
-
+def _resolve_local_path(path_value: str, output_dir: Path) -> Path:
     path = Path(path_value.strip())
     if path.is_absolute():
         return path
     return output_dir / path
 
 
-def resource_output_paths(resource: Entry, output_dir: Path) -> list[Path]:
-    """Resolve primary resource.path plus optional targets[] into local output paths."""
+def _resource_output_path(resource: Entry, output_dir: Path) -> Path:
+    resource_dict = entry_to_dict(resource)
+    path_value = resource_dict.get("path")
+    if not isinstance(path_value, str) or not path_value.strip():
+        raise ValueError("Resource is missing required string field 'path'")
+    return _resolve_local_path(path_value, output_dir)
 
-    def _resolve_local_path(path_value: str) -> Path:
-        path = Path(path_value.strip())
-        if path.is_absolute():
-            return path
-        return output_dir / path
 
-    paths: list[Path] = [resource_output_path(resource, output_dir)]
-    resource_dict = _entry_to_dict(resource)
+def _resource_output_paths(resource: Entry, output_dir: Path) -> list[Path]:
+    paths: list[Path] = [_resource_output_path(resource, output_dir)]
+    resource_dict = entry_to_dict(resource)
     targets = resource_dict.get("targets")
     if targets is None:
         return paths
@@ -212,76 +104,50 @@ def resource_output_paths(resource: Entry, output_dir: Path) -> list[Path]:
 
     deduped: dict[str, Path] = {str(paths[0]): paths[0]}
     for target_value in target_values:
-        resolved = _resolve_local_path(target_value)
+        resolved = _resolve_local_path(target_value, output_dir)
         deduped.setdefault(str(resolved), resolved)
     return list(deduped.values())
 
 
-def resource_adapter_name(resource: Any, source_url: str | None) -> str:
-    """Resolve runtime adapter name from source serviceType or fallback inference."""
-    service_type = source_service_type(resource)
-    if service_type is not None:
-        return service_type_adapter_name(service_type)
-
-    # Convert to dict before calling .get() because dplib Model instances expose
-    # ``to_dict()`` rather than the mapping API.
-    resource_dict = _entry_to_dict(resource)
-    adapter = resource_dict.get("driveService")
-    if isinstance(adapter, str) and adapter.strip():
-        return service_type_adapter_name(adapter.strip())
-
-    legacy_adapter = resource_dict.get("x-adapter")
-    if isinstance(legacy_adapter, str) and legacy_adapter.strip():
-        return legacy_adapter.strip().lower()
-
-    if not source_url:
-        return "unknown"
-
-    if urlparse(source_url).scheme.lower() == "s3":
-        return "s3"
-
-    host = urlparse(source_url).netloc.lower()
-    if "sharepoint.com" in host:
-        return "sharepoint"
-    if "google.com" in host:
-        return "googledrive"
-    if host.startswith("www."):
-        host = host[4:]
-    return host.split(".")[0] if host else "unknown"
-
-
-def _normalize_include(include: str | Iterable[str]) -> set[str]:
-    if isinstance(include, str):
-        include_items = [include]
-    else:
-        include_items = list(include)
-    flattened: list[str] = []
-    for item in include_items:
-        if not item:
-            continue
-        flattened.extend(part.strip() for part in str(item).split(","))
-    normalized = {item.lower() for item in flattened if item}
-    return normalized or {"all"}
-
-
-def _download_drive_item(
-    *, client: Any, source_url: str, output_path: Path
-) -> None:
-    """Download a single file via a registered drive client (SharePoint or Google Drive)."""
-    item = client.get_from_weburl(source_url)
-    item.download(str(output_path))
-
-
-def _get_client(
-    adapter_name: str,
+def _source_output_path(
+    resource: Entry,
+    source: DriveSourceReference,
+    output_dir: Path,
     *,
-    clients: dict[str, Any],
-) -> Any:
-    """Return a cached client for *adapter_name*, building it on first use.
+    source_count: int,
+    directory: bool,
+) -> Path:
+    if source_count == 1:
+        return _resource_output_path(resource, output_dir)
 
-    Calls ``get_provider(adapter_name).build_default()`` and caches the result
-    for the duration of the current download/auth-check call.
-    """
+    if source.target is not None:
+        return _resolve_local_path(source.target, output_dir)
+
+    root = _resource_output_path(resource, output_dir) / source.key
+    if directory:
+        return root
+
+    basename = remote_basename(source.path) or source.key
+    return root / basename
+
+
+def _single_source_output_paths(resource: Entry, output_dir: Path) -> list[Path]:
+    return _resource_output_paths(resource, output_dir)
+
+
+def _reserve_destination(
+    destination: Path, *, seen: dict[str, str], label: str
+) -> None:
+    key = str(destination.resolve() if destination.exists() else destination.absolute())
+    previous = seen.get(key)
+    if previous is not None and previous != label:
+        raise ValueError(
+            f"Output collision for {destination}: both {previous} and {label} map there."
+        )
+    seen[key] = label
+
+
+def _get_client(adapter_name: str, *, clients: dict[str, Any]) -> Any:
     if adapter_name not in clients:
         cls = get_provider(adapter_name)
         if cls is None:
@@ -290,153 +156,7 @@ def _get_client(
     return clients[adapter_name]
 
 
-def _resource_selector_path(
-    resource: Entry, parent_selector_path: str | None = None
-) -> str:
-    resource_dict = _entry_to_dict(resource)
-    resource_name = str(resource_dict.get("name", "")).strip() or "resource"
-    if parent_selector_path is None:
-        return resource_name
-    return f"{parent_selector_path}.{resource_name}"
-
-
-def _selected_adapter_names(
-    resources: Iterable[Entry], include: str | Iterable[str] = "all"
-) -> list[str]:
-    include_set = _normalize_include(include)
-    selected: list[str] = []
-    seen: set[str] = set()
-
-    def collect(
-        resource: Entry,
-        parent: Entry | None = None,
-        parent_selector_path: str | None = None,
-    ) -> None:
-        normalized = _inherit_resource_defaults(resource, parent=parent)
-        selector_path = _resource_selector_path(normalized, parent_selector_path)
-        children = _contained_entries(resource)
-
-        if children:
-            parent_selected = _resource_matches_include(
-                normalized, include_set, selector_path=selector_path
-            )
-            for child in children:
-                child_resource = _inherit_resource_defaults(child, parent=normalized)
-                if parent_selected or _resource_or_descendant_matches_include(
-                    child_resource, include_set, parent_selector_path=selector_path
-                ):
-                    collect(
-                        child, parent=normalized, parent_selector_path=selector_path
-                    )
-            return
-
-        source_url = resource_source_url(normalized)
-        adapter_name = resource_adapter_name(normalized, source_url)
-
-        if not _resource_matches_include(
-            normalized, include_set, selector_path=selector_path
-        ):
-            return
-
-        if adapter_name not in seen:
-            seen.add(adapter_name)
-            selected.append(adapter_name)
-
-    for index, resource in enumerate(resources):
-        collect(resource)
-
-    return selected
-
-
-def _inherit_resource_defaults(
-    resource: Entry, *, parent: Entry | None = None
-) -> dict[str, Any]:
-    normalized = _entry_to_dict(resource)
-    if parent is None:
-        return normalized
-
-    parent_dict = _entry_to_dict(parent)
-
-    parent_path = parent_dict.get("path")
-    resource_path = normalized.get("path")
-    if (
-        isinstance(parent_path, str)
-        and parent_path.strip()
-        and isinstance(resource_path, str)
-        and resource_path.strip()
-    ):
-        child_path = Path(resource_path.strip())
-        if not child_path.is_absolute():
-            normalized["path"] = (Path(parent_path.strip()) / child_path).as_posix()
-
-    parent_source = get_primary_source(parent_dict)
-    child_source = get_primary_source(normalized, create=parent_source is not None)
-    if parent_source is not None and child_source is not None:
-        for field_name in ("serviceType", "entityType"):
-            inherited_value = parent_source.get(field_name)
-            current_value = child_source.get(field_name)
-            if (
-                isinstance(inherited_value, str)
-                and inherited_value.strip()
-                and not current_value
-            ):
-                child_source[field_name] = inherited_value
-
-    for field_name in ("driveService", "x-adapter"):
-        inherited_value = parent_dict.get(field_name)
-        current_value = normalized.get(field_name)
-        if (
-            isinstance(inherited_value, str)
-            and inherited_value.strip()
-            and not current_value
-        ):
-            normalized[field_name] = inherited_value
-
-    return normalized
-
-
-def _resource_matches_include(
-    resource: Entry, include_set: set[str], *, selector_path: str | None = None
-) -> bool:
-    if "all" in include_set:
-        return True
-
-    resource_dict = _entry_to_dict(resource)
-    resource_name = str(resource_dict.get("name", "")).strip().lower()
-    selector_key = (selector_path or resource_name).strip().lower()
-    source_url = resource_source_url(resource_dict)
-    adapter_name = resource_adapter_name(resource_dict, source_url)
-    return (
-        resource_name in include_set
-        or selector_key in include_set
-        or adapter_name in include_set
-    )
-
-
-def _resource_or_descendant_matches_include(
-    resource: Entry, include_set: set[str], *, parent_selector_path: str | None = None
-) -> bool:
-    selector_path = _resource_selector_path(resource, parent_selector_path)
-    if _resource_matches_include(resource, include_set, selector_path=selector_path):
-        return True
-
-    for child in _contained_entries(resource):
-        normalized_child = _inherit_resource_defaults(child, parent=resource)
-        if _resource_or_descendant_matches_include(
-            normalized_child, include_set, parent_selector_path=selector_path
-        ):
-            return True
-
-    return False
-
-
 def _iter_drive_item_files(item: Any) -> Iterable[Any]:
-    """Recursively yield non-directory children from a drive item tree.
-
-    Works with any object exposing ``is_directory`` and ``children`` attributes,
-    including concrete ``DriveFolder`` subclasses and lightweight test doubles
-    that do not implement the ``iter_files`` method.
-    """
     if getattr(item, "is_directory", False):
         for child in item.children:
             yield from _iter_drive_item_files(child)
@@ -444,18 +164,24 @@ def _iter_drive_item_files(item: Any) -> Iterable[Any]:
         yield item
 
 
+def _download_drive_item(
+    *, client: Any, source: DriveSourceReference, output_path: Path
+) -> None:
+    item = client.get_from_weburl(source.path)
+    item.download(str(output_path))
+
+
 def _download_drive_directory(
-    resource: dict[str, Any],
     *,
+    resource_name: str,
+    source: DriveSourceReference,
     output_roots: list[Path],
-    source_url: str,
     client: Any,
     dry_run: bool,
     emit: LogFn,
+    seen_destinations: dict[str, str],
 ) -> tuple[int, int]:
-    """Download all files from a drive folder (SharePoint or Google Drive)."""
-    resource_name = str(resource.get("name", "resource")).strip() or "resource"
-    folder_item = client.get_from_weburl(source_url)
+    folder_item = client.get_from_weburl(source.path)
 
     downloaded = 0
     dry_run_actions = 0
@@ -465,10 +191,17 @@ def _download_drive_directory(
             relative_path = getattr(child, "id", "file")
 
         destinations = [root / Path(relative_path) for root in output_roots]
+        for destination in destinations:
+            _reserve_destination(
+                destination,
+                seen=seen_destinations,
+                label=f"{resource_name}:{source.index}:{relative_path}",
+            )
+
         if dry_run:
             for destination in destinations:
                 emit(
-                    f"Would fetch {resource_name}/{relative_path} from {source_url} to {destination}"
+                    f"Would fetch {resource_name}/{relative_path} from {source.path} to {destination}"
                 )
             dry_run_actions += len(destinations)
             continue
@@ -486,22 +219,13 @@ def _download_drive_directory(
     return downloaded, dry_run_actions
 
 
-def check_auth_for_adapters(
-    adapters: Iterable[str],
-) -> list[AuthCheckResult]:
-    """Check authentication for each of the named adapters.
-
-    For adapters registered via :func:`~sharedrive.registry.provider`,
-    calls ``cls.check_auth()``.  The ``"s3"`` adapter is a special case:
-    it has no registered client class and is checked via
-    :func:`~sharedrive.clients.aws.check_s3_credentials`.
-    """
-    _OK_MESSAGES = {
+def _check_auth_for_adapters(adapters: Iterable[str]) -> list[AuthCheckResult]:
+    ok_messages = {
         "sharepoint": "SharePoint credentials are ready.",
         "googledrive": "Google Drive credentials are ready.",
         "s3": "AWS credentials are ready for S3 operations.",
     }
-    _FAIL_PREFIXES = {
+    fail_prefixes = {
         "sharepoint": "SharePoint authentication failed",
         "googledrive": "Google Drive authentication failed",
         "s3": "S3 credential check failed",
@@ -512,20 +236,10 @@ def check_auth_for_adapters(
         if adapter_name == "s3":
             try:
                 check_s3_credentials()
-                results.append(
-                    AuthCheckResult(
-                        adapter="s3",
-                        ok=True,
-                        message=_OK_MESSAGES["s3"],
-                    )
-                )
+                results.append(AuthCheckResult("s3", True, ok_messages["s3"]))
             except Exception as exc:
                 results.append(
-                    AuthCheckResult(
-                        adapter="s3",
-                        ok=False,
-                        message=f"{_FAIL_PREFIXES['s3']}: {exc}",
-                    )
+                    AuthCheckResult("s3", False, f"{fail_prefixes['s3']}: {exc}")
                 )
             continue
 
@@ -533,9 +247,7 @@ def check_auth_for_adapters(
         if cls is None:
             results.append(
                 AuthCheckResult(
-                    adapter=adapter_name,
-                    ok=False,
-                    message=f"Unsupported adapter '{adapter_name}'.",
+                    adapter_name, False, f"Unsupported adapter '{adapter_name}'."
                 )
             )
             continue
@@ -544,61 +256,68 @@ def check_auth_for_adapters(
             cls.check_auth()
             results.append(
                 AuthCheckResult(
-                    adapter=adapter_name,
-                    ok=True,
-                    message=_OK_MESSAGES.get(
+                    adapter_name,
+                    True,
+                    ok_messages.get(
                         adapter_name, f"Adapter '{adapter_name}' is ready."
                     ),
                 )
             )
         except Exception as exc:
-            prefix = _FAIL_PREFIXES.get(
+            prefix = fail_prefixes.get(
                 adapter_name, f"Adapter '{adapter_name}' authentication failed"
             )
-            results.append(
-                AuthCheckResult(adapter=adapter_name, ok=False, message=f"{prefix}: {exc}")
-            )
+            results.append(AuthCheckResult(adapter_name, False, f"{prefix}: {exc}"))
 
     return results
 
 
-def check_auth_for_descriptor(
-    descriptor: Path | str,
-    include: str | Iterable[str] = "all",
+def check_auth(
+    descriptor: Path | str | None = None,
+    selector: str | Iterable[str] | None = None,
+    *,
+    adapters: Iterable[str] | None = None,
 ) -> list[AuthCheckResult]:
-    descriptor_path = Path(descriptor)
-    entries = _contained_entries(load_drive_descriptor(descriptor_path))
-    adapters = _selected_adapter_names(entries, include)
-    return check_auth_for_adapters(adapters)
+    """Validate credentials for selected descriptor sources or explicit adapters."""
+    if adapters is not None:
+        deduped = list(dict.fromkeys(adapter.strip().lower() for adapter in adapters))
+        return _check_auth_for_adapters(deduped)
+
+    if descriptor is None:
+        raise ValueError("descriptor is required when adapters are not provided.")
+
+    entries = contained_entries(load_drive_descriptor(Path(descriptor)))
+    return _check_auth_for_adapters(selected_adapter_names(entries, selector))
 
 
-def download_from_descriptor(
+def download(
     descriptor: Path | str,
-    include: str | Iterable[str] = "all",
+    selector: str | Iterable[str] | None = None,
+    *,
     output_dir: Path | str = Path("resources"),
     dry_run: bool = False,
-    *,
     check_auth: bool = False,
     log: LogFn | None = print,
     use_cloudpathlib: bool = True,
 ) -> DownloadSummary:
-    """Download resources from a descriptor using adapter-specific clients."""
+    """Download all sources selected from a descriptor."""
     descriptor_path = Path(descriptor)
-    include_set = _normalize_include(include)
+    selector_set = normalize_selector(selector)
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
-    resources = _contained_entries(load_drive_descriptor(descriptor_path))
+    resources = contained_entries(load_drive_descriptor(descriptor_path))
 
     summary = DownloadSummary(total_resources=len(resources))
     clients: dict[str, Any] = {}
+    seen_destinations: dict[str, str] = {}
 
     def emit(message: str) -> None:
         if log is not None:
             log(message)
 
     if check_auth:
-        auth_results = check_auth_for_adapters(
-            _selected_adapter_names(resources, include_set),
+        auth_results = _check_auth_for_adapters(
+            selected_adapter_names(resources, selector_set)
         )
         failed_checks = [result for result in auth_results if not result.ok]
         if not auth_results:
@@ -617,21 +336,21 @@ def download_from_descriptor(
         parent_selector_path: str | None = None,
         selected_by_ancestor: bool = False,
     ) -> None:
-        normalized = _inherit_resource_defaults(resource, parent=parent)
-        selector_path = _resource_selector_path(normalized, parent_selector_path)
-        nested_entries = _contained_entries(resource)
+        normalized = inherited_entry(resource, parent=parent)
+        selector_path = resource_selector_path(normalized, parent_selector_path)
+        nested_entries = contained_entries(resource)
 
         if nested_entries:
-            parent_selected = _resource_matches_include(
-                normalized, include_set, selector_path=selector_path
+            parent_selected = resource_matches_selector(
+                normalized, selector_set, selector_path=selector_path
             )
             for child in nested_entries:
-                child_resource = _inherit_resource_defaults(child, parent=normalized)
+                child_resource = inherited_entry(child, parent=normalized)
                 if (
                     selected_by_ancestor
                     or parent_selected
-                    or _resource_or_descendant_matches_include(
-                        child_resource, include_set, parent_selector_path=selector_path
+                    or resource_or_descendant_matches_selector(
+                        child_resource, selector_set, parent_selector_path=selector_path
                     )
                 ):
                     fetch_resource(
@@ -642,96 +361,45 @@ def download_from_descriptor(
                     )
             return
 
-        resource_name = normalized.get("name", "resource")
-        source_url = resource_source_url(normalized)
-        adapter_name = resource_adapter_name(normalized, source_url)
-
-        if not selected_by_ancestor and not _resource_matches_include(
-            normalized, include_set, selector_path=selector_path
+        resource_name = str(normalized.get("name", "resource"))
+        if not selected_by_ancestor and not resource_matches_selector(
+            normalized, selector_set, selector_path=selector_path
         ):
             return
-        if not source_url:
+
+        sources = iter_source_refs(normalized, parent=parent)
+        if not sources:
             emit(f"Warning, {resource_name} has no source URL")
             summary.failures += 1
             return
 
-        try:
-            output_paths = resource_output_paths(normalized, output_dir_path)
-            output_path = output_paths[0]
-            sync_target = resource_sync_target(normalized)
-            entity_type = source_entity_type(normalized)
-            cls = get_provider(adapter_name)
-
-            if cls is not None:
-                # Registered drive provider (SharePoint, Google Drive, …)
-                if entity_type in {"Directory", "Container"} and not nested_entries:
-                    client = _get_client(adapter_name, clients=clients)
-                    output_roots = (
-                        output_paths if sync_target == "resources" else [output_path]
-                    )
-                    downloaded, dry_run_actions = _download_drive_directory(
-                        normalized,
-                        output_roots=output_roots,
-                        source_url=source_url,
-                        client=client,
-                        dry_run=dry_run,
-                        emit=emit,
-                    )
-                    summary.downloaded += downloaded
-                    summary.dry_run_actions += dry_run_actions
-                    return
-
-                if dry_run:
-                    for destination in output_paths:
-                        emit(f"Would fetch {source_url} to {destination}")
-                    summary.dry_run_actions += len(output_paths)
-                    return
-
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                client = _get_client(adapter_name, clients=clients)
-                _download_drive_item(
-                    client=client, source_url=source_url, output_path=output_path
-                )
-
-            elif adapter_name == "s3":
-                if dry_run:
-                    for destination in output_paths:
-                        emit(f"Would fetch {source_url} to {destination}")
-                    summary.dry_run_actions += len(output_paths)
-                    return
-
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                result = download_s3_url(
-                    source_url,
-                    output_path,
-                    dry_run=False,
+        for source in sources:
+            try:
+                _download_one_source(
+                    normalized,
+                    resource_name=resource_name,
+                    source=source,
+                    source_count=len(sources),
+                    output_dir=output_dir_path,
+                    clients=clients,
+                    dry_run=dry_run,
+                    emit=emit,
+                    seen_destinations=seen_destinations,
+                    summary=summary,
                     use_cloudpathlib=use_cloudpathlib,
                 )
-                if result is None:
-                    raise RuntimeError("S3 download returned no output path")
-
-            else:
-                emit(f"Warning, {resource_name} has unsupported adapter '{adapter_name}'")
+            except Exception as exc:
+                if isinstance(exc, ValueError) and "Output collision" in str(exc):
+                    raise
+                emit(f"Warning, {resource_name} source {source.index} failed: {exc}")
                 summary.failures += 1
-                return
-
-            for destination in output_paths[1:]:
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(output_path, destination)
-
-            summary.downloaded += len(output_paths)
-        except Exception as exc:
-            emit(f"Warning, {resource_name} failed: {exc}")
-            summary.failures += 1
 
     for index, resource in enumerate(resources):
-        normalized = _entry_to_dict(resource)
+        normalized = entry_to_dict(resource)
         normalized.setdefault("name", f"resource[{index}]")
-        if not _resource_or_descendant_matches_include(normalized, include_set):
+        if not resource_or_descendant_matches_selector(normalized, selector_set):
             resource_name = normalized.get("name", f"resource[{index}]")
-            source_url = resource_source_url(normalized)
-            adapter_name = resource_adapter_name(normalized, source_url)
-            emit(f"Skipping {resource_name}; adapter '{adapter_name}' not selected.")
+            emit(f"Skipping {resource_name}; selector did not match.")
             summary.skipped += 1
             continue
 
@@ -740,37 +408,156 @@ def download_from_descriptor(
     return summary
 
 
-def download_resources(
-    descriptor: Path | str,
-    include: str | Iterable[str] = "all",
-    output_dir: Path | str = Path("resources"),
-    dry_run: bool = False,
+def _download_one_source(
+    resource: Entry,
     *,
-    check_auth: bool = False,
-    log: LogFn | None = print,
-) -> DownloadSummary:
-    """Convenience alias for download_from_descriptor."""
-    return download_from_descriptor(
-        descriptor=descriptor,
-        include=include,
-        output_dir=output_dir,
-        dry_run=dry_run,
-        check_auth=check_auth,
-        log=log,
+    resource_name: str,
+    source: DriveSourceReference,
+    source_count: int,
+    output_dir: Path,
+    clients: dict[str, Any],
+    dry_run: bool,
+    emit: LogFn,
+    seen_destinations: dict[str, str],
+    summary: DownloadSummary,
+    use_cloudpathlib: bool,
+) -> None:
+    directory = source.entity_type in {"Directory", "Container"}
+    sync = sync_target(resource)
+    cls = get_provider(source.adapter)
+
+    if cls is not None:
+        if directory:
+            client = _get_client(source.adapter, clients=clients)
+            if source_count == 1:
+                output_roots = (
+                    _single_source_output_paths(resource, output_dir)
+                    if sync == "resources"
+                    else [_resource_output_path(resource, output_dir)]
+                )
+            else:
+                output_roots = [
+                    _source_output_path(
+                        resource,
+                        source,
+                        output_dir,
+                        source_count=source_count,
+                        directory=True,
+                    )
+                ]
+            downloaded, dry_run_actions = _download_drive_directory(
+                resource_name=resource_name,
+                source=source,
+                output_roots=output_roots,
+                client=client,
+                dry_run=dry_run,
+                emit=emit,
+                seen_destinations=seen_destinations,
+            )
+            summary.downloaded += downloaded
+            summary.dry_run_actions += dry_run_actions
+            return
+
+        destinations = (
+            _single_source_output_paths(resource, output_dir)
+            if source_count == 1
+            else [
+                _source_output_path(
+                    resource,
+                    source,
+                    output_dir,
+                    source_count=source_count,
+                    directory=False,
+                )
+            ]
+        )
+        _download_file_source(
+            destinations=destinations,
+            download_fn=lambda destination: _download_drive_item(
+                client=_get_client(source.adapter, clients=clients),
+                source=source,
+                output_path=destination,
+            ),
+            source=source,
+            dry_run=dry_run,
+            emit=emit,
+            seen_destinations=seen_destinations,
+            summary=summary,
+        )
+        return
+
+    if source.adapter == "s3":
+        destinations = (
+            _single_source_output_paths(resource, output_dir)
+            if source_count == 1
+            else [
+                _source_output_path(
+                    resource,
+                    source,
+                    output_dir,
+                    source_count=source_count,
+                    directory=False,
+                )
+            ]
+        )
+        _download_file_source(
+            destinations=destinations,
+            download_fn=lambda destination: _download_s3_source(
+                source, destination, use_cloudpathlib=use_cloudpathlib
+            ),
+            source=source,
+            dry_run=dry_run,
+            emit=emit,
+            seen_destinations=seen_destinations,
+            summary=summary,
+        )
+        return
+
+    raise ValueError(f"Unsupported adapter '{source.adapter}'")
+
+
+def _download_file_source(
+    *,
+    destinations: list[Path],
+    download_fn: Callable[[Path], None],
+    source: DriveSourceReference,
+    dry_run: bool,
+    emit: LogFn,
+    seen_destinations: dict[str, str],
+    summary: DownloadSummary,
+) -> None:
+    for destination in destinations:
+        _reserve_destination(
+            destination,
+            seen=seen_destinations,
+            label=f"{source.adapter}:{source.index}:{source.path}",
+        )
+
+    if dry_run:
+        for destination in destinations:
+            emit(f"Would fetch {source.path} to {destination}")
+        summary.dry_run_actions += len(destinations)
+        return
+
+    primary_destination = destinations[0]
+    primary_destination.parent.mkdir(parents=True, exist_ok=True)
+    download_fn(primary_destination)
+
+    for destination in destinations[1:]:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(primary_destination, destination)
+
+    summary.downloaded += len(destinations)
+
+
+def _download_s3_source(
+    source: DriveSourceReference, output_path: Path, *, use_cloudpathlib: bool
+) -> None:
+    result = download_s3_url(
+        source.path, output_path, dry_run=False, use_cloudpathlib=use_cloudpathlib
     )
+    if result is None:
+        raise RuntimeError("S3 download returned no output path")
 
 
-__all__ = [
-    "AuthCheckResult",
-    "check_auth_for_adapters",
-    "check_auth_for_descriptor",
-    "DownloadSummary",
-    "download_from_descriptor",
-    "download_resources",
-    "load_descriptor",
-    "resolve_default_descriptor",
-    "resource_adapter_name",
-    "resource_output_path",
-    "resource_output_paths",
-    "resource_source_url",
-]
+__all__ = ["AuthCheckResult", "DownloadSummary", "check_auth", "download"]
