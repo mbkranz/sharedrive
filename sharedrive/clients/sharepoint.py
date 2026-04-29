@@ -363,7 +363,7 @@ class SharepointClient(BaseClient):
             )
         return response.content
 
-    def get_from_weburl(self, url: str) -> "SharepointItem":
+    def get_from_weburl(self, url: str) -> DriveItem:
         resolved = self.resolve_weburl(url)
         metadata = self.get_item_metadata(
             resolved["drive_id"], item_path=resolved["item_path"]

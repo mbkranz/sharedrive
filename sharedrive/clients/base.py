@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
+
+if TYPE_CHECKING:
+    from sharedrive.item import DriveItem
 
 
 class BaseClient(ABC):
@@ -58,6 +61,24 @@ class BaseClient(ABC):
         Raises a provider-specific exception with an actionable error message
         when the required credentials are missing or invalid.  Callers use this
         as a lightweight pre-flight check before attempting a download or fetch.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_from_weburl(self, url: str) -> DriveItem:
+        """Retrieve a single item (file or directory) from its web URL.
+
+        The returned :class:`~sharedrive.item.DriveItem` is the stable,
+        unified entry-point for all further operations (refresh, download,
+        to_resource, …).
+
+        Args:
+            url: The web-facing URL of the item (e.g. a Google Drive share
+                 link or a SharePoint web URL).
+
+        Returns:
+            A :class:`~sharedrive.item.DriveItem` representing the remote
+            file or directory.
         """
         raise NotImplementedError
 

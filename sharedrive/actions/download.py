@@ -22,7 +22,7 @@ from sharedrive.models import (
     sync_target,
 )
 from sharedrive.clients.aws import check_s3_credentials, download_s3_url
-from sharedrive.registry import get_provider
+from sharedrive.registry import get_client, get_provider
 
 LogFn = Callable[[str], None]
 
@@ -149,10 +149,7 @@ def _reserve_destination(
 
 def _get_client(adapter_name: str, *, clients: dict[str, Any]) -> Any:
     if adapter_name not in clients:
-        cls = get_provider(adapter_name)
-        if cls is None:
-            raise ValueError(f"No registered provider for adapter '{adapter_name}'.")
-        clients[adapter_name] = cls.build_default()
+        clients[adapter_name] = get_client(adapter_name)
     return clients[adapter_name]
 
 

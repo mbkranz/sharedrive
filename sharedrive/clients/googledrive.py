@@ -546,7 +546,7 @@ class GoogleDriveClient(GoogleBaseClient):
         )
         return response.json()
 
-    def get_from_weburl(self, web_url: str, fields: str = "*") -> "GDriveItem":
+    def get_from_weburl(self, web_url: str, fields: str = "*") -> DriveItem:
         """Return metadata for a Google Drive file or folder given a web URL,
         mapped to the unified :class:`GDriveItem` model.
         """

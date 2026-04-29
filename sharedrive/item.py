@@ -176,9 +176,24 @@ class DriveItem(ABC):
 class DriveFile(DriveItem, ABC):
     """Backward-compatible shell for a leaf (non-directory) drive item.
 
+    .. deprecated::
+        Subclass :class:`DriveItem` directly and implement ``is_directory``
+        returning ``False``.  ``DriveFile`` will be removed in a future release.
+
     New code should subclass :class:`DriveItem` directly and provide a
     concrete ``is_directory`` property returning ``False``.
     """
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        import warnings
+
+        super().__init_subclass__(**kwargs)
+        warnings.warn(
+            f"{cls.__name__} subclasses DriveFile which is deprecated. "
+            "Inherit from DriveItem directly instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     @property
     def is_directory(self) -> bool:
@@ -188,9 +203,24 @@ class DriveFile(DriveItem, ABC):
 class DriveFolder(DriveItem, ABC):
     """Backward-compatible shell for a directory drive item.
 
+    .. deprecated::
+        Subclass :class:`DriveItem` directly and implement ``is_directory``
+        returning ``True``.  ``DriveFolder`` will be removed in a future release.
+
     New code should subclass :class:`DriveItem` directly and provide a
     concrete ``is_directory`` property returning ``True``.
     """
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        import warnings
+
+        super().__init_subclass__(**kwargs)
+        warnings.warn(
+            f"{cls.__name__} subclasses DriveFolder which is deprecated. "
+            "Inherit from DriveItem directly instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     @property
     def is_directory(self) -> bool:
@@ -202,4 +232,4 @@ class DriveFolder(DriveItem, ABC):
         raise NotImplementedError
 
 
-__all__ = ["DriveFile", "DriveFolder", "DriveItem"]
+__all__ = ["DriveItem"]

@@ -76,18 +76,37 @@ def _make_fake_provider(googledrive_factory=None, sharepoint_factory=None):
     return fake_get_provider
 
 
+def _make_fake_get_client(googledrive_factory=None, sharepoint_factory=None):
+    """Return a fake ``get_client`` callable for use with monkeypatch.
+
+    Unlike :func:`_make_fake_provider`, the returned function maps adapter
+    names directly to *instances* (the return value of the factory), matching
+    the signature of :func:`~sharedrive.registry.get_client`.
+    """
+    from sharedrive.registry import get_client as _real
+
+    def fake_get_client(name):
+        if name == "googledrive" and googledrive_factory is not None:
+            return googledrive_factory()
+        if name == "sharepoint" and sharepoint_factory is not None:
+            return sharepoint_factory()
+        return _real(name)
+
+    return fake_get_client
+
+
 def _patch_fetch_registry(
     monkeypatch: pytest.MonkeyPatch,
     *,
     googledrive_factory=None,
     sharepoint_factory=None,
 ) -> None:
-    """Patch ``get_provider`` inside fetch.py for unit tests."""
-    fake = _make_fake_provider(
+    """Patch ``get_client`` inside fetch.py for unit tests."""
+    fake = _make_fake_get_client(
         googledrive_factory=googledrive_factory, sharepoint_factory=sharepoint_factory
     )
     fetch_module = importlib.import_module("sharedrive.actions.fetch")
-    monkeypatch.setattr(fetch_module, "get_provider", fake)
+    monkeypatch.setattr(fetch_module, "get_client", fake)
 
 
 def _patch_download_client(
@@ -96,12 +115,63 @@ def _patch_download_client(
     googledrive_factory=None,
     sharepoint_factory=None,
 ) -> None:
-    """Patch ``get_provider`` inside download.py for unit tests."""
-    fake = _make_fake_provider(
+    """Patch ``get_provider`` and ``get_client`` inside download.py for unit tests."""
+    fake_provider = _make_fake_provider(
+        googledrive_factory=googledrive_factory, sharepoint_factory=sharepoint_factory
+    )
+    fake_client = _make_fake_get_client(
         googledrive_factory=googledrive_factory, sharepoint_factory=sharepoint_factory
     )
     download_module = importlib.import_module("sharedrive.actions.download")
-    monkeypatch.setattr(download_module, "get_provider", fake)
+    monkeypatch.setattr(download_module, "get_provider", fake_provider)
+    monkeypatch.setattr(download_module, "get_client", fake_client)
+
+
+class _DriveStub(DriveItem):
+    """Minimal :class:`~sharedrive.item.DriveItem` stub for fetch action tests.
+
+    Subclasses override only the class variables or properties they need;
+    everything else defaults to safe no-op values.  ``refresh()`` returns
+    *self* so that :meth:`~sharedrive.item.DriveItem.refresh_tree` and
+    ``_build_child_resources`` work without touching the network.
+    """
+
+    _item_id: str = "stub-id"
+    _name: str = "stub"
+    _path: str = ""
+    _service_type: str = "stub"
+    _source_url: str = ""
+    _is_directory: bool = False
+
+    @property
+    def id(self) -> str:
+        return self._item_id
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def path(self) -> str:
+        return self._path
+
+    @property
+    def service_type(self) -> str:
+        return self._service_type
+
+    @property
+    def source_url(self) -> str:
+        return self._source_url
+
+    @property
+    def is_directory(self) -> bool:
+        return self._is_directory
+
+    def refresh(self, *, include_children: bool = True) -> "_DriveStub":
+        return self
+
+    def download(self, target: Path | str) -> None:
+        raise NotImplementedError
 
 
 def _fetch_one(descriptor: Path, selector: str, **kwargs):
@@ -1510,93 +1580,65 @@ def test_fetch_supports_sharepoint_directory(
                 == "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs"
             )
 
-            class DummyFolder:
-                @property
-                def is_directory(self):
-                    return True
+            class DummyItem1(_DriveStub):
+                _item_id = "1"
+                _name = "spec.xlsx"
+                _path = "spec.xlsx"
+                _is_directory = False
+                _service_type = "SharePoint"
+                _source_url = "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/spec.xlsx"
+
+                def to_resource(self):
+                    from sharedrive.models import DriveSource, DriveResource
+
+                    return DriveResource(
+                        name="spec.xlsx",
+                        path="downloads/shared-specs/spec.xlsx",
+                        format="xlsx",
+                        mediatype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        sources=[
+                            DriveSource(
+                                title="spec.xlsx",
+                                path="https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/spec.xlsx",
+                                email="",
+                                serviceType="SharePoint",
+                                entityType="object",
+                            )
+                        ],
+                    )
+
+            class DummyItem2(_DriveStub):
+                _item_id = "2"
+                _name = "detail.csv"
+                _path = "nested/detail.csv"
+                _is_directory = False
+                _service_type = "SharePoint"
+                _source_url = "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/nested/detail.csv"
+
+                def to_resource(self):
+                    from sharedrive.models import DriveSource, DriveResource
+
+                    return DriveResource(
+                        name="detail.csv",
+                        path="downloads/shared-specs/nested/detail.csv",
+                        format="csv",
+                        mediatype="text/csv",
+                        sources=[
+                            DriveSource(
+                                title="detail.csv",
+                                path="https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/nested/detail.csv",
+                                email="",
+                                serviceType="SharePoint",
+                                entityType="object",
+                            )
+                        ],
+                    )
+
+            class DummyFolder(_DriveStub):
+                _is_directory = True
 
                 @property
                 def children(self):
-                    class DummyItem1:
-                        @property
-                        def id(self):
-                            return "1"
-
-                        @property
-                        def name(self):
-                            return "spec.xlsx"
-
-                        @property
-                        def path(self):
-                            return "spec.xlsx"
-
-                        @property
-                        def is_directory(self):
-                            return False
-
-                        @property
-                        def source_url(self):
-                            return "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/spec.xlsx"
-
-                        def to_resource(self):
-                            from sharedrive.models import DriveSource, DriveResource
-
-                            return DriveResource(
-                                name="spec.xlsx",
-                                path="downloads/shared-specs/spec.xlsx",
-                                format="xlsx",
-                                mediatype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                sources=[
-                                    DriveSource(
-                                        title="spec.xlsx",
-                                        path="https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/spec.xlsx",
-                                        email="",
-                                        serviceType="SharePoint",
-                                        entityType="object",
-                                    )
-                                ],
-                            )
-
-                    class DummyItem2:
-                        @property
-                        def id(self):
-                            return "2"
-
-                        @property
-                        def name(self):
-                            return "detail.csv"
-
-                        @property
-                        def path(self):
-                            return "nested/detail.csv"
-
-                        @property
-                        def is_directory(self):
-                            return False
-
-                        @property
-                        def source_url(self):
-                            return "https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/nested/detail.csv"
-
-                        def to_resource(self):
-                            from sharedrive.models import DriveSource, DriveResource
-
-                            return DriveResource(
-                                name="detail.csv",
-                                path="downloads/shared-specs/nested/detail.csv",
-                                format="csv",
-                                mediatype="text/csv",
-                                sources=[
-                                    DriveSource(
-                                        title="detail.csv",
-                                        path="https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/nested/detail.csv",
-                                        email="",
-                                        serviceType="SharePoint",
-                                        entityType="object",
-                                    )
-                                ],
-                            )
-
                     return [DummyItem1(), DummyItem2()]
 
             return DummyFolder()
@@ -1654,32 +1696,32 @@ def test_fetch_resolves_nested_catalog_package_selector(
 
     class DummySharepointClient:
         def get_from_weburl(self, _url: str):
-            class DummyFolder:
-                @property
-                def is_directory(self):
-                    return True
+            class DummyItem(_DriveStub):
+                _path = "spec.xlsx"
+                _name = "spec.xlsx"
+                _is_directory = False
+                _service_type = "SharePoint"
+
+                def to_resource(self):
+                    from sharedrive.models import DriveResource, DriveSource
+
+                    return DriveResource(
+                        name="spec.xlsx",
+                        path="downloads/shared-specs/spec.xlsx",
+                        sources=[
+                            DriveSource(
+                                path="https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/spec.xlsx",
+                                serviceType="SharePoint",
+                                entityType="File",
+                            )
+                        ],
+                    )
+
+            class DummyFolder(_DriveStub):
+                _is_directory = True
 
                 @property
                 def children(self):
-                    class DummyItem:
-                        path = "spec.xlsx"
-                        is_directory = False
-
-                        def to_resource(self):
-                            from sharedrive.models import DriveResource, DriveSource
-
-                            return DriveResource(
-                                name="spec.xlsx",
-                                path="downloads/shared-specs/spec.xlsx",
-                                sources=[
-                                    DriveSource(
-                                        path="https://example.sharepoint.com/sites/Test/Shared%20Documents/specs/spec.xlsx",
-                                        serviceType="SharePoint",
-                                        entityType="File",
-                                    )
-                                ],
-                            )
-
                     return [DummyItem()]
 
             return DummyFolder()
@@ -1801,9 +1843,11 @@ def test_fetch_fetches_all_packages_in_catalog(
         def get_from_weburl(self, url: str):
             fetched_urls.append(url)
 
-            class DummyItem:
-                path = "report.csv"
-                is_directory = False
+            class DummyItem(_DriveStub):
+                _path = "report.csv"
+                _name = "report.csv"
+                _is_directory = False
+                _service_type = "GoogleDrive"
 
                 def to_resource(self):
                     from sharedrive.models import DriveResource, DriveSource
@@ -1820,10 +1864,8 @@ def test_fetch_fetches_all_packages_in_catalog(
                         ],
                     )
 
-            class DummyFolder:
-                @property
-                def is_directory(self):
-                    return True
+            class DummyFolder(_DriveStub):
+                _is_directory = True
 
                 @property
                 def children(self):
@@ -1888,9 +1930,11 @@ def test_fetch_dry_run_does_not_write_catalog(
 
     class DummyDriveClient:
         def get_from_weburl(self, _url: str):
-            class DummyItem:
-                path = "report.csv"
-                is_directory = False
+            class DummyItem(_DriveStub):
+                _path = "report.csv"
+                _name = "report.csv"
+                _is_directory = False
+                _service_type = "GoogleDrive"
 
                 def to_resource(self):
                     from sharedrive.models import DriveResource, DriveSource
@@ -1907,10 +1951,8 @@ def test_fetch_dry_run_does_not_write_catalog(
                         ],
                     )
 
-            class DummyFolder:
-                @property
-                def is_directory(self):
-                    return True
+            class DummyFolder(_DriveStub):
+                _is_directory = True
 
                 @property
                 def children(self):
@@ -1993,8 +2035,8 @@ def test_fetch_fetches_source_backed_catalog_children(
                 source_url = "https://drive.google.com/drive/folders/archive-folder"
                 children: list[object] = []
 
-            class DummyRootFolder:
-                is_directory = True
+            class DummyRootFolder(_DriveStub):
+                _is_directory = True
 
                 @property
                 def children(self):
@@ -2070,8 +2112,8 @@ def test_fetch_from_root_fetches_immediate_source_backed_catalogs(
                         ],
                     )
 
-            class DummyRootFolder:
-                is_directory = True
+            class DummyRootFolder(_DriveStub):
+                _is_directory = True
 
                 @property
                 def children(self):
@@ -2144,9 +2186,11 @@ def test_fetch_with_depth_recurses_sub_catalogs(
         def get_from_weburl(self, url: str):
             fetched_urls.append(url)
 
-            class DummyItem:
-                path = "file.csv"
-                is_directory = False
+            class DummyItem(_DriveStub):
+                _path = "file.csv"
+                _name = "file.csv"
+                _is_directory = False
+                _service_type = "GoogleDrive"
 
                 def to_resource(self):
                     from sharedrive.models import DriveResource, DriveSource
@@ -2163,10 +2207,8 @@ def test_fetch_with_depth_recurses_sub_catalogs(
                         ],
                     )
 
-            class DummyFolder:
-                @property
-                def is_directory(self):
-                    return True
+            class DummyFolder(_DriveStub):
+                _is_directory = True
 
                 @property
                 def children(self):
@@ -2384,9 +2426,11 @@ def test_fetch_multiple_directory_sources_namespaces_generated_resources(
 
     class DummyDriveClient:
         def get_from_weburl(self, url: str):
-            class DummyItem:
-                path = "report.csv"
-                is_directory = False
+            class DummyItem(_DriveStub):
+                _path = "report.csv"
+                _name = "report.csv"
+                _is_directory = False
+                _service_type = "GoogleDrive"
 
                 def to_resource(self):
                     from sharedrive.models import DriveResource, DriveSource
@@ -2403,10 +2447,8 @@ def test_fetch_multiple_directory_sources_namespaces_generated_resources(
                         ],
                     )
 
-            class DummyFolder:
-                @property
-                def is_directory(self):
-                    return True
+            class DummyFolder(_DriveStub):
+                _is_directory = True
 
                 @property
                 def children(self):

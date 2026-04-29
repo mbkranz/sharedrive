@@ -14,7 +14,7 @@ from sharedrive.models import (
     load_drive_descriptor,
     save_drive_descriptor,
 )
-from sharedrive.registry import get_provider
+from sharedrive.registry import get_client
 
 LogFn = Callable[[str], None]
 
@@ -33,48 +33,22 @@ class FetchSummary:
         return self.failures == 0
 
 
-def _iter_drive_leaf_items(item: Any) -> Iterable[Any]:
-    if getattr(item, "is_directory", False):
-        for child in item.children:
-            yield from _iter_drive_leaf_items(child)
-    else:
-        yield item
-
-
-def _build_child_resources(drive_item: Any) -> list[dict[str, Any]]:
+def _build_child_resources(drive_item: DriveItem) -> list[dict[str, Any]]:
     """Build sorted resource dicts from runtime leaf file items."""
-    if isinstance(drive_item, DriveItem):
-        refreshed_item = drive_item.refresh_tree()
-        if refreshed_item.is_directory:
-            leaf_items = list(refreshed_item.iter_files())
-        else:
-            leaf_items = [refreshed_item]
-        return [
-            item.to_resource().to_dict()
-            for item in sorted(
-                leaf_items, key=lambda i: str(getattr(i, "path", "") or "")
-            )
-        ]
-
-    if getattr(drive_item, "is_directory", False):
-        leaf_items = list(_iter_drive_leaf_items(drive_item))
-    else:
-        leaf_items = [drive_item]
+    refreshed_item = drive_item.refresh_tree()
+    leaf_items = (
+        list(refreshed_item.iter_files()) if refreshed_item.is_directory else [refreshed_item]
+    )
     return [
         item.to_resource().to_dict()
-        for item in sorted(leaf_items, key=lambda i: str(getattr(i, "path", "") or ""))
+        for item in sorted(
+            leaf_items, key=lambda i: str(getattr(i, "path", "") or "")
+        )
     ]
 
 
-def _fetch_from_source(source: DriveSourceReference) -> Any:
-    cls = get_provider(source.adapter)
-    if cls is None:
-        raise NotImplementedError(
-            f"fetch is not implemented for adapter '{source.adapter}'."
-        )
-
-    client = cls.build_default()
-    return client.get_from_weburl(source.path)
+def _fetch_from_source(source: DriveSourceReference) -> DriveItem:
+    return get_client(source.adapter).get_from_weburl(source.path)
 
 
 def _sorted_drive_items(items: Iterable[Any]) -> list[Any]:
@@ -115,20 +89,15 @@ def _catalog_entry_from_item(item: Any) -> dict[str, Any]:
 
 
 def _build_catalog_children(
-    drive_item: Any,
+    drive_item: DriveItem,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Build direct child resources/catalogs from a runtime item tree."""
-    if isinstance(drive_item, DriveItem):
-        if drive_item.is_directory:
-            direct_children = _sorted_drive_items(
-                drive_item.refresh(include_children=True).children
-            )
-        else:
-            direct_children = [drive_item.refresh(include_children=False)]
-    elif getattr(drive_item, "is_directory", False):
-        direct_children = _sorted_drive_items(getattr(drive_item, "children", []))
+    if drive_item.is_directory:
+        direct_children = _sorted_drive_items(
+            drive_item.refresh(include_children=True).children
+        )
     else:
-        direct_children = [drive_item]
+        direct_children = [drive_item.refresh(include_children=False)]
 
     resources: list[dict[str, Any]] = []
     catalogs: list[dict[str, Any]] = []

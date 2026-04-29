@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from typing import Callable, TypeVar
+from typing import TYPE_CHECKING, Callable, TypeVar
+
+if TYPE_CHECKING:
+    from sharedrive.clients.base import BaseClient
 
 T = TypeVar("T")
 
@@ -56,6 +59,28 @@ def get_provider(name: str) -> type | None:
     return _registry.get(name)
 
 
+def get_client(adapter_name: str) -> BaseClient:
+    """Build and return a client for *adapter_name* using default environment settings.
+
+    Calls :func:`ensure_builtin_providers`, looks up the registered class via
+    :func:`get_provider`, and delegates to ``cls.build_default()``.  Raises
+    :exc:`ValueError` for unrecognised adapter names.
+
+    Usage::
+
+        client = get_client("googledrive")
+        item = client.get_from_weburl("https://drive.google.com/drive/folders/...")
+    """
+    cls = get_provider(adapter_name)
+    if cls is None:
+        known = ", ".join(sorted(_registry))
+        raise ValueError(
+            f"No registered provider for adapter '{adapter_name}'. "
+            f"Known adapters: {known or '(none)'}."
+        )
+    return cls.build_default()
+
+
 def list_providers() -> list[str]:
     """Return the names of all registered providers."""
     ensure_builtin_providers()
@@ -73,4 +98,4 @@ def ensure_builtin_providers() -> None:
     _builtins_loaded = True
 
 
-__all__ = ["ensure_builtin_providers", "get_provider", "list_providers", "provider"]
+__all__ = ["ensure_builtin_providers", "get_client", "get_provider", "list_providers", "provider"]
