@@ -61,7 +61,8 @@ class GoogleBaseClient(BaseClient):
 
     @property
     def _hdrs(self) -> dict[str, str]:
-        self._auth.ensure_valid()
+        if not self._auth._creds.valid:
+            self.refresh()
         return {"Authorization": f"Bearer {self._auth.credentials.token}"}
 
     def _request(self, method: str, url: str, **kwargs) -> requests.Response:

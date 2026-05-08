@@ -5,10 +5,11 @@ from typing import TYPE_CHECKING, Sequence
 
 import google.auth
 from google.auth.credentials import Credentials
+from google.oauth2.credentials import Credentials as UserCredentials
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 from google_auth_oauthlib.flow import InstalledAppFlow
-from sharedrive.exceptions import GoogleAuthError
+from sharedrive.exceptions import GoogleAuthError,GoogleRefreshError
 from warnings import warn
 
 DEFAULT_DRIVE_SCOPES = ("https://www.googleapis.com/auth/drive",)
@@ -56,6 +57,10 @@ class GoogleAuth:
         """Low-level escape hatch: supply raw credentials directly."""
         self._creds = credentials
 
+    def refresh(self) -> None:
+        """Refresh the access token"""
+        self._creds.refresh(Request())
+
     @classmethod
     def from_adc(cls, scopes: Sequence[str] | str | None = None) -> "GoogleAuth":
         """Build from Application Default Credentials (``gcloud auth application-default login``)."""
@@ -92,54 +97,42 @@ class GoogleAuth:
                 f"Failed to load service account credentials from {credentials_path}: {exc}"
             ) from exc
 
-    @classmethod
-    def from_user_interactive_oauth(
-        cls,
-        client_secrets_path: str | Path,
-        token_path: str | Path | None = None,
-        scopes: Sequence[str] | str | None = None
-    ) -> "GoogleAuth":
-        """Build via the OAuth installed-app flow.
-        """
-        normalized_scopes = normalize_google_scopes(scopes)
-        flow = InstalledAppFlow.from_client_secrets_file(
-                    str(client_secrets_path),
-                    scopes=normalized_scopes,
-                )
-        creds = flow.run_local_server(port=0,open_browser=False)
-        Path(token_path).write_text(creds.to_json())
-        return cls(creds)
 
     @classmethod
     def from_user_oauth(
         cls,
+        scopes: Sequence[str] | str,
         client_secrets_path: str | Path = None,
-        token_path: str | Path = None,
-        scopes: Sequence[str] | str | None = None,
-        use_local_server: bool = True,
+        token_path: str | Path = None
     ) -> "GoogleAuth":
         """Build via the OAuth installed-app flow, with token persistence."""
-        if token_path:
-            creds = Credentials.from_authorized_user_file(token_path, scopes=scopes)
+    
+        def _interactive_login_from_client_secrets_file() -> UserCredentials:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                                str(client_secrets_path),
+                                scopes=normalized_scopes,
+                            )
+            creds = flow.run_local_server(port=0,open_browser=False)
+            return creds
+
+        normalized_scopes = normalize_google_scopes(scopes)
+        if Path(token_path).exists():
+            creds = UserCredentials.from_authorized_user_file(token_path, scopes=scopes)
             try:
                 creds.refresh(Request())
-                Path(token_path).write_text(creds.to_json())
-                return cls(creds)
-            except Exception as exc:
+                
+            except GoogleRefreshError as exc:
                 warn(f"Failed to refresh stored credentials: {exc}. Proceeding to interactive login.")
-                return cls.from_user_interactive_oauth(
-                    client_secrets_path=client_secrets_path,
-                    scopes=scopes
-                )
+                creds = _interactive_login_from_client_secrets_file()
         elif client_secrets_path:
-            warn("Token path is not provided. Credentials will not be saved for future use.")
-            return cls.from_user_interactive_oauth(
-                client_secrets_path=client_secrets_path,
-                scopes=scopes
-            )
+            warn(f"Token file does not exist at {token_path}. Credentials will not be saved for future use.")
+            creds = _interactive_login_from_client_secrets_file()
         else:
             raise GoogleAuthError("At least one of token_path or client_secrets_path must be provided for user OAuth.")
-            
+        
+        Path(token_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(token_path).write_text(creds.to_json())
+        return cls(creds)
 
     @classmethod
     def from_settings(cls, config: object | None = None) -> "GoogleAuth":
@@ -153,34 +146,10 @@ class GoogleAuth:
         resolved: GoogleAuthConfig = config if config is not None else GoogleAuthConfig()  # type: ignore[assignment]
         return resolved.to_auth()
 
-    # ------------------------------------------------------------------
-    # Runtime helpers
-    # ------------------------------------------------------------------
-
     @property
     def credentials(self) -> Credentials:
         """The underlying :class:`~google.auth.credentials.Credentials` object."""
         return self._creds
-
-    def ensure_valid(self) -> None:
-        """Refresh the credential token if it has expired.
-
-        Raises :class:`~sharedrive.exceptions.GoogleAuthError` when the
-        credentials cannot be refreshed.
-        """
-        if self._creds.valid and self._creds.token:
-            return
-
-        try:
-            self._creds.refresh(Request())
-        except Exception as exc:
-            raise GoogleAuthError(
-                f"Failed to refresh Google credentials: {exc}"
-            ) from exc
-
-        if not self._creds.valid or not self._creds.token:
-            raise GoogleAuthError("Credentials are missing a valid access token.")
-
 
 __all__ = [
     "GoogleAuth"

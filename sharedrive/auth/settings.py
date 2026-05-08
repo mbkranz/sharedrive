@@ -53,8 +53,8 @@ class GoogleAuthConfig(BaseSettings):
         default=None,
         alias="GOOGLE_OAUTH_CREDENTIALS",
     )
-    oauth_token_path: Path | None = Field(
-        default=None,
+    oauth_token_path: Path = Field(
+        default=".google/token.json",
         alias="GOOGLE_OAUTH_TOKEN_PATH",
     )
     scopes: Annotated[list[str], NoDecode] = Field(
@@ -110,6 +110,7 @@ class GoogleAuthConfig(BaseSettings):
         elif self.auth_mode == GoogleAuthMode.USER_OAUTH:
             return GoogleAuth.from_user_oauth(
                 client_secrets_path=self.oauth_client_secrets,
+                token_path=self.oauth_token_path,
                 scopes=self.scopes
             )
         else:
