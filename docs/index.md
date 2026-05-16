@@ -20,6 +20,7 @@ The key boundary is that descriptor models are persisted metadata, while runtime
 - finish google drive authentication doc page with info from ppsc-pmd-utils/docs 
 - create the Sharepoint auth documentation page
 - build out the "list" action
+- keep a single provider client surface for read + write operations for now; consider an explicit read/write client split later if write workflows grow.
 
 
 
