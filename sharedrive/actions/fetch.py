@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from sharedrive.actions.catalog import FetchSummary, SharedriveCatalogAction
+from sharedrive.actions.workflow import FetchSummary, fetch_descriptor_metadata
 
 LogFn = Callable[[str], None]
 
@@ -17,12 +17,13 @@ def fetch(
     log: LogFn | None = print,
 ) -> list[FetchSummary]:
     """Fetch remote folder metadata from catalog accessURL values."""
-    descriptor_path = Path(descriptor)
-    action = SharedriveCatalogAction.from_path(descriptor_path)
-    summaries = action.fetch(selector, dry_run=dry_run, depth=depth, log=log)
-    if not dry_run and any(summary.changed for summary in summaries):
-        action.catalog.to_path(str(descriptor_path))
-    return summaries
+    return fetch_descriptor_metadata(
+        Path(descriptor),
+        selector=selector,
+        dry_run=dry_run,
+        depth=depth,
+        log=log,
+    )
 
 
 __all__ = ["FetchSummary", "fetch"]

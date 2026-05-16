@@ -168,42 +168,41 @@ For CLI operators, there are now explicit auth-oriented commands in addition to 
 - `sharedrive fetch <catalog-name>` refreshes nested resources/catalogs for Google Drive or SharePoint folders inside a descriptor.
 - `sharedrive download ... --check-auth` runs the same descriptor-aware preflight before downloading.
 
-For Python API usage, you can now choose an explicit auth strategy:
+For Python API usage, construct clients with explicit auth objects:
 
 ```python
-from sharedrive.auth.google import AdcStrategy, UserOAuthStrategy
-from sharedrive.auth.token_store import JsonTokenStore
+from sharedrive.auth.google import GoogleAuth
 from sharedrive.clients.googledrive import GoogleDriveClient
 
 adc_client = GoogleDriveClient(
-  credential_strategy=AdcStrategy(),
+  auth=GoogleAuth.from_adc(),
 )
 
 oauth_client = GoogleDriveClient(
-  credential_strategy=UserOAuthStrategy(
-    client_secrets_path=".google/oauth-credentials.json",
-    token_store=JsonTokenStore(".google/oauth-token.json"),
+  auth=GoogleAuth.from_user_oauth(
     scopes=["https://www.googleapis.com/auth/drive.readonly"],
+    client_secrets_path=".google/oauth-credentials.json",
+    token_path=".google/oauth-token.json",
   )
 )
 ```
 
 Supported first-class Google auth patterns:
 
-- Application Default Credentials via `AdcStrategy`
-- Service account JSON via `ServiceAccountStrategy`
-- Installed-app user OAuth via `UserOAuthStrategy`
-- Ordered fallback via `ChainedStrategy`
+- Application Default Credentials via `GoogleAuth.from_adc(...)`
+- Service account JSON via `GoogleAuth.from_service_account(...)`
+- Installed-app user OAuth via `GoogleAuth.from_user_oauth(...)`
 
-Token persistence for user OAuth should use `JsonTokenStore`; pickle-based persistence is intentionally not the default.
+Token persistence for user OAuth uses JSON token files via `token_path`.
 
 If you prefer env-validated configuration instead of building strategies manually, use `GoogleAuthConfig`:
 
 ```python
-from sharedrive.auth.settings import GoogleAuthConfig, make_google_drive_client_from_settings
+from sharedrive.auth.settings import GoogleAuthConfig
+from sharedrive.clients.googledrive import GoogleDriveClient
 
 config = GoogleAuthConfig()
-client = make_google_drive_client_from_settings(config)
+client = GoogleDriveClient(auth=config.to_auth())
 ```
 
 The settings layer is additive. Existing `GOOGLE_APPLICATION_CREDENTIALS` behavior in the CLI and retrieval flows still works.
@@ -226,9 +225,10 @@ sharedrive fetch census-docs --dry-run
 sharedrive download --dry-run
 sharedrive download resources/descriptor.yaml --dry-run
 sharedrive download resources/descriptor.yaml --check-auth
-sharedrive download resources/descriptor.yaml --include sharepoint
-sharedrive download resources/descriptor.yaml --include s3,googledrive
-sharedrive download resources/descriptor.yaml --include spec-workbook
+sharedrive download sharepoint --descriptor resources/descriptor.yaml
+sharedrive download spec-workbook --descriptor resources/descriptor.yaml
+sharedrive fetch census-docs --dry-run --format json
+sharedrive download --dry-run --format json
 sharedrive update --title "Hello" --description "hello"
 sharedrive update --resource spec-workbook --title "Hello"
 ```
@@ -266,10 +266,10 @@ if not summary.ok:
 Runtime item API:
 
 ```python
-from sharedrive.auth.google import default_drive_strategy
+from sharedrive.auth.google import GoogleAuth
 from sharedrive.clients.googledrive import GoogleDriveClient
 
-client = GoogleDriveClient(credential_strategy=default_drive_strategy())
+client = GoogleDriveClient(auth=GoogleAuth.from_settings())
 item = client.get_from_weburl("https://drive.google.com/drive/folders/<id>")
 
 item.refresh()
@@ -284,6 +284,9 @@ Use `refresh()` to reload a file or folder from the backing service.
 Use `refresh_tree()` when you want a folder and its descendants refreshed recursively before traversal.
 For folders, `children` exposes the current immediate child items and `iter_files()` flattens nested files.
 Descriptor fetch remains an action-layer workflow: `sharedrive fetch ...` updates descriptor metadata, while runtime item refresh updates in-memory remote objects.
+
+For a stable Python workflow surface, use `SharedriveCatalogAction` (or
+`sharedrive.actions.workflow` helpers) for descriptor-scoped fetch/download/auth orchestration.
 
 ## Descriptor format
 

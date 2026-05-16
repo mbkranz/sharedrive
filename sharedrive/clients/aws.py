@@ -4,11 +4,16 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import boto3
+from botocore.exceptions import ClientError
 
 try:
     from cloudpathlib import S3Path
 except ImportError:  # pragma: no cover
     S3Path = None
+
+from sharedrive.clients.base import AdapterCapabilities, BaseClient
+from sharedrive.item import DriveItem
+from sharedrive.registry import provider
 
 
 def check_s3_credentials() -> None:
@@ -47,8 +52,8 @@ def parse_s3_source_url(source_url: str) -> tuple[str, str]:
     else:
         raise ValueError(f"Unsupported URL scheme for S3 source: {parsed.scheme}")
 
-    if not bucket or not key:
-        raise ValueError(f"Could not parse bucket/key from source URL: {source_url}")
+    if not bucket:
+        raise ValueError(f"Could not parse bucket from source URL: {source_url}")
     return bucket, key
 
 
@@ -73,7 +78,158 @@ def download_s3_url(
     return output_path
 
 
+@provider("s3")
+class S3Client(BaseClient):
+    auth_methods = ["aws_credentials"]
+    capabilities = AdapterCapabilities(
+        supports_fetch=True,
+        supports_download=True,
+        supports_auth_check=True,
+        supports_write=False,
+    )
+
+    def __init__(self, *, client=None) -> None:
+        self.client = client or boto3.client("s3")
+
+    @classmethod
+    def build_default(cls) -> "S3Client":
+        check_s3_credentials()
+        return cls()
+
+    @classmethod
+    def check_auth(cls) -> None:
+        check_s3_credentials()
+
+    def get_from_weburl(self, url: str) -> "S3Item":
+        bucket, key = parse_s3_source_url(url)
+        if not key:
+            return S3Item(client=self, bucket=bucket, key="", is_directory=True)
+
+        try:
+            self.client.head_object(Bucket=bucket, Key=key)
+            return S3Item(client=self, bucket=bucket, key=key, is_directory=False)
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NotFound", "NoSuchKey"}:
+                prefix = key if key.endswith("/") else f"{key}/"
+                response = self.client.list_objects_v2(
+                    Bucket=bucket,
+                    Prefix=prefix,
+                    MaxKeys=1,
+                )
+                if response.get("KeyCount", 0) > 0:
+                    return S3Item(client=self, bucket=bucket, key=prefix, is_directory=True)
+            raise
+
+
+class S3Item(DriveItem):
+    def __init__(
+        self,
+        *,
+        client: S3Client,
+        bucket: str,
+        key: str,
+        is_directory: bool,
+        children: list["S3Item"] | None = None,
+    ) -> None:
+        self.client = client
+        self.bucket = bucket
+        self.key = key
+        self._is_directory = is_directory
+        self._children = children
+
+    @property
+    def id(self) -> str:
+        return f"{self.bucket}:{self.key}"
+
+    @property
+    def name(self) -> str:
+        cleaned = self.key.rstrip("/")
+        if not cleaned:
+            return self.bucket
+        return Path(cleaned).name
+
+    @property
+    def path(self) -> str:
+        return self.key
+
+    @property
+    def service_type(self) -> str:
+        return "S3"
+
+    @property
+    def source_url(self) -> str:
+        return f"s3://{self.bucket}/{self.key}" if self.key else f"s3://{self.bucket}"
+
+    @property
+    def is_directory(self) -> bool:
+        return self._is_directory
+
+    @property
+    def children(self) -> list["S3Item"]:
+        if not self.is_directory:
+            return []
+        if self._children is None:
+            self.refresh(include_children=True)
+        return self._children or []
+
+    def refresh(self, *, include_children: bool = True) -> "S3Item":
+        if not self.is_directory:
+            return self
+        if not include_children:
+            return self
+
+        prefix = self.key if self.key.endswith("/") or not self.key else f"{self.key}/"
+        response = self.client.client.list_objects_v2(
+            Bucket=self.bucket,
+            Prefix=prefix,
+            Delimiter="/",
+        )
+
+        children: list[S3Item] = []
+        for common in response.get("CommonPrefixes", []):
+            child_prefix = str(common.get("Prefix", ""))
+            if child_prefix and child_prefix != prefix:
+                children.append(
+                    S3Item(
+                        client=self.client,
+                        bucket=self.bucket,
+                        key=child_prefix,
+                        is_directory=True,
+                    )
+                )
+
+        for item in response.get("Contents", []):
+            child_key = str(item.get("Key", ""))
+            if not child_key or child_key == prefix or child_key.endswith("/"):
+                continue
+            children.append(
+                S3Item(
+                    client=self.client,
+                    bucket=self.bucket,
+                    key=child_key,
+                    is_directory=False,
+                )
+            )
+
+        self._children = sorted(children, key=lambda child: (child.path, child.name))
+        return self
+
+    def download(self, target_dir: str | Path) -> None:
+        if self.is_directory:
+            super().download(target_dir)
+            return
+        target = Path(target_dir)
+        if target.is_dir():
+            target = target / self.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        self.client.client.download_file(self.bucket, self.key, str(target))
+
+
 __all__ = [
+    "S3Client",
+    "S3Item",
+    "check_s3_credentials",
     "download_s3_url",
     "parse_s3_source_url",
 ]

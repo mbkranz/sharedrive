@@ -3,10 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
-from sharedrive.actions.catalog import (
+from sharedrive.actions.workflow import (
     AuthCheckResult,
     DownloadSummary,
-    SharedriveCatalogAction,
+    check_descriptor_auth,
+    download_descriptor_resources,
 )
 
 
@@ -17,15 +18,7 @@ def check_auth(
     adapters: Iterable[str] | None = None,
 ) -> list[AuthCheckResult]:
     """Validate credentials for selected descriptor entities or explicit adapters."""
-    if descriptor is None:
-        if adapters is None:
-            raise ValueError("descriptor is required when adapters are not provided.")
-        from sharedrive.models import DriveCatalog
-
-        return SharedriveCatalogAction(DriveCatalog.empty()).check_auth(adapters=adapters)
-    return SharedriveCatalogAction.from_path(descriptor).check_auth(
-        selector, adapters=adapters
-    )
+    return check_descriptor_auth(descriptor, selector, adapters=adapters)
 
 
 def download(
@@ -39,8 +32,9 @@ def download(
     use_cloudpathlib: bool = True,
 ) -> DownloadSummary:
     """Download selected resources from `path` to `_cache`."""
-    return SharedriveCatalogAction.from_path(descriptor).download(
-        selector,
+    return download_descriptor_resources(
+        descriptor,
+        selector=selector,
         output_dir=output_dir,
         dry_run=dry_run,
         check_auth=check_auth,

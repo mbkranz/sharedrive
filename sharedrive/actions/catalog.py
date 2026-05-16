@@ -6,7 +6,6 @@ from typing import Any, Callable, Iterable
 
 from dplib.models.resource import Resource
 
-from sharedrive.clients.aws import check_s3_credentials, download_s3_url
 from sharedrive.models import (
     DriveCatalog,
     DriveResource,
@@ -86,6 +85,12 @@ class SharedriveCatalogAction:
         if adapter not in self.clients:
             self.clients[adapter] = self.client_factory(adapter)
         return self.clients[adapter]
+
+    def _provider_capabilities(self, adapter: str) -> Any | None:
+        provider = self.provider_factory(adapter)
+        if provider is None:
+            return None
+        return getattr(provider, "capabilities", None)
 
     def references(self, selector: str | Iterable[str] | None = None) -> list[Any]:
         selectors = self._selectors(selector)
@@ -265,6 +270,11 @@ class SharedriveCatalogAction:
         try:
             if not catalog.accessURL:
                 raise ValueError(f"Catalog '{catalog.name}' has no accessURL.")
+            capabilities = self._provider_capabilities(catalog.adapter_name)
+            if capabilities is not None and not getattr(capabilities, "supports_fetch", True):
+                raise ValueError(
+                    f"Adapter '{catalog.adapter_name}' does not support fetch operations."
+                )
             root = self.client(catalog.adapter_name).get_from_weburl(catalog.accessURL)
             children = (
                 sorted(root.refresh(include_children=True).children, key=lambda item: (item.path, item.name))
@@ -314,10 +324,14 @@ class SharedriveCatalogAction:
         summary: DownloadSummary,
         use_cloudpathlib: bool,
     ) -> None:
+        _ = use_cloudpathlib
         if not isinstance(resource.path, str) or not resource.path.strip():
             raise ValueError(f"Resource '{resource.name}' is missing required path.")
         destination = resolve_cache_path(resource, output_dir)
         adapter = resource.adapter_name
+        capabilities = self._provider_capabilities(adapter)
+        if capabilities is not None and not getattr(capabilities, "supports_download", True):
+            raise ValueError(f"Adapter '{adapter}' does not support download operations.")
         self._reserve_destination(
             destination,
             seen=seen_destinations,
@@ -330,17 +344,8 @@ class SharedriveCatalogAction:
             return
 
         destination.parent.mkdir(parents=True, exist_ok=True)
-        if adapter == "s3":
-            result = download_s3_url(
-                resource.path,
-                destination,
-                dry_run=False,
-                use_cloudpathlib=use_cloudpathlib,
-            )
-            if result is None:
-                raise RuntimeError("S3 download returned no output path")
-        else:
-            self.client(adapter).get_from_weburl(resource.path).download(str(destination))
+        item = self.client(adapter).get_from_weburl(resource.path)
+        item.download(str(destination))
         summary.downloaded += 1
 
     @staticmethod
@@ -356,21 +361,20 @@ class SharedriveCatalogAction:
         seen[key] = label
 
     def _check_one_adapter(self, adapter: str) -> AuthCheckResult:
-        if adapter == "s3":
-            try:
-                check_s3_credentials()
-                return AuthCheckResult("s3", True, "AWS credentials are ready for S3 operations.")
-            except Exception as exc:
-                return AuthCheckResult("s3", False, f"S3 credential check failed: {exc}")
-
         provider = self.provider_factory(adapter)
         if provider is None:
             return AuthCheckResult(adapter, False, f"Unsupported adapter '{adapter}'.")
+        supports_auth = getattr(
+            getattr(provider, "capabilities", None), "supports_auth_check", True
+        )
+        if not supports_auth:
+            return AuthCheckResult(adapter, True, f"Adapter '{adapter}' does not require auth checks.")
         try:
             provider.check_auth()
             message = {
                 "sharepoint": "SharePoint credentials are ready.",
                 "googledrive": "Google Drive credentials are ready.",
+                "s3": "AWS credentials are ready for S3 operations.",
             }.get(adapter, f"Adapter '{adapter}' is ready.")
             return AuthCheckResult(adapter, True, message)
         except Exception as exc:

@@ -151,6 +151,15 @@ Auto-generated from source signatures and docstrings.
   - Backward-compatible alias for inferring canonical serviceType.
 
 
+## `sharedrive.actions.workflow`
+
+Stable descriptor workflow API built around `SharedriveCatalogAction`.
+
+- `def fetch_descriptor_metadata(...) -> list[FetchSummary]`
+- `def download_descriptor_resources(...) -> DownloadSummary`
+- `def check_descriptor_auth(...) -> list[AuthCheckResult]`
+
+
 ## `sharedrive.actions.download`
 
 ### Functions

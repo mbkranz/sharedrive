@@ -92,6 +92,7 @@ def ensure_builtin_providers() -> None:
     global _builtins_loaded
     if _builtins_loaded:
         return
+    import sharedrive.clients.aws  # noqa: F401
     import sharedrive.clients.googledrive  # noqa: F401
     import sharedrive.clients.sharepoint  # noqa: F401
 
