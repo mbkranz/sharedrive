@@ -207,7 +207,9 @@ class SharepointClient(BaseClient):
                 }
                 web_url = str(drive.get("webUrl", "")).strip()
                 if web_url:
-                    candidate_names.add(Path(urlparse(web_url).path).name)
+                    # Unquote the path to convert %20 back to spaces
+                    decoded_path = unquote(urlparse(web_url).path)
+                    candidate_names.add(Path(decoded_path).name)
 
                 if normalized_drive_name in {
                     value for value in candidate_names if value

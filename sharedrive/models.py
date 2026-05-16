@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import os
 from typing import Annotated, Any, Optional
 from urllib.parse import  urlparse
 
 import pydantic
 from pydantic.alias_generators import to_pascal
 from pydantic import AliasChoices, Field
-# s
+
 from dplib.models.catalog import Catalog
 from dplib.models.package import Package
 from dplib.models.resource import Resource
@@ -68,6 +69,28 @@ class DriveCatalog(Catalog,json_schema_extra={"$schema": CATALOG_PROFILE}):
     resources: list[DriveResource] = pydantic.Field(default_factory=list)
     packages: list[DrivePackage] = pydantic.Field(default_factory=list)
     catalogs: list["DriveCatalog"] = pydantic.Field(default_factory=list)
+
+    def dereference(self, basepath: Optional[Path] = None) -> None:
+        """Resolve {"$ref": "path"} entries in nested catalogs recursively."""
+        resolved = []
+        for item in self.catalogs:
+            ref = (item.model_extra or {}).get("$ref")
+            if ref:
+                ref_path = os.path.join(basepath, ref) if basepath else ref
+                if os.path.isdir(ref_path):
+                    ref_path = os.path.join(ref_path, "catalog.yaml")
+                child = DriveCatalog.from_path(ref_path)
+                child.dereference(basepath=os.path.dirname(os.path.abspath(ref_path)))
+                resolved.append(child)
+            else:
+                resolved.append(item)
+        self.catalogs = resolved
+
+    @classmethod
+    def from_path_dereferenced(cls, path: str) -> "DriveCatalog":
+        catalog = cls.from_path(path)
+        catalog.dereference(basepath=os.path.dirname(os.path.abspath(path)))
+        return catalog
 
 
 DriveResource.model_rebuild()
