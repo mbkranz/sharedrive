@@ -65,6 +65,12 @@ class GoogleBaseClient(BaseClient):
             self.refresh()
         return {"Authorization": f"Bearer {self._auth.credentials.token}"}
 
+    def refresh(self) -> None:
+        self._auth.refresh()
+
+    def get_from_weburl(self, url: str):
+        raise NotImplementedError
+
     def _request(self, method: str, url: str, **kwargs) -> requests.Response:
         headers = kwargs.pop("headers", {})
         merged_headers = {**self._hdrs, **headers}

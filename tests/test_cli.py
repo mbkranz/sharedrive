@@ -642,10 +642,8 @@ def test_list_command_renders_descriptor_tree_with_paths_and_sources(
     assert descriptor.name in result.output
     assert "sharepoint-spec (resource)" in result.output
     assert "sharepoint-spec /resources/0" in result.output
-    assert "source[0]" in result.output
-    assert "sharepoint" in result.output
+    assert "path=downloads/spec.xlsx" in result.output
     assert "archived.nested-package /catalogs/0/packages/0" in result.output
-    assert "GoogleDrive" in result.output
 
 
 def test_list_command_supports_json_output(tmp_path: Path) -> None:
@@ -662,7 +660,7 @@ def test_list_command_supports_json_output(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert payload["descriptor"] == descriptor.as_posix()
     assert entity_paths["drive-export"]["jsonPointer"] == "/resources/1"
-    assert entity_paths["drive-export"]["sources"][0]["adapter"] == "googledrive"
+    assert entity_paths["drive-export"]["resourcePath"] == "downloads/export.csv"
     assert entity_paths["archived.nested-package"]["type"] == "package"
 
 

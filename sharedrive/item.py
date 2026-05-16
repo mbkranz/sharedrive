@@ -112,32 +112,16 @@ class DriveItem(ABC):
         )
 
     def to_source(self) -> DriveSource:
-        """Convert to a :class:`~sharedrive.models.DriveSource` remote pointer.
-
-        Returns the minimal remote-pointer form of this item: just the URL,
-        service type, and entity type.  Use this when you only need to record
-        *where* this item lives, without the full descriptor metadata (name,
-        path, format, driveId, …) that :meth:`to_resource` produces.
-        """
-        entity_type = "Directory" if self.is_directory else "File"
-        return DriveSource(
-            path=self.source_url,
-            serviceType=self.service_type,
-            entityType=entity_type,
-        )
+        """Convert to a provenance source entry."""
+        return DriveSource(title=self.name, path=self.source_url)
 
     def to_resource(self) -> DriveResource | DrivePackage | DriveCatalog:
         """Convert to a descriptor resource, package, or catalog entry.
 
-        - Files → :class:`~sharedrive.models.DriveResource` (leaf entry with
-          name, path, format, driveId, and a :class:`~sharedrive.models.DriveSource`
-          pointing back to the remote item).
-        - Directories → :class:`~sharedrive.models.DrivePackage` with a
-          ``sources`` list and a nested ``resources`` list built from direct
-          children.  The return type union includes
-          :class:`~sharedrive.models.DriveCatalog` to accommodate subclasses or
-          future service adapters that override this method to produce a catalog
-          entry instead.
+        - Files → :class:`~sharedrive.models.DriveResource` with the remote URL
+          in ``path`` and the relative materialized path in ``_cache``.
+        - Directories → :class:`~sharedrive.models.DriveCatalog` with the remote
+          folder URL in ``accessURL``.
         """
         if not self.is_directory:
             format_str = None
@@ -152,18 +136,22 @@ class DriveItem(ABC):
                 format_str=format_str,
                 drive_id=self.id,
             )
-        return DrivePackage(
+        resources: list[DriveResource] = []
+        catalogs: list[DriveCatalog] = []
+        for child in self.children:
+            entry = child.to_resource()
+            if isinstance(entry, DriveCatalog):
+                catalogs.append(entry)
+            elif isinstance(entry, DriveResource):
+                resources.append(entry)
+        return DriveCatalog(
             name=self.path,
-            path=self.path,
+            accessURL=self.source_url,
+            serviceType=self.service_type,
+            entityType="Directory",
             driveId=self.id,
-            sources=[
-                {
-                    "path": self.source_url,
-                    "serviceType": self.service_type,
-                    "entityType": "Directory",
-                }
-            ],
-            resources=[child.to_resource() for child in self.children],
+            resources=resources,
+            catalogs=catalogs,
         )
 
     def to_dp(self) -> DriveResource | DrivePackage:
@@ -175,4 +163,20 @@ class DriveItem(ABC):
         return self.to_resource()
 
 
-__all__ = ["DriveItem"]
+class DriveFile(DriveItem):
+    """Backward-compatible file item base class."""
+
+    @property
+    def is_directory(self) -> bool:
+        return False
+
+
+class DriveFolder(DriveItem):
+    """Backward-compatible folder item base class."""
+
+    @property
+    def is_directory(self) -> bool:
+        return True
+
+
+__all__ = ["DriveFile", "DriveFolder", "DriveItem"]

@@ -16,7 +16,7 @@ Experimental connectors and workflows for moving files across SharePoint, Google
 - `sharedrive/auth/settings.py`: Google and SharePoint auth settings/factories
 - `sharedrive/clients/aws.py`: S3 URL parsing/download helpers (cloudpathlib + boto3 fallback)
 - `sharedrive/actions/fetch.py`: reusable descriptor-based fetch Python API
-- `sharedrive/actions/sync.py`: reusable descriptor sync Python API for package resources
+- `sharedrive/actions/fetch.py`: reusable descriptor metadata refresh API for folder catalogs
 - `sharedrive/cli.py`: Typer CLI (`sharedrive`)
 - `scripts/dev_adapters.py`: manual adapter smoke checks
 
@@ -164,8 +164,8 @@ For CLI operators, there are now explicit auth-oriented commands in addition to 
 - `sharedrive auth login sharepoint` validates SharePoint auth using app-only or delegated mode.
 - `sharedrive add ...` can omit `--descriptor` once a default descriptor has been saved.
 - `sharedrive checkout <descriptor>` saves the active descriptor for later commands.
-- `sharedrive add ... --package` creates a folder-backed package resource for descriptor metadata fetch and package-aware download.
-- `sharedrive fetch <package-name>` refreshes nested resources for Google Drive or SharePoint package resources inside a descriptor.
+- `sharedrive add ... --catalog` creates a folder-backed catalog for descriptor metadata fetch.
+- `sharedrive fetch <catalog-name>` refreshes nested resources/catalogs for Google Drive or SharePoint folders inside a descriptor.
 - `sharedrive download ... --check-auth` runs the same descriptor-aware preflight before downloading.
 
 For Python API usage, you can now choose an explicit auth strategy:
@@ -220,9 +220,9 @@ sharedrive auth check resources/descriptor.yaml
 sharedrive auth login gdrive --oauth-client-secrets .google/oauth-credentials.json --oauth-token-path .google/oauth-token.json
 sharedrive auth login microsoft --auth-mode delegated
 sharedrive auth login sharepoint --auth-mode delegated
-sharedrive add spec-workbook --path background/specs/spec-workbook.xlsx --source https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx
-sharedrive add census-package --path downloads/census --source https://drive.google.com/drive/folders/<id> --drive-service googledrive --package
-sharedrive fetch census-package --dry-run
+sharedrive add spec-workbook --path https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx --cache background/specs/spec-workbook.xlsx
+sharedrive add census-docs --catalog --access-url https://drive.google.com/drive/folders/<id> --service-type googledrive
+sharedrive fetch census-docs --dry-run
 sharedrive download --dry-run
 sharedrive download resources/descriptor.yaml --dry-run
 sharedrive download resources/descriptor.yaml --check-auth
@@ -287,54 +287,69 @@ Descriptor fetch remains an action-layer workflow: `sharedrive fetch ...` update
 
 ## Descriptor format
 
-`resources/descriptor.yaml` (or json/yml) must contain top-level `resources`:
+`resources/descriptor.yaml` (or json/yml) is a Data Package catalog. File
+resources use `path` for the canonical remote data locator and `_cache` for the
+local materialized copy. Remote folders are catalogs with `accessURL`.
 
 ```yaml
 resources:
   - name: spec-workbook
-    path: background/specs/spec-workbook.xlsx
-    sources:
-      - path: https://norc.sharepoint.com/sites/...
-        serviceType: SharePoint
-        entityType: File
+    path: https://norc.sharepoint.com/sites/.../spec-workbook.xlsx
+    _cache: background/specs/spec-workbook.xlsx
+    serviceType: SharePoint
+    entityType: File
 
   - name: source-export
-    path: background/exports/source-export.csv
-    sources:
-      - path: s3://my-bucket/path/to/source-export.csv
-        serviceType: S3
-        entityType: File
+    path: s3://my-bucket/path/to/source-export.csv
+    _cache: background/exports/source-export.csv
+    serviceType: S3
+    entityType: File
 
-  - name: census-package
-    profile: data-package
-    path: downloads/census
-    syncTarget: resources
-    sources:
-      - path: https://drive.google.com/drive/folders/<id>
-        serviceType: GoogleDrive
-        entityType: Directory
+catalogs:
+  - name: census-docs
+    accessURL: https://drive.google.com/drive/folders/<id>
+    serviceType: GoogleDrive
+    entityType: Directory
     resources: []
+    catalogs: []
 ```
 
-Folder-backed package resources can be authored explicitly with `sharedrive add --package` and then populated with nested resources using `sharedrive fetch <package-name>`. Fetch now supports Google Drive and SharePoint package resources and writes deterministic nested file resources into the descriptor.
+Folder-backed entries are authored explicitly with `sharedrive add --catalog`
+and then populated with nested resources/catalogs using `sharedrive fetch
+<catalog-name>`. Fetch supports Google Drive and SharePoint catalogs and writes
+deterministic nested file resources into the descriptor.
 
-Source/download behavior:
+Download behavior:
 
-- `resources` top-level array
-- every `sources[]` entry is considered during fetch, download, and auth checks
-- single-source resources download to `path` plus optional resource-level `targets`
-- multi-source resources treat `path` as an output root and write each source under a deterministic source key
-- source-level `target` can override the multi-source destination for that source
+- file resources download from `path` to `_cache`
+- catalog `accessURL` is used for discovery/fetch, not direct file download
+- `sources[]` is reserved for Data Package provenance/citation metadata
 
 Add a descriptor resource from the CLI:
 
 ```bash
 sharedrive add spec-workbook \
-  --path background/specs/spec-workbook.xlsx \
+  --path https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx \
+  --cache background/specs/spec-workbook.xlsx \
   --descriptor resources/descriptor.yaml \
-  --source https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx \
   --title "Spec workbook" \
   --description "Source workbook for specs"
+```
+
+Add a remote folder catalog from the CLI:
+
+```bash
+sharedrive add census-docs \
+  --catalog \
+  --access-url https://drive.google.com/drive/folders/<id> \
+  --descriptor resources/descriptor.yaml
+```
+
+Migrate a legacy descriptor that used `sources[].path` for remote access and
+resource `path` for local output:
+
+```bash
+sharedrive migrate resources/descriptor.yaml --output resources/descriptor.v2.yaml
 ```
 
 ## Documentation site (MkDocs)
@@ -394,3 +409,19 @@ sharedrive/
   resources/
     descriptor.yaml
 ```
+
+## References
+
+CLI interface inspiration:
+
+1. `uv`: https://docs.astral.sh/uv/
+2. `git`: https://git-scm.com/docs
+3. GitHub CLI: https://cli.github.com/manual/
+
+- Data Package Resource `path`: https://datapackage.org/standard/data-resource/
+- Data Package `_cache` recipe: https://datapackage.org/recipes/caching-of-resources/
+- Data Package private `_` property convention: https://datapackage.org/recipes/private-properties/
+- DCAT `accessURL` for indirect access/discovery locations: https://www.w3.org/TR/vocab-dcat-3/
+- Catalog organization is inspired by Data Package catalogs and DCAT catalog/dataset/distribution structure: https://datapackage.org/recipes/data-catalog/
+- `serviceType` follows OpenMetadata Drive Service naming: https://docs.open-metadata.org/latest/main-concepts/metadata-standard/schemas/entity/services/driveservice
+- `entityType` values such as `Directory` and `File` follow OpenMetadata drive data-asset modeling: https://docs.open-metadata.org/latest/main-concepts/metadata-standard/schemas/entity/data/directory

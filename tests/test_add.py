@@ -8,77 +8,63 @@ import yaml
 from sharedrive.actions.add import add_resource_to_descriptor, infer_drive_service
 
 
-def _write_catalog_descriptor(
-    path: Path,
-    *,
-    resources: list[dict] | None = None,
-    packages: list[dict] | None = None,
-) -> None:
+def _write_catalog_descriptor(path: Path) -> None:
     path.write_text(
         yaml.safe_dump(
-            {
-                "$schema": "data-package-catalog",
-                "resources": resources or [],
-                "packages": packages or [],
-                "catalogs": [],
-            },
+            {"$schema": "data-package-catalog", "resources": [], "catalogs": []},
             sort_keys=False,
         ),
         encoding="utf-8",
     )
 
 
-def test_add_resource_to_descriptor_writes_source_service_type(tmp_path: Path) -> None:
+def test_add_resource_to_descriptor_writes_path_cache_and_service_type(
+    tmp_path: Path,
+) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(descriptor)
 
     resource = add_resource_to_descriptor(
         descriptor,
         name="source-export",
-        path="background/exports/source-export.csv",
-        source="s3://my-bucket/path/to/source-export.csv",
+        path="s3://my-bucket/path/to/source-export.csv",
+        cache="background/exports/source-export.csv",
         title="Source export",
         description="Exported source data",
     )
 
     document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
 
-    assert resource["syncTarget"] == "path"
     assert document["$schema"] == "data-package-catalog"
-    assert document["resources"][0]["sources"][0]["serviceType"] == "S3"
-    assert document["resources"][0]["sources"][0]["entityType"] == "File"
+    assert resource["path"] == "s3://my-bucket/path/to/source-export.csv"
+    assert resource["_cache"] == "background/exports/source-export.csv"
+    assert document["resources"][0]["serviceType"] == "S3"
+    assert document["resources"][0]["entityType"] == "File"
+    assert "sources" not in document["resources"][0]
 
 
 def test_add_resource_to_descriptor_rejects_duplicate_names(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
-    _write_catalog_descriptor(
+    _write_catalog_descriptor(descriptor)
+    add_resource_to_descriptor(
         descriptor,
-        resources=[
-            {
-                "name": "source-export",
-                "path": "existing.csv",
-                "syncTarget": "path",
-                "sources": [
-                    {
-                        "path": "s3://bucket/existing.csv",
-                        "serviceType": "S3",
-                        "entityType": "File",
-                    }
-                ],
-            }
-        ],
+        name="source-export",
+        path="s3://bucket/existing.csv",
+        cache="existing.csv",
     )
 
     with pytest.raises(ValueError, match="already exists"):
         add_resource_to_descriptor(
             descriptor,
             name="source-export",
-            path="background/exports/source-export.csv",
-            source="s3://my-bucket/path/to/source-export.csv",
+            path="s3://my-bucket/path/to/source-export.csv",
+            cache="background/exports/source-export.csv",
         )
 
 
-def test_add_resource_to_descriptor_rejects_unsupported_service_type(tmp_path: Path) -> None:
+def test_add_resource_to_descriptor_rejects_unsupported_service_type(
+    tmp_path: Path,
+) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(descriptor)
 
@@ -86,48 +72,45 @@ def test_add_resource_to_descriptor_rejects_unsupported_service_type(tmp_path: P
         add_resource_to_descriptor(
             descriptor,
             name="local-file",
-            path="background/local-file.txt",
-            source="https://example.com/files/local-file.txt",
+            path="https://example.com/files/local-file.txt",
+            cache="background/local-file.txt",
             service_type="OneDrive",
         )
 
 
-def test_add_resource_to_descriptor_creates_resources_sync_target(tmp_path: Path) -> None:
+def test_add_resource_to_descriptor_creates_access_url_catalog(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(descriptor)
 
-    resource = add_resource_to_descriptor(
+    catalog = add_resource_to_descriptor(
         descriptor,
         name="census-docs",
-        path="downloads/census",
-        source="https://drive.google.com/drive/folders/folder123",
+        access_url="https://drive.google.com/drive/folders/folder123",
         service_type="GoogleDrive",
         entity_type="Directory",
-        sync_target="resources",
-        profile="data-package",
+        catalog=True,
+        profile="data-package-catalog",
     )
 
     document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
 
-    assert resource["profile"] == "data-package"
-    assert resource["syncTarget"] == "resources"
-    assert resource["resources"] == []
-    assert document["packages"][0]["profile"] == "data-package"
-    assert document["packages"][0]["resources"] == []
-    assert document["packages"][0]["sources"][0]["serviceType"] == "GoogleDrive"
-    assert document["packages"][0]["sources"][0]["entityType"] == "Directory"
+    assert catalog["profile"] == "data-package-catalog"
+    assert catalog["accessURL"] == "https://drive.google.com/drive/folders/folder123"
+    assert document["catalogs"][0]["accessURL"] == catalog["accessURL"]
+    assert document["catalogs"][0]["serviceType"] == "GoogleDrive"
+    assert document["catalogs"][0]["entityType"] == "Directory"
 
 
-def test_add_resource_to_descriptor_requires_sync_target_for_directory_source(tmp_path: Path) -> None:
+def test_add_resource_to_descriptor_rejects_directory_as_resource(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(descriptor)
 
-    with pytest.raises(ValueError, match="syncTarget is required"):
+    with pytest.raises(ValueError, match="Non-file drive entries"):
         add_resource_to_descriptor(
             descriptor,
             name="census-docs",
-            path="downloads/census",
-            source="https://drive.google.com/drive/folders/folder123",
+            path="https://drive.google.com/drive/folders/folder123",
+            cache="downloads/census",
             service_type="GoogleDrive",
             entity_type="Directory",
         )
@@ -142,8 +125,8 @@ def test_add_resource_to_descriptor_requires_existing_descriptor_by_default(
         add_resource_to_descriptor(
             descriptor,
             name="source-export",
-            path="background/exports/source-export.csv",
-            source="s3://my-bucket/path/to/source-export.csv",
+            path="s3://my-bucket/path/to/source-export.csv",
+            cache="background/exports/source-export.csv",
         )
 
 
@@ -153,8 +136,8 @@ def test_add_resource_to_descriptor_allows_create_if_missing(tmp_path: Path) -> 
     resource = add_resource_to_descriptor(
         descriptor,
         name="source-export",
-        path="background/exports/source-export.csv",
-        source="s3://my-bucket/path/to/source-export.csv",
+        path="s3://my-bucket/path/to/source-export.csv",
+        cache="background/exports/source-export.csv",
         create_if_missing=True,
     )
 
@@ -178,5 +161,5 @@ def test_infer_drive_service(source: str, expected: str) -> None:
 
 
 def test_infer_drive_service_raises_when_unknown() -> None:
-    with pytest.raises(NotImplementedError, match="Could not infer drive service"):
+    with pytest.raises(NotImplementedError, match="Could not infer serviceType"):
         infer_drive_service("C:/tmp/local-file.txt")

@@ -16,6 +16,7 @@ from sharedrive.actions.download import (
 )
 from sharedrive.actions.fetch import fetch as fetch_action
 from sharedrive.actions.list import list_descriptor_entities
+from sharedrive.actions.migrate import migrate_descriptor
 from sharedrive.exceptions import GoogleApiError, GraphApiError
 from sharedrive.helpers import (
     DESCRIPTOR_DEFAULTS_FILE,
@@ -32,8 +33,6 @@ from sharedrive.models import (
     DriveResource,
     normalize_entity_type,
     normalize_service_type,
-    normalize_sync_target,
-    resolve_entity_reference,
 )
 
 load_dotenv(find_dotenv(usecwd=True))
@@ -189,14 +188,14 @@ def _scoped_selector(selector: str | None) -> str | None:
 
 
 def _resolve_resource_reference(resource_selector: str, descriptor: DriveCatalog):
-    reference = resolve_entity_reference(
-        descriptor,
-        resource_selector,
-        (DriveResource, DrivePackage),
-    )
-    if reference is None:
-        raise typer.BadParameter(f'Resource selector "{resource_selector}" was not found.')
-    return reference
+    for reference in descriptor.iter_entity_paths(include_self=False):
+        if reference.name_path == resource_selector or (
+            "." not in resource_selector
+            and reference.name_path.split(".")[-1] == resource_selector
+        ):
+            if isinstance(reference.model, (DriveResource, DrivePackage, DriveCatalog)):
+                return reference
+    raise typer.BadParameter(f'Entity selector "{resource_selector}" was not found.')
 
 
 def _normalize_update_property(property_name: str, *, resource_target: bool) -> str:
@@ -207,28 +206,25 @@ def _normalize_update_property(property_name: str, *, resource_target: bool) -> 
     normalized = {
         "service-type": "serviceType",
         "entity-type": "entityType",
-        "sync-target": "syncTarget",
         "drive-service": "driveService",
+        "cache": "_cache",
+        "access-url": "accessURL",
     }.get(normalized, normalized)
 
     if not resource_target:
         return normalized
 
     aliases = {
-        "source": "sources.0.path",
-        "serviceType": "sources.0.serviceType",
-        "driveService": "sources.0.serviceType",
-        "entityType": "sources.0.entityType",
+        "source": "path",
+        "driveService": "serviceType",
     }
     return aliases.get(normalized, normalized)
 
 
 def _normalize_update_value(property_path: str, value: Any) -> Any:
-    if property_path == "syncTarget" and isinstance(value, str):
-        return normalize_sync_target(value)
-    if property_path == "sources.0.serviceType" and isinstance(value, str):
+    if property_path == "serviceType" and isinstance(value, str):
         return normalize_service_type(value)
-    if property_path == "sources.0.entityType" and isinstance(value, str):
+    if property_path == "entityType" and isinstance(value, str):
         return normalize_entity_type(value)
     return value
 
@@ -276,8 +272,7 @@ def clone_descriptor(
         typer.echo(f"Would clone descriptor: {source_descriptor} -> {target_path}")
         return
 
-    document = DriveCatalog.load_document(source_descriptor)
-    DriveCatalog.save_document(target_path, document)
+    DriveCatalog.from_path(str(source_descriptor)).to_path(str(target_path))
     typer.echo(f"Cloned descriptor: {source_descriptor} -> {target_path}")
 
 
@@ -310,11 +305,11 @@ def update_command(
     descriptor_path = resolve_descriptor_path(descriptor)
     _exit_if_descriptor_missing(descriptor_path)
 
-    document = DriveCatalog.load_document(descriptor_path)
+    descriptor_model = DriveCatalog.from_path(str(descriptor_path))
+    document = descriptor_model.to_dict()
     target_label = str(descriptor_path)
     target: dict[str, Any] = document
     if resource is not None:
-        descriptor_model = DriveCatalog.model_validate(document)
         try:
             descriptor_model.assert_valid_entity_paths()
         except Error as exc:
@@ -351,7 +346,7 @@ def update_command(
             typer.echo(f"Would update {target_label}: {change}")
         return
 
-    DriveCatalog.save_document(descriptor_path, document)
+    DriveCatalog.from_dict(document).to_path(str(descriptor_path))
     for change in changed_properties:
         typer.echo(f"Updated {target_label}: {change}")
 
@@ -404,17 +399,6 @@ def _render_auth_results(results: list[Any], output_format: OutputFormat) -> Non
         typer.echo(f"{result.adapter}: {status} - {result.message}")
 
 
-def _render_source_label(source: Any) -> str:
-    metadata = ", ".join(
-        value
-        for value in (source.adapter, source.service_type, source.entity_type)
-        if value
-    )
-    title = f"{source.title} " if source.title else ""
-    target = f" -> {source.target}" if source.target else ""
-    return f"source[{source.index}] {title}{source.key}: {source.path}{target} ({metadata})"
-
-
 @app.command(
     "list",
     epilog=_examples_epilog(
@@ -453,7 +437,7 @@ def list_command(
     from rich.console import Console
     from rich.tree import Tree
 
-    root = Tree(f"{descriptor_path}")
+    root = Tree(descriptor_path.name)
     nodes: dict[str, Any] = {}
     for entity in entities:
         parent_path = entity.name_path.rpartition(".")[0]
@@ -464,10 +448,19 @@ def list_command(
         )
         node = parent_node.add(label)
         nodes[entity.name_path] = node
-        for source in entity.sources:
-            node.add(_render_source_label(source))
-        if entity.source_error:
-            node.add(f"[red]source error: {entity.source_error}[/red]")
+        details = []
+        if entity.path:
+            details.append(f"path={entity.path}")
+        if entity.cache:
+            details.append(f"_cache={entity.cache}")
+        if entity.access_url:
+            details.append(f"accessURL={entity.access_url}")
+        if entity.service_type:
+            details.append(f"serviceType={entity.service_type}")
+        if entity.drive_entity_type:
+            details.append(f"entityType={entity.drive_entity_type}")
+        if details:
+            node.add("[dim]" + ", ".join(details) + "[/dim]")
 
     Console().print(root)
 
@@ -532,17 +525,25 @@ def set_command(
 @app.command(
     "add",
     epilog=_examples_epilog(
-        "sharedrive add my-resource --path /data/file.csv --source https://drive.google.com/file/d/123...",
-        "sharedrive add my-package --package --path /data/ --source https://drive.google.com/drive/folders/abc...",
+        "sharedrive add my-resource --path https://drive.google.com/file/d/123... --cache downloads/file.csv",
+        "sharedrive add my-folder --catalog --access-url https://drive.google.com/drive/folders/abc...",
     ),
 )
 def add(
     name: str = typer.Argument(..., help="Resource name to store in the descriptor."),
-    path: str = typer.Option(
-        ..., "--path", help="Resource path stored in the descriptor."
+    path: Optional[str] = typer.Option(
+        None, "--path", help="Canonical resource path, usually a remote file URL."
     ),
-    source: str = typer.Option(
-        ..., "--source", help="Source URL/URI/path for the resource."
+    cache: Optional[str] = typer.Option(
+        None, "--cache", help="Local materialized path stored as _cache."
+    ),
+    access_url: Optional[str] = typer.Option(
+        None, "--access-url", help="Remote folder/container accessURL for catalogs."
+    ),
+    source: Optional[str] = typer.Option(
+        None,
+        "--source",
+        help="Deprecated alias for --path on file resources or --access-url on catalogs.",
     ),
     title: Optional[str] = typer.Option(
         None, "--title", help="Optional resource title."
@@ -563,12 +564,12 @@ def add(
     package: bool = typer.Option(
         False,
         "--package",
-        help="Treat as a package (creates a resource with nested resources).",
+        help="Deprecated; remote folders are catalogs. Use --catalog.",
     ),
     catalog: bool = typer.Option(
         False,
         "--catalog",
-        help="Treat as a catalog (alias for package, future extension).",
+        help="Treat as a catalog with accessURL.",
     ),
     profile: Optional[str] = typer.Option(
         None, "--profile", help="Optional metadata profile for the resource."
@@ -577,7 +578,7 @@ def add(
         None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP
     ),
 ) -> None:
-    """Add a resource or package entry to a descriptor."""
+    """Add a standards-aligned resource or catalog entry to a descriptor."""
     descriptor_path = resolve_descriptor_path(descriptor)
     explicit_descriptor = descriptor is not None or has_saved_global_descriptor()
     if explicit_descriptor:
@@ -588,12 +589,15 @@ def add(
             descriptor=descriptor_path,
             name=name,
             path=path,
+            cache=cache,
             source=source,
+            access_url=access_url or (source if catalog else None),
             title=title,
             description=description,
             service_type=service_type,
             entity_type=entity_type,
-            package=package or catalog,
+            package=package,
+            catalog=catalog,
             profile=profile,
             create_if_missing=not explicit_descriptor,
         )
@@ -607,12 +611,11 @@ def add(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
-    created_source = resource["sources"][0]
+    location = resource.get("accessURL") or resource.get("path")
     typer.echo(
-        f"Added resource '{resource['name']}' to {descriptor_path} "
-        f"with serviceType '{created_source['serviceType']}', "
-        f"entityType '{created_source['entityType']}'."
-        + (" (package)" if "resources" in resource else "")
+        f"Added {'catalog' if catalog else 'resource'} '{resource['name']}' to {descriptor_path} "
+        f"at {location} with serviceType '{resource.get('serviceType')}', "
+        f"entityType '{resource.get('entityType')}'."
     )
 
 
@@ -679,6 +682,35 @@ def fetch(
         typer.echo(
             f"{action} metadata for {summary.generated_resources} resource(s) into '{summary.resource_name}' in {descriptor_path}."
         )
+
+
+@app.command(
+    "migrate",
+    epilog=_examples_epilog(
+        "sharedrive migrate resources/descriptor.yaml --dry-run",
+        "sharedrive migrate resources/descriptor.yaml --output resources/descriptor.v2.yaml",
+    ),
+)
+def migrate(
+    descriptor: Path = typer.Argument(..., help="Legacy descriptor to migrate."),
+    output: Optional[Path] = typer.Option(
+        None, "--output", help="Write migrated descriptor to this path."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print migrated descriptor JSON without writing."
+    ),
+) -> None:
+    """Migrate legacy sources/path descriptors to path/_cache/accessURL."""
+    try:
+        catalog = migrate_descriptor(descriptor, output=output, dry_run=dry_run)
+    except (FileNotFoundError, ValueError, Error) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    if dry_run:
+        _echo_json(catalog.to_dict())
+        return
+    typer.echo(f"Migrated descriptor: {output or descriptor}")
 
 
 @app.command(

@@ -48,14 +48,13 @@ See also: [Google Auth Credentials](google-auth.md) for manual OAuth setup and n
 CLI:
 
 ```bash
-sharedrive add census-package --path downloads/census --source https://drive.google.com/drive/folders/<id> --drive-service googledrive --package
-sharedrive sync census-package --descriptor resources/descriptor.yaml --dry-run
-sharedrive fetch census-package --descriptor resources/descriptor.yaml --dry-run
+sharedrive add census-docs --catalog --access-url https://drive.google.com/drive/folders/<id> --service-type googledrive
+sharedrive fetch census-docs --descriptor resources/descriptor.yaml --dry-run
 ```
 
-## Package resources
+## Folder catalogs
 
-`sharedrive` now supports folder-backed package resources in descriptors. A package resource is a top-level descriptor resource with a package profile, a local root `path`, and a remote folder source. `sharedrive sync <package-name>` can populate that package with nested file resources from Google Drive, and `sharedrive fetch <package-name>` can refresh the nested descriptor resources from the remote folder.
+`sharedrive` models remote folders as catalogs with `accessURL`. `sharedrive fetch <catalog-name>` populates that catalog with nested file resources from Google Drive or SharePoint. File resources keep their canonical remote URL in `path` and their local materialized copy in `_cache`.
 
 Python:
 

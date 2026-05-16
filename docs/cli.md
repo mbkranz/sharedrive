@@ -20,8 +20,9 @@ Commands:
   checkout  Activate a descriptor and optionally an entity within it for...
   list      List local descriptor entities, paths, and source metadata.
   set       Set reusable key/value parameters for sharedrive descriptor...
-  add       Add a resource or package entry to a descriptor.
+  add       Add a standards-aligned resource or catalog entry to a descriptor.
   fetch     Fetch remote metadata for one selector into the descriptor.
+  migrate   Migrate legacy sources/path descriptors to path/_cache/accessURL.
   download  Download resources from a selector in the descriptor.
   auth      Authentication helpers.
   clone     Clone descriptor state for new local variants.
@@ -299,21 +300,23 @@ Options:
 ```text
 Usage: sharedrive add [OPTIONS] NAME
 
-  Add a resource or package entry to a descriptor.
+  Add a standards-aligned resource or catalog entry to a descriptor.
 
 Arguments:
   NAME  Resource name to store in the descriptor.  [required]
 
 Options:
-  --path TEXT          Resource path stored in the descriptor.  [required]
-  --source TEXT        Source URL/URI/path for the resource.  [required]
+  --path TEXT          Canonical resource path, usually a remote file URL.
+  --cache TEXT         Local materialized path stored as _cache.
+  --access-url TEXT    Remote folder/container accessURL for catalogs.
+  --source TEXT        Deprecated alias for --path on file resources or
+                       --access-url on catalogs.
   --title TEXT         Optional resource title.
   --description TEXT   Optional resource description.
   --service-type TEXT  Source serviceType. If omitted, infer from source.
   --entity-type TEXT   Source entityType such as File, Directory, or Container.
-  --package            Treat as a package (creates a resource with nested
-                       resources).
-  --catalog            Treat as a catalog (alias for package, future extension).
+  --package            Deprecated; remote folders are catalogs. Use --catalog.
+  --catalog            Treat as a catalog with accessURL.
   --profile TEXT       Optional metadata profile for the resource.
   --descriptor PATH    Descriptor file path. Defaults to the saved descriptor or
                        the first standard descriptor path.
@@ -323,14 +326,14 @@ Options:
 
   ```bash
 
-  sharedrive add my-resource --path /data/file.csv --source
-  https://drive.google.com/file/d/123...
+  sharedrive add my-resource --path https://drive.google.com/file/d/123...
+  --cache downloads/file.csv
 
   ```
 
   ```bash
 
-  sharedrive add my-package --package --path /data/ --source
+  sharedrive add my-folder --catalog --access-url
   https://drive.google.com/drive/folders/abc...
 
   ```

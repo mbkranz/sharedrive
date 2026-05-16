@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Sequence
+from typing import Any, Sequence
 
 import google.auth
 from google.auth.credentials import Credentials
@@ -103,7 +103,8 @@ class GoogleAuth:
         cls,
         scopes: Sequence[str] | str,
         client_secrets_path: str | Path = None,
-        token_path: str | Path = None
+        token_path: str | Path = None,
+        token_store: Any = None,
     ) -> "GoogleAuth":
         """Build via the OAuth installed-app flow, with token persistence."""
     
@@ -112,10 +113,25 @@ class GoogleAuth:
                                 str(client_secrets_path),
                                 scopes=normalized_scopes,
                             )
-            creds = flow.run_local_server(port=0,open_browser=False)
+            creds = flow.run_local_server(port=0)
             return creds
 
         normalized_scopes = normalize_google_scopes(scopes)
+        if token_store is not None:
+            creds = token_store.load()
+            if creds is not None and getattr(creds, "valid", False):
+                return cls(creds)
+            if creds is not None and getattr(creds, "refresh_token", None):
+                creds.refresh(Request())
+            elif client_secrets_path:
+                creds = _interactive_login_from_client_secrets_file()
+            else:
+                raise GoogleAuthError(
+                    "client_secrets_path is required when stored OAuth credentials are missing."
+                )
+            token_store.save(creds)
+            return cls(creds)
+
         if Path(token_path).exists():
             creds = UserCredentials.from_authorized_user_file(token_path, scopes=scopes)
             try:
@@ -130,8 +146,9 @@ class GoogleAuth:
         else:
             raise GoogleAuthError("At least one of token_path or client_secrets_path must be provided for user OAuth.")
         
-        Path(token_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(token_path).write_text(creds.to_json())
+        if hasattr(creds, "to_json"):
+            Path(token_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(token_path).write_text(creds.to_json())
         return cls(creds)
 
     @classmethod
@@ -150,6 +167,11 @@ class GoogleAuth:
     def credentials(self) -> Credentials:
         """The underlying :class:`~google.auth.credentials.Credentials` object."""
         return self._creds
+
+    def ensure_valid(self) -> None:
+        """Refresh credentials when the current token is not valid."""
+        if not self._creds.valid:
+            self.refresh()
 
 __all__ = [
     "GoogleAuth"
