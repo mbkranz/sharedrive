@@ -30,7 +30,7 @@ def check_s3_credentials() -> None:
         raise RuntimeError("AWS credentials are incomplete for S3 operations.")
 
 
-def parse_s3_source_url(source_url: str) -> tuple[str, str]:
+def parse_s3_source_url(source_url: str, *, allow_empty_key: bool = False) -> tuple[str, str]:
     parsed = urlparse(source_url)
     scheme = parsed.scheme.lower()
 
@@ -54,6 +54,8 @@ def parse_s3_source_url(source_url: str) -> tuple[str, str]:
 
     if not bucket:
         raise ValueError(f"Could not parse bucket from source URL: {source_url}")
+    if not allow_empty_key and not key:
+        raise ValueError(f"Could not parse key from source URL: {source_url}")
     return bucket, key
 
 
@@ -101,7 +103,7 @@ class S3Client(BaseClient):
         check_s3_credentials()
 
     def get_from_weburl(self, url: str) -> "S3Item":
-        bucket, key = parse_s3_source_url(url)
+        bucket, key = parse_s3_source_url(url, allow_empty_key=True)
         if not key:
             return S3Item(client=self, bucket=bucket, key="", is_directory=True)
 
