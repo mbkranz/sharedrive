@@ -6,6 +6,7 @@ from typing import Any, Callable, Iterable
 
 from dplib.models.resource import Resource
 
+from sharedrive.clients.aws import download_s3_url
 from sharedrive.models import (
     DriveCatalog,
     DriveResource,
@@ -324,7 +325,6 @@ class SharedriveCatalogAction:
         summary: DownloadSummary,
         use_cloudpathlib: bool,
     ) -> None:
-        _ = use_cloudpathlib
         if not isinstance(resource.path, str) or not resource.path.strip():
             raise ValueError(f"Resource '{resource.name}' is missing required path.")
         destination = resolve_cache_path(resource, output_dir)
@@ -344,8 +344,18 @@ class SharedriveCatalogAction:
             return
 
         destination.parent.mkdir(parents=True, exist_ok=True)
-        item = self.client(adapter).get_from_weburl(resource.path)
-        item.download(str(destination))
+        if adapter == "s3":
+            downloaded = download_s3_url(
+                resource.path,
+                destination,
+                dry_run=False,
+                use_cloudpathlib=use_cloudpathlib,
+            )
+            if downloaded is None:
+                raise RuntimeError("S3 download returned no output path")
+        else:
+            item = self.client(adapter).get_from_weburl(resource.path)
+            item.download(str(destination))
         summary.downloaded += 1
 
     @staticmethod

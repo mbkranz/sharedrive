@@ -30,8 +30,8 @@ DESCRIPTOR_DEFAULT_HELP = (
 
 
 def examples_epilog(*lines: str) -> str:
-    codeblocks = "\n\n".join(f"```bash\n\n\n{line.strip()}\n\n\n```" for line in lines)
-    return f"\n\n**Examples**\n\n\n{codeblocks}"
+    codeblocks = "\n\n".join(f"```bash\n{line.strip()}\n```" for line in lines)
+    return f"\n\n**Examples**\n\n{codeblocks}"
 
 
 def echo_json(payload: Any) -> None:

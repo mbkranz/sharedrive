@@ -102,7 +102,7 @@ def test_fetch_respects_adapter_capabilities() -> None:
 
         @classmethod
         def check_auth(cls) -> None:
-            return None
+            pass
 
     action = SharedriveCatalogAction(
         catalog,
