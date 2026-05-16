@@ -47,7 +47,7 @@ def test_download_detects_output_collisions(tmp_path: Path) -> None:
         }
     )
 
-    action = SharedriveCatalogAction(catalog, client_factory=lambda _adapter: _DownloadClient())
+    action = SharedriveCatalogAction(catalog, client_factory=lambda _: _DownloadClient())
 
     with pytest.raises(ValueError, match="Output collision"):
         action.download(output_dir=tmp_path, dry_run=False, log=None)
@@ -106,8 +106,8 @@ def test_fetch_respects_adapter_capabilities() -> None:
 
     action = SharedriveCatalogAction(
         catalog,
-        client_factory=lambda _adapter: _DownloadClient(),
-        provider_factory=lambda _adapter: _NoFetchProvider,
+        client_factory=lambda _: _DownloadClient(),
+        provider_factory=lambda _: _NoFetchProvider,
     )
 
     summaries = action.fetch("bucket-root", dry_run=False, log=None)

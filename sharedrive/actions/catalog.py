@@ -6,6 +6,7 @@ from typing import Any, Callable, Iterable
 
 from dplib.models.resource import Resource
 
+from sharedrive.clients.base import AdapterCapabilities
 from sharedrive.clients.aws import download_s3_url
 from sharedrive.models import (
     DriveCatalog,
@@ -87,7 +88,7 @@ class SharedriveCatalogAction:
             self.clients[adapter] = self.client_factory(adapter)
         return self.clients[adapter]
 
-    def _provider_capabilities(self, adapter: str) -> Any | None:
+    def _provider_capabilities(self, adapter: str) -> AdapterCapabilities | None:
         provider = self.provider_factory(adapter)
         if provider is None:
             return None

@@ -17,7 +17,11 @@ class AdapterCapabilities:
 
 
 class BaseClient(ABC):
-    """Abstract base for all drive service clients."""
+    """Abstract base for all drive service clients.
+
+    Concrete providers must define ``auth_methods`` and ``capabilities``, and
+    implement ``build_default``, ``check_auth``, and ``get_from_weburl``.
+    """
 
     auth_methods: ClassVar[list[str]] = []
     capabilities: ClassVar[AdapterCapabilities] = AdapterCapabilities()

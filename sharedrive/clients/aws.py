@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import boto3
@@ -30,7 +31,13 @@ def check_s3_credentials() -> None:
         raise RuntimeError("AWS credentials are incomplete for S3 operations.")
 
 
-def parse_s3_source_url(source_url: str, *, allow_empty_key: bool = False) -> tuple[str, str]:
+def parse_s3_source_url(
+    source_url: str, *, allow_empty_key: bool = False
+) -> tuple[str, str]:
+    """Parse an S3 URL into bucket/key.
+
+    Set ``allow_empty_key=True`` for bucket-root directory locators.
+    """
     parsed = urlparse(source_url)
     scheme = parsed.scheme.lower()
 
@@ -90,7 +97,7 @@ class S3Client(BaseClient):
         supports_write=False,
     )
 
-    def __init__(self, *, client=None) -> None:
+    def __init__(self, *, client: Any = None) -> None:
         self.client = client or boto3.client("s3")
 
     @classmethod
@@ -111,7 +118,7 @@ class S3Client(BaseClient):
             self.client.head_object(Bucket=bucket, Key=key)
             return S3Item(client=self, bucket=bucket, key=key, is_directory=False)
         except ClientError as exc:
-            code = str(exc.response.get("Error", {}).get("Code", ""))
+            code = exc.response.get("Error", {}).get("Code", "")
             if code in {"404", "NotFound", "NoSuchKey"}:
                 prefix = key if key.endswith("/") else f"{key}/"
                 response = self.client.list_objects_v2(
