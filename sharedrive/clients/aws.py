@@ -36,6 +36,8 @@ def parse_s3_source_url(
 ) -> tuple[str, str]:
     """Parse an S3 URL into bucket/key.
 
+    Returns ``(bucket, key)`` where ``bucket`` is the S3 bucket name and ``key``
+    is the object key or prefix (possibly empty when ``allow_empty_key`` is set).
     Set ``allow_empty_key=True`` for bucket-root directory locators.
     """
     parsed = urlparse(source_url)

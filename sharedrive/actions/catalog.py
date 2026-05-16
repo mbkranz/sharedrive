@@ -346,13 +346,13 @@ class SharedriveCatalogAction:
 
         destination.parent.mkdir(parents=True, exist_ok=True)
         if adapter == "s3":
-            downloaded = download_s3_url(
+            output_path = download_s3_url(
                 resource.path,
                 destination,
                 dry_run=False,
                 use_cloudpathlib=use_cloudpathlib,
             )
-            if downloaded is None:
+            if output_path is None:
                 raise RuntimeError("S3 download returned no output path")
         else:
             item = self.client(adapter).get_from_weburl(resource.path)

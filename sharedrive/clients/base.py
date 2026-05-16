@@ -19,8 +19,16 @@ class AdapterCapabilities:
 class BaseClient(ABC):
     """Abstract base for all drive service clients.
 
-    Concrete providers must define ``auth_methods`` and ``capabilities``, and
-    implement ``build_default``, ``check_auth``, and ``get_from_weburl``.
+    Concrete providers define:
+
+    - ``auth_methods``: supported auth-mode identifiers.
+    - ``capabilities``: supported adapter operations.
+
+    Implementations must provide:
+
+    - ``build_default`` to construct a client from environment/settings.
+    - ``check_auth`` to validate credentials without performing a transfer.
+    - ``get_from_weburl`` to resolve a remote locator into a runtime DriveItem.
     """
 
     auth_methods: ClassVar[list[str]] = []
