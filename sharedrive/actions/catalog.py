@@ -46,10 +46,10 @@ class CatalogSelector:
             return
         raw_values = [raw] if isinstance(raw, str) else list(raw)
         values = frozenset(
-            part.strip()
+            stripped
             for raw_value in raw_values
             for part in raw_value.split(",")
-            if part.strip()
+            if (stripped := part.strip())
         )
         if not values or "all" in {v.lower() for v in values}:
             self._tokens = None
