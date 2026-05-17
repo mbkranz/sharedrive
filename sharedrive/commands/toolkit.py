@@ -150,14 +150,26 @@ def parse_set_args(args: list[str]) -> dict[str, Any]:
 def scoped_selector(selector: str | None) -> str | None:
     """Return selector scoped to the checked-out entity, preserving string API shape.
 
-    Delegates scoping logic to :class:`~sharedrive.actions.catalog.CatalogSelector`
-    (see its ``scope`` parameter) and returns the result as a comma-separated
-    ``str`` or ``None`` so existing action call sites continue to work.
+    If no selector is given and an entity is checked out, the entity's dot-path
+    becomes the implicit filter.  If tokens are provided, each is prefixed as
+    ``"{scope}.{token}"``.  An explicit ``"all"`` or empty selector always wins
+    and is returned as ``None`` (select everything).
+
+    Returns a comma-separated ``str`` or ``None`` so existing action call sites
+    continue to work.
     """
-    sel = CatalogSelector(selector, scope=get_checked_out_entity())
+    scope = get_checked_out_entity()
+    sel = CatalogSelector(selector)
     if not sel:
+        # Explicit "all" / empty — scope cannot override; select everything.
+        if selector is None and scope:
+            # No selector at all — use scope as the implicit single filter.
+            return scope
         return None
-    tokens = sorted(sel.tokens)  # sel is truthy so tokens is not None
+    if scope:
+        tokens = sorted(f"{scope}.{t}" for t in sel.tokens)  # type: ignore[union-attr]
+    else:
+        tokens = sorted(sel.tokens)  # type: ignore[union-attr]
     return tokens[0] if len(tokens) == 1 else ",".join(tokens)
 
 
