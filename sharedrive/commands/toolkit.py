@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 from sharedrive.helpers import get_checked_out_entity
 from sharedrive.helpers import resolve_descriptor_path as resolve_descriptor_path_helper
-from sharedrive.actions.catalog import normalize_selector
+from sharedrive.actions.catalog import CatalogSelector
 from sharedrive.models import (
     DriveCatalog,
     DrivePackage,
@@ -150,16 +150,12 @@ def parse_set_args(args: list[str]) -> dict[str, Any]:
 def parse_selector_tokens(values: str | list[str] | tuple[str, ...] | None) -> list[str] | None:
     """Parse selector values into tokens or ``None`` when selector means "all".
 
-    Delegates to :func:`~sharedrive.actions.catalog.normalize_selector` for
-    the core normalisation logic and converts the resulting set to a list so
-    callers that need ordered iteration (e.g. :func:`scoped_selector`) can
-    work with the result directly.
-
-    Empty parts are ignored, and any ``all`` token takes precedence over all
-    other tokens.
+    Delegates to :class:`~sharedrive.actions.catalog.CatalogSelector` for
+    normalisation and returns the tokens as a sorted list, or ``None`` when
+    the selector means "select everything".
     """
-    tokens = normalize_selector(values)
-    return list(tokens) if tokens is not None else None
+    sel = CatalogSelector(values)
+    return sorted(sel.tokens) if sel.tokens is not None else None
 
 
 def scoped_selector(selector: str | None) -> str | None:
@@ -172,14 +168,15 @@ def scoped_selector(selector: str | None) -> str | None:
     checked_out_entity = get_checked_out_entity()
     if selector is None:
         return checked_out_entity
-    selector_tokens = parse_selector_tokens(selector)
-    if selector_tokens is None:
+    sel = CatalogSelector(selector)
+    if not sel:
         return None
 
+    tokens = sorted(sel.tokens)  # sel is truthy so tokens is not None
     scoped_tokens = (
-        [f"{checked_out_entity}.{token}" for token in selector_tokens]
+        [f"{checked_out_entity}.{token}" for token in tokens]
         if checked_out_entity
-        else selector_tokens
+        else tokens
     )
     return scoped_tokens[0] if len(scoped_tokens) == 1 else ",".join(scoped_tokens)
 
