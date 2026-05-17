@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 from sharedrive.helpers import get_checked_out_entity
 from sharedrive.helpers import resolve_descriptor_path as resolve_descriptor_path_helper
+from sharedrive.actions.catalog import CatalogSelector
 from sharedrive.models import (
     DriveCatalog,
     DrivePackage,
@@ -82,13 +83,6 @@ def run_microsoft_login(
     )
 
 
-def parse_include_values(values: list[str] | None) -> str | list[str]:
-    normalized = parse_selector_tokens(values)
-    if normalized is None:
-        return "all"
-    return normalized
-
-
 def coerce_set_value(raw: str) -> Any:
     value = raw.strip()
     lower = value.lower()
@@ -153,46 +147,30 @@ def parse_set_args(args: list[str]) -> dict[str, Any]:
     return parsed
 
 
-def parse_selector_tokens(values: str | list[str] | tuple[str, ...] | None) -> list[str] | None:
-    """Parse selector values into tokens or ``None`` when selector means "all".
-
-    Empty parts are ignored, and any ``all`` token takes precedence over all
-    other tokens.
-    """
-    if values is None:
-        return None
-    raw_values = [values] if isinstance(values, str) else list(values)
-    tokens = [
-        part.strip()
-        for raw_value in raw_values
-        for part in raw_value.split(",")
-        if part.strip()
-    ]
-    if not tokens or "all" in {token.lower() for token in tokens}:
-        return None
-    return tokens
-
-
 def scoped_selector(selector: str | None) -> str | None:
-    """Return selector scoped to checked-out entity, preserving string API shape.
+    """Return selector scoped to the checked-out entity, preserving string API shape.
 
-    Returns a single selector token as ``str`` and multiple tokens as a
-    comma-separated ``str`` so existing action call sites can keep passing
-    selector values as strings.
+    If no selector is given and an entity is checked out, the entity's dot-path
+    becomes the implicit filter.  If tokens are provided, each is prefixed as
+    ``"{scope}.{token}"``.  An explicit ``"all"`` or empty selector always wins
+    and is returned as ``None`` (select everything).
+
+    Returns a comma-separated ``str`` or ``None`` so existing action call sites
+    continue to work.
     """
-    checked_out_entity = get_checked_out_entity()
-    if selector is None:
-        return checked_out_entity
-    selector_tokens = parse_selector_tokens(selector)
-    if selector_tokens is None:
+    scope = get_checked_out_entity()
+    sel = CatalogSelector(selector)
+    if not sel:
+        # Explicit "all" / empty — scope cannot override; select everything.
+        if selector is None and scope:
+            # No selector at all — use scope as the implicit single filter.
+            return scope
         return None
-
-    scoped_tokens = (
-        [f"{checked_out_entity}.{token}" for token in selector_tokens]
-        if checked_out_entity
-        else selector_tokens
-    )
-    return scoped_tokens[0] if len(scoped_tokens) == 1 else ",".join(scoped_tokens)
+    if scope:
+        tokens = sorted(f"{scope}.{t}" for t in sel.tokens)  # type: ignore[union-attr]
+    else:
+        tokens = sorted(sel.tokens)  # type: ignore[union-attr]
+    return tokens[0] if len(tokens) == 1 else ",".join(tokens)
 
 
 def resolve_resource_reference(resource_selector: str, descriptor: DriveCatalog):
@@ -255,8 +233,6 @@ __all__ = [
     "load_env_file",
     "normalize_update_property",
     "normalize_update_value",
-    "parse_include_values",
-    "parse_selector_tokens",
     "parse_set_args",
     "prepare_descriptor_path",
     "resolve_resource_reference",

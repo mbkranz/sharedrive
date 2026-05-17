@@ -4,6 +4,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from pydantic import GetCoreSchemaHandler
+from pydantic_core import core_schema
+
 from dplib.models.resource import Resource
 
 from sharedrive.clients.base import AdapterCapabilities, BaseClient
@@ -17,6 +20,81 @@ from sharedrive.models import (
 from sharedrive.registry import get_client, get_provider
 
 LogFn = Callable[[str], None]
+
+
+class CatalogSelector:
+    """Normalised selector for catalog entities.
+
+    Accepts a single string (optionally comma-separated), an iterable of
+    strings, or ``None``.  Normalises at construction time.
+
+    A ``None`` raw value, an empty input, or the special token ``"all"``
+    (case-insensitive) all produce a "select-everything" selector (falsy).
+    Any other input yields a truthy selector containing the parsed tokens.
+
+    Designed as a Pydantic-compatible type so it can be used directly as an
+    annotation in Pydantic models or with ``validate_call``.  When used in
+    plain Python code, construct directly — e.g. ``CatalogSelector(raw_value)``
+    — and the normalisation is applied automatically.
+    """
+
+    __slots__ = ("_tokens",)
+
+    def __init__(self, raw: str | Iterable[str] | None = None) -> None:
+        if raw is None:
+            self._tokens: frozenset[str] | None = None
+        else:
+            raw_values = [raw] if isinstance(raw, str) else list(raw)
+            values = frozenset(
+                stripped
+                for raw_value in raw_values
+                for part in raw_value.split(",")
+                if (stripped := part.strip())
+            )
+            if not values or "all" in {v.lower() for v in values}:
+                self._tokens = None
+            else:
+                self._tokens = values
+
+    @property
+    def tokens(self) -> frozenset[str] | None:
+        """The normalised set of filter tokens, or ``None`` for "select all"."""
+        return self._tokens
+
+    def __bool__(self) -> bool:
+        """False when this is a "select all" selector; True when filtering."""
+        return self._tokens is not None
+
+    def __repr__(self) -> str:
+        return f"CatalogSelector({sorted(self._tokens)!r})" if self._tokens else "CatalogSelector()"
+
+    def matches(self, ref: Any) -> bool:
+        """Return True if *ref* matches any selector token.
+
+        Always returns True for a "select all" selector.  Otherwise checks
+        the ref's ``name_path``, model ``name``, ``entity_type``, and adapter
+        name against the stored token set (case-insensitive).
+        """
+        if self._tokens is None:
+            return True
+        adapter = adapter_from_service_type(getattr(ref.model, "serviceType", None))
+        name = str(getattr(ref.model, "name", "") or "")
+        candidates = {ref.name_path, name, ref.entity_type}
+        if adapter:
+            candidates.add(adapter)
+        lower_tokens = {t.lower() for t in self._tokens}
+        return any(c.lower() in lower_tokens for c in candidates)
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source_type: Any, handler: GetCoreSchemaHandler
+    ) -> core_schema.CoreSchema:
+        return core_schema.no_info_plain_validator_function(
+            lambda v: v if isinstance(v, cls) else cls(v),
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                lambda s: sorted(s.tokens) if s.tokens is not None else None,
+            ),
+        )
 
 
 @dataclass(slots=True)
@@ -100,9 +178,9 @@ class SharedriveCatalogAction:
         return AdapterCapabilities()
 
     def references(self, selector: str | Iterable[str] | None = None) -> list[Any]:
-        selectors = self._selectors(selector)
+        sel = CatalogSelector(selector)
         refs = self.catalog.iter_entity_paths(include_self=False)
-        if selectors is None:
+        if not sel:
             return refs
 
         selected: list[Any] = []
@@ -110,7 +188,7 @@ class SharedriveCatalogAction:
         for ref in refs:
             if any(ref.name_path.startswith(f"{prefix}.") for prefix in selected_prefixes):
                 selected.append(ref)
-            elif self._matches(ref, selectors):
+            elif sel.matches(ref):
                 selected.append(ref)
                 selected_prefixes.append(ref.name_path)
         return selected
@@ -204,31 +282,6 @@ class SharedriveCatalogAction:
                 self._emit(log, f"Warning, {resource.name or resource.path or 'resource'} failed: {exc}")
                 summary.failures += 1
         return summary
-
-    @staticmethod
-    def _selectors(selector: str | Iterable[str] | None) -> set[str] | None:
-        if selector is None:
-            return None
-        raw_values = [selector] if isinstance(selector, str) else list(selector)
-        values = {
-            part.strip()
-            for raw_value in raw_values
-            for part in raw_value.split(",")
-            if part.strip()
-        }
-        if not values or "all" in {value.lower() for value in values}:
-            return None
-        return values
-
-    @staticmethod
-    def _matches(ref: Any, selectors: set[str]) -> bool:
-        adapter = adapter_from_service_type(getattr(ref.model, "serviceType", None))
-        name = str(getattr(ref.model, "name", "") or "")
-        candidates = {ref.name_path, name, ref.entity_type}
-        if adapter:
-            candidates.add(adapter)
-        lower_selectors = {selector.lower() for selector in selectors}
-        return any(candidate.lower() in lower_selectors for candidate in candidates)
 
     @staticmethod
     def _emit(log: LogFn | None, message: str) -> None:
@@ -402,6 +455,7 @@ class SharedriveCatalogAction:
 
 __all__ = [
     "AuthCheckResult",
+    "CatalogSelector",
     "DownloadSummary",
     "FetchSummary",
     "SharedriveCatalogAction",
