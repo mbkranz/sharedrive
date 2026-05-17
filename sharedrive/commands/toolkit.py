@@ -154,6 +154,11 @@ def parse_set_args(args: list[str]) -> dict[str, Any]:
 
 
 def parse_selector_tokens(values: str | list[str] | tuple[str, ...] | None) -> list[str] | None:
+    """Parse selector values into tokens or ``None`` when selector means "all".
+
+    Empty parts are ignored, and any ``all`` token takes precedence over all
+    other tokens.
+    """
     if values is None:
         return None
     raw_values = [values] if isinstance(values, str) else list(values)
@@ -169,6 +174,12 @@ def parse_selector_tokens(values: str | list[str] | tuple[str, ...] | None) -> l
 
 
 def scoped_selector(selector: str | None) -> str | None:
+    """Return selector scoped to checked-out entity, preserving string API shape.
+
+    Returns a single selector token as ``str`` and multiple tokens as a
+    comma-separated ``str`` so existing action call sites can keep passing
+    selector values as strings.
+    """
     checked_out_entity = get_checked_out_entity()
     if selector is None:
         return checked_out_entity
