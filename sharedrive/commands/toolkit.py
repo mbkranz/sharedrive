@@ -244,7 +244,6 @@ __all__ = [
     "load_env_file",
     "normalize_update_property",
     "normalize_update_value",
-    "normalize_selector",
     "parse_selector_tokens",
     "parse_set_args",
     "prepare_descriptor_path",
