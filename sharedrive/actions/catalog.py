@@ -19,6 +19,28 @@ from sharedrive.registry import get_client, get_provider
 LogFn = Callable[[str], None]
 
 
+def normalize_selector(selector: str | Iterable[str] | None) -> set[str] | None:
+    """Normalise a selector value into a set of tokens, or ``None`` for "select all".
+
+    Accepts a single string (optionally comma-separated), an iterable of
+    strings, or ``None``.  Returns ``None`` when the input is absent, empty,
+    or contains the special token ``"all"`` (case-insensitive), which means
+    "no filtering – select everything".
+    """
+    if selector is None:
+        return None
+    raw_values = [selector] if isinstance(selector, str) else list(selector)
+    values = {
+        part.strip()
+        for raw_value in raw_values
+        for part in raw_value.split(",")
+        if part.strip()
+    }
+    if not values or "all" in {value.lower() for value in values}:
+        return None
+    return values
+
+
 @dataclass(slots=True)
 class FetchSummary:
     resource_name: str
@@ -100,7 +122,7 @@ class SharedriveCatalogAction:
         return AdapterCapabilities()
 
     def references(self, selector: str | Iterable[str] | None = None) -> list[Any]:
-        selectors = self._selectors(selector)
+        selectors = normalize_selector(selector)
         refs = self.catalog.iter_entity_paths(include_self=False)
         if selectors is None:
             return refs
@@ -204,21 +226,6 @@ class SharedriveCatalogAction:
                 self._emit(log, f"Warning, {resource.name or resource.path or 'resource'} failed: {exc}")
                 summary.failures += 1
         return summary
-
-    @staticmethod
-    def _selectors(selector: str | Iterable[str] | None) -> set[str] | None:
-        if selector is None:
-            return None
-        raw_values = [selector] if isinstance(selector, str) else list(selector)
-        values = {
-            part.strip()
-            for raw_value in raw_values
-            for part in raw_value.split(",")
-            if part.strip()
-        }
-        if not values or "all" in {value.lower() for value in values}:
-            return None
-        return values
 
     @staticmethod
     def _matches(ref: Any, selectors: set[str]) -> bool:
@@ -405,4 +412,5 @@ __all__ = [
     "DownloadSummary",
     "FetchSummary",
     "SharedriveCatalogAction",
+    "normalize_selector",
 ]

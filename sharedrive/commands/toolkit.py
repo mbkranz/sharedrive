@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 from sharedrive.helpers import get_checked_out_entity
 from sharedrive.helpers import resolve_descriptor_path as resolve_descriptor_path_helper
+from sharedrive.actions.catalog import normalize_selector
 from sharedrive.models import (
     DriveCatalog,
     DrivePackage,
@@ -82,13 +83,6 @@ def run_microsoft_login(
     )
 
 
-def parse_include_values(values: list[str] | None) -> str | list[str]:
-    normalized = parse_selector_tokens(values)
-    if normalized is None:
-        return "all"
-    return normalized
-
-
 def coerce_set_value(raw: str) -> Any:
     value = raw.strip()
     lower = value.lower()
@@ -156,21 +150,16 @@ def parse_set_args(args: list[str]) -> dict[str, Any]:
 def parse_selector_tokens(values: str | list[str] | tuple[str, ...] | None) -> list[str] | None:
     """Parse selector values into tokens or ``None`` when selector means "all".
 
+    Delegates to :func:`~sharedrive.actions.catalog.normalize_selector` for
+    the core normalisation logic and converts the resulting set to a list so
+    callers that need ordered iteration (e.g. :func:`scoped_selector`) can
+    work with the result directly.
+
     Empty parts are ignored, and any ``all`` token takes precedence over all
     other tokens.
     """
-    if values is None:
-        return None
-    raw_values = [values] if isinstance(values, str) else list(values)
-    tokens = [
-        part.strip()
-        for raw_value in raw_values
-        for part in raw_value.split(",")
-        if part.strip()
-    ]
-    if not tokens or "all" in {token.lower() for token in tokens}:
-        return None
-    return tokens
+    tokens = normalize_selector(values)
+    return list(tokens) if tokens is not None else None
 
 
 def scoped_selector(selector: str | None) -> str | None:
@@ -255,7 +244,7 @@ __all__ = [
     "load_env_file",
     "normalize_update_property",
     "normalize_update_value",
-    "parse_include_values",
+    "normalize_selector",
     "parse_selector_tokens",
     "parse_set_args",
     "prepare_descriptor_path",
