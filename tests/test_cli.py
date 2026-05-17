@@ -122,6 +122,37 @@ def test_auth_check_returns_json_and_passes_include(
     assert captured["selector"] == ["googledrive"]
 
 
+def test_auth_check_parses_comma_separated_include(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_descriptor(descriptor)
+    captured: dict[str, object] = {}
+
+    def fake_check_auth(**kwargs):
+        captured.update(kwargs)
+        return [AuthCheckResult("googledrive", True, "ok")]
+
+    monkeypatch.setattr("sharedrive.commands.auth.check_auth_action", fake_check_auth)
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "auth",
+            "check",
+            str(descriptor),
+            "--include",
+            "googledrive,sharepoint",
+            "--format",
+            "json",
+        ],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 0
+    assert captured["selector"] == ["googledrive", "sharepoint"]
+
+
 def test_auth_check_uses_checked_out_descriptor_default(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -660,6 +691,58 @@ def test_fetch_with_selector_arg_prepends_checked_out_entity(
 
     assert result.exit_code == 0
     assert captured["selector"] == "research.archive"
+
+
+def test_fetch_with_comma_selector_arg_scopes_each_selector(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    descriptor = tmp_path / "resources" / "descriptor.yaml"
+    descriptor.parent.mkdir(parents=True, exist_ok=True)
+    _write_descriptor(descriptor)
+    captured: dict[str, object] = {}
+
+    def fake_fetch(**kwargs):
+        captured.update(kwargs)
+        return [SimpleNamespace(resource_name="archive", generated_resources=1, dry_run=False)]
+
+    monkeypatch.setattr("sharedrive.commands.transfer.fetch_action", fake_fetch)
+    RUNNER.invoke(app, ["checkout", "resources/descriptor.yaml", "research"], prog_name="sharedrive")
+
+    result = RUNNER.invoke(
+        app,
+        ["fetch", "archive,nested-package", "--descriptor", str(descriptor)],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 0
+    assert captured["selector"] == "research.archive,research.nested-package"
+
+
+def test_fetch_selector_all_ignores_checked_out_entity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    descriptor = tmp_path / "resources" / "descriptor.yaml"
+    descriptor.parent.mkdir(parents=True, exist_ok=True)
+    _write_descriptor(descriptor)
+    captured: dict[str, object] = {}
+
+    def fake_fetch(**kwargs):
+        captured.update(kwargs)
+        return [SimpleNamespace(resource_name="root", generated_resources=1, dry_run=False)]
+
+    monkeypatch.setattr("sharedrive.commands.transfer.fetch_action", fake_fetch)
+    RUNNER.invoke(app, ["checkout", "resources/descriptor.yaml", "research"], prog_name="sharedrive")
+
+    result = RUNNER.invoke(
+        app,
+        ["fetch", "all", "--descriptor", str(descriptor)],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 0
+    assert captured["selector"] is None
 
 
 def test_fetch_without_entity_and_without_selector_fetches_from_descriptor_root(

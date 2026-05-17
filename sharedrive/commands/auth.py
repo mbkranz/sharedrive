@@ -11,12 +11,11 @@ from sharedrive.commands.toolkit import (
     OutputFormat,
     echo_json,
     examples_epilog,
-    exit_if_descriptor_missing,
     load_env_file,
     parse_include_values,
+    prepare_descriptor_path,
     run_microsoft_login,
 )
-from sharedrive.helpers import resolve_descriptor_path
 
 
 def _render_auth_results(results: list[Any], output_format: OutputFormat) -> None:
@@ -65,9 +64,7 @@ def register_auth_commands(auth_app: typer.Typer, auth_login_app: typer.Typer) -
         ),
     ) -> None:
         """Validate credentials for the adapters selected by a descriptor."""
-        load_env_file(env_file)
-        descriptor_path = resolve_descriptor_path(descriptor)
-        exit_if_descriptor_missing(descriptor_path)
+        descriptor_path = prepare_descriptor_path(descriptor, env_file=env_file)
         include_values = parse_include_values(include)
         results = check_auth_action(descriptor=descriptor_path, selector=include_values)
         _render_auth_results(results, output_format)

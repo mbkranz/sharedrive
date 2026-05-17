@@ -9,6 +9,7 @@ import typer
 from dotenv import load_dotenv
 
 from sharedrive.helpers import get_checked_out_entity
+from sharedrive.helpers import resolve_descriptor_path as resolve_descriptor_path_helper
 from sharedrive.models import (
     DriveCatalog,
     DrivePackage,
@@ -43,6 +44,19 @@ def load_env_file(env_file: Optional[Path]) -> None:
         load_dotenv(str(env_file), override=True)
 
 
+def prepare_descriptor_path(
+    descriptor: Path | str | None = None,
+    *,
+    env_file: Optional[Path] = None,
+    require_exists: bool = True,
+) -> Path:
+    load_env_file(env_file)
+    descriptor_path = resolve_descriptor_path_helper(descriptor)
+    if require_exists:
+        exit_if_descriptor_missing(descriptor_path)
+    return descriptor_path
+
+
 def run_microsoft_login(
     auth_mode: Optional[str],
     host_url: Optional[str],
@@ -69,13 +83,8 @@ def run_microsoft_login(
 
 
 def parse_include_values(values: list[str] | None) -> str | list[str]:
-    if not values:
-        return "all"
-    tokens: list[str] = []
-    for value in values:
-        tokens.extend(part.strip() for part in value.split(","))
-    normalized = [token for token in tokens if token]
-    if not normalized or "all" in {token.lower() for token in normalized}:
+    normalized = parse_selector_tokens(values)
+    if normalized is None:
         return "all"
     return normalized
 
@@ -144,11 +153,35 @@ def parse_set_args(args: list[str]) -> dict[str, Any]:
     return parsed
 
 
+def parse_selector_tokens(values: str | list[str] | tuple[str, ...] | None) -> list[str] | None:
+    if values is None:
+        return None
+    raw_values = [values] if isinstance(values, str) else list(values)
+    tokens = [
+        part.strip()
+        for raw_value in raw_values
+        for part in raw_value.split(",")
+        if part.strip()
+    ]
+    if not tokens or "all" in {token.lower() for token in tokens}:
+        return None
+    return tokens
+
+
 def scoped_selector(selector: str | None) -> str | None:
     checked_out_entity = get_checked_out_entity()
     if selector is None:
         return checked_out_entity
-    return f"{checked_out_entity}.{selector}" if checked_out_entity else selector
+    selector_tokens = parse_selector_tokens(selector)
+    if selector_tokens is None:
+        return None
+
+    scoped_tokens = (
+        [f"{checked_out_entity}.{token}" for token in selector_tokens]
+        if checked_out_entity
+        else selector_tokens
+    )
+    return scoped_tokens[0] if len(scoped_tokens) == 1 else ",".join(scoped_tokens)
 
 
 def resolve_resource_reference(resource_selector: str, descriptor: DriveCatalog):
@@ -212,7 +245,9 @@ __all__ = [
     "normalize_update_property",
     "normalize_update_value",
     "parse_include_values",
+    "parse_selector_tokens",
     "parse_set_args",
+    "prepare_descriptor_path",
     "resolve_resource_reference",
     "run_microsoft_login",
     "scoped_selector",

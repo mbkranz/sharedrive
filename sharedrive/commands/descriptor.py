@@ -15,16 +15,15 @@ from sharedrive.commands.toolkit import (
     OutputFormat,
     echo_json,
     examples_epilog,
-    exit_if_descriptor_missing,
     normalize_update_property,
     normalize_update_value,
     parse_set_args,
+    prepare_descriptor_path,
     resolve_resource_reference,
 )
 from sharedrive.exceptions import GoogleApiError, GraphApiError
 from sharedrive.helpers import (
     has_saved_global_descriptor,
-    resolve_descriptor_path,
     set_active_descriptor,
 )
 from sharedrive.models import DriveCatalog
@@ -53,8 +52,7 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
         ),
     ) -> None:
         """Clone one descriptor file to a new local path."""
-        source_descriptor = resolve_descriptor_path(descriptor)
-        exit_if_descriptor_missing(source_descriptor)
+        source_descriptor = prepare_descriptor_path(descriptor)
         if source_descriptor == target_path:
             raise typer.BadParameter("Source and target descriptor paths must differ.")
         if target_path.exists() and not force:
@@ -95,8 +93,7 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
         if not parsed:
             raise typer.BadParameter("Provide one or more field values to update.")
 
-        descriptor_path = resolve_descriptor_path(descriptor)
-        exit_if_descriptor_missing(descriptor_path)
+        descriptor_path = prepare_descriptor_path(descriptor)
 
         descriptor_model = DriveCatalog.from_path(str(descriptor_path))
         document = descriptor_model.to_dict()
@@ -187,8 +184,7 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
         ),
     ) -> None:
         """List local descriptor entities, paths, and source metadata."""
-        descriptor_path = resolve_descriptor_path(descriptor)
-        exit_if_descriptor_missing(descriptor_path)
+        descriptor_path = prepare_descriptor_path(descriptor)
 
         try:
             entities = list_descriptor_entities(descriptor_path)
@@ -292,10 +288,10 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
         ),
     ) -> None:
         """Add a standards-aligned resource or catalog entry to a descriptor."""
-        descriptor_path = resolve_descriptor_path(descriptor)
+        descriptor_path = prepare_descriptor_path(
+            descriptor, require_exists=descriptor is not None or has_saved_global_descriptor()
+        )
         explicit_descriptor = descriptor is not None or has_saved_global_descriptor()
-        if explicit_descriptor:
-            exit_if_descriptor_missing(descriptor_path)
 
         try:
             resource = add_resource_to_descriptor(

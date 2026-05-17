@@ -92,7 +92,10 @@ class SharedriveCatalogAction:
         provider = self.provider_factory(adapter)
         if provider is None:
             return None
-        return getattr(provider, "capabilities", None)
+        capabilities = getattr(provider, "capabilities", None)
+        if isinstance(capabilities, AdapterCapabilities):
+            return capabilities
+        return AdapterCapabilities()
 
     def references(self, selector: str | Iterable[str] | None = None) -> list[Any]:
         selectors = self._selectors(selector)
@@ -273,7 +276,7 @@ class SharedriveCatalogAction:
             if not catalog.accessURL:
                 raise ValueError(f"Catalog '{catalog.name}' has no accessURL.")
             capabilities = self._provider_capabilities(catalog.adapter_name)
-            if capabilities is not None and not getattr(capabilities, "supports_fetch", True):
+            if capabilities is not None and not capabilities.supports_fetch:
                 raise ValueError(
                     f"Adapter '{catalog.adapter_name}' does not support fetch operations."
                 )
@@ -331,7 +334,7 @@ class SharedriveCatalogAction:
         destination = resolve_cache_path(resource, output_dir)
         adapter = resource.adapter_name
         capabilities = self._provider_capabilities(adapter)
-        if capabilities is not None and not getattr(capabilities, "supports_download", True):
+        if capabilities is not None and not capabilities.supports_download:
             raise ValueError(f"Adapter '{adapter}' does not support download operations.")
         self._reserve_destination(
             destination,
@@ -375,9 +378,8 @@ class SharedriveCatalogAction:
         provider = self.provider_factory(adapter)
         if provider is None:
             return AuthCheckResult(adapter, False, f"Unsupported adapter '{adapter}'.")
-        supports_auth = getattr(
-            getattr(provider, "capabilities", None), "supports_auth_check", True
-        )
+        capabilities = self._provider_capabilities(adapter)
+        supports_auth = capabilities.supports_auth_check if capabilities is not None else True
         if not supports_auth:
             return AuthCheckResult(adapter, True, f"Adapter '{adapter}' does not require auth checks.")
         try:

@@ -12,12 +12,11 @@ from sharedrive.commands.toolkit import (
     OutputFormat,
     echo_json,
     examples_epilog,
-    exit_if_descriptor_missing,
-    load_env_file,
+    prepare_descriptor_path,
     scoped_selector,
 )
 from sharedrive.exceptions import GoogleApiError, GraphApiError
-from sharedrive.helpers import resolve_descriptor_path, resolve_output_dir
+from sharedrive.helpers import resolve_output_dir
 
 
 def _summary_to_dict(summary) -> dict:
@@ -61,9 +60,7 @@ def register_transfer_commands(app: typer.Typer) -> None:
         ),
     ) -> None:
         """Fetch remote metadata for one selector into the descriptor."""
-        load_env_file(env_file)
-        descriptor_path = resolve_descriptor_path(descriptor)
-        exit_if_descriptor_missing(descriptor_path)
+        descriptor_path = prepare_descriptor_path(descriptor, env_file=env_file)
         entity_name = scoped_selector(entity)
 
         if output_format == OutputFormat.TEXT:
@@ -151,13 +148,10 @@ def register_transfer_commands(app: typer.Typer) -> None:
         ),
     ) -> None:
         """Download resources from a selector in the descriptor."""
-        load_env_file(env_file)
-        descriptor_path = resolve_descriptor_path(descriptor)
+        descriptor_path = prepare_descriptor_path(descriptor, env_file=env_file)
         entity_name = scoped_selector(selector)
 
         output_dir_path = resolve_output_dir(output_dir, descriptor=descriptor_path)
-
-        exit_if_descriptor_missing(descriptor_path)
 
         summary = download_action(
             descriptor=descriptor_path,
