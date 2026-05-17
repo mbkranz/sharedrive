@@ -56,7 +56,7 @@ class CatalogSelector:
         *,
         scope: str | None = None,
     ) -> None:
-        raw_was_none = raw is None
+        raw_was_none = raw is None  # needed to distinguish "absent" from "all" below
         if raw is None:
             self._tokens: frozenset[str] | None = None
         else:
