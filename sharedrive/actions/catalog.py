@@ -32,6 +32,16 @@ class CatalogSelector:
     (case-insensitive) all produce a "select-everything" selector (falsy).
     Any other input yields a truthy selector containing the parsed tokens.
 
+    An optional *scope* (e.g. a checked-out entity dot-path) is applied at
+    construction time:
+
+    * If *raw* is ``None`` and *scope* is set, the scope becomes the single
+      filter token (the checkout entity acts as an implicit selector).
+    * If *raw* resolves to one or more tokens and *scope* is set, each token
+      is prefixed as ``"{scope}.{token}"``.
+    * If *raw* resolves to "select all" (empty / ``"all"``), *scope* is
+      ignored — an explicit "all" always wins.
+
     Designed as a Pydantic-compatible type so it can be used directly as an
     annotation in Pydantic models or with ``validate_call``.  When used in
     plain Python code, construct directly — e.g. ``CatalogSelector(raw_value)``
@@ -40,21 +50,36 @@ class CatalogSelector:
 
     __slots__ = ("_tokens",)
 
-    def __init__(self, raw: str | Iterable[str] | None = None) -> None:
+    def __init__(
+        self,
+        raw: str | Iterable[str] | None = None,
+        *,
+        scope: str | None = None,
+    ) -> None:
+        raw_was_none = raw is None
         if raw is None:
             self._tokens: frozenset[str] | None = None
-            return
-        raw_values = [raw] if isinstance(raw, str) else list(raw)
-        values = frozenset(
-            stripped
-            for raw_value in raw_values
-            for part in raw_value.split(",")
-            if (stripped := part.strip())
-        )
-        if not values or "all" in {v.lower() for v in values}:
-            self._tokens = None
         else:
-            self._tokens = values
+            raw_values = [raw] if isinstance(raw, str) else list(raw)
+            values = frozenset(
+                stripped
+                for raw_value in raw_values
+                for part in raw_value.split(",")
+                if (stripped := part.strip())
+            )
+            if not values or "all" in {v.lower() for v in values}:
+                self._tokens = None
+            else:
+                self._tokens = values
+
+        if scope:
+            if self._tokens is None and raw_was_none:
+                # No explicit selector — scope acts as the implicit filter.
+                self._tokens = frozenset([scope])
+            elif self._tokens is not None:
+                # Prefix every token with the scope.
+                self._tokens = frozenset(f"{scope}.{t}" for t in self._tokens)
+            # else: raw was "all" / empty — explicit "all" wins, scope ignored.
 
     @property
     def tokens(self) -> frozenset[str] | None:

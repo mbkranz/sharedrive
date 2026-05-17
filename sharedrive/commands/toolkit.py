@@ -147,38 +147,18 @@ def parse_set_args(args: list[str]) -> dict[str, Any]:
     return parsed
 
 
-def parse_selector_tokens(values: str | list[str] | tuple[str, ...] | None) -> list[str] | None:
-    """Parse selector values into tokens or ``None`` when selector means "all".
-
-    Delegates to :class:`~sharedrive.actions.catalog.CatalogSelector` for
-    normalisation and returns the tokens as a sorted list, or ``None`` when
-    the selector means "select everything".
-    """
-    sel = CatalogSelector(values)
-    return sorted(sel.tokens) if sel.tokens is not None else None
-
-
 def scoped_selector(selector: str | None) -> str | None:
-    """Return selector scoped to checked-out entity, preserving string API shape.
+    """Return selector scoped to the checked-out entity, preserving string API shape.
 
-    Returns a single selector token as ``str`` and multiple tokens as a
-    comma-separated ``str`` so existing action call sites can keep passing
-    selector values as strings.
+    Delegates scoping logic to :class:`~sharedrive.actions.catalog.CatalogSelector`
+    (see its ``scope`` parameter) and returns the result as a comma-separated
+    ``str`` or ``None`` so existing action call sites continue to work.
     """
-    checked_out_entity = get_checked_out_entity()
-    if selector is None:
-        return checked_out_entity
-    sel = CatalogSelector(selector)
+    sel = CatalogSelector(selector, scope=get_checked_out_entity())
     if not sel:
         return None
-
     tokens = sorted(sel.tokens)  # sel is truthy so tokens is not None
-    scoped_tokens = (
-        [f"{checked_out_entity}.{token}" for token in tokens]
-        if checked_out_entity
-        else tokens
-    )
-    return scoped_tokens[0] if len(scoped_tokens) == 1 else ",".join(scoped_tokens)
+    return tokens[0] if len(tokens) == 1 else ",".join(tokens)
 
 
 def resolve_resource_reference(resource_selector: str, descriptor: DriveCatalog):
@@ -241,7 +221,6 @@ __all__ = [
     "load_env_file",
     "normalize_update_property",
     "normalize_update_value",
-    "parse_selector_tokens",
     "parse_set_args",
     "prepare_descriptor_path",
     "resolve_resource_reference",
