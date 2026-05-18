@@ -216,6 +216,7 @@ class SharedriveCatalog:
     def _normalize_selector(
         selector: CatalogSelector | str | Iterable[str] | None,
     ) -> CatalogSelector:
+        """Normalize selector inputs to a `CatalogSelector` instance."""
         return selector if isinstance(selector, CatalogSelector) else CatalogSelector(selector)
 
     def references(
@@ -306,7 +307,11 @@ class SharedriveCatalog:
         log: LogFn | None = print,
         use_cloudpathlib: bool = True,
     ) -> DownloadSummary:
-        """Download selected resources to paths resolved from each `_cache` and `output_dir`."""
+        """Download selected resources to `resolve_cache_path(resource, output_dir)` paths.
+
+        Relative `_cache` values are resolved under `output_dir`, absolute `_cache`
+        values are used as-is, and missing `_cache` raises `ValueError`.
+        """
         sel = self._normalize_selector(selector)
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)

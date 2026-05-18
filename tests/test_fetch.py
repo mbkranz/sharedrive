@@ -145,7 +145,9 @@ def test_fetch_rejects_standalone_resource(tmp_path: Path) -> None:
         SharedriveCatalog.from_path(descriptor).fetch("drive-export", log=None)
 
 
-def test_fetch_accepts_multi_selectors(monkeypatch, tmp_path: Path) -> None:
+def test_fetch_accepts_multi_selectors_in_sorted_token_order(
+    monkeypatch, tmp_path: Path
+) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     descriptor.write_text(
         yaml.safe_dump(
@@ -176,7 +178,8 @@ def test_fetch_accepts_multi_selectors(monkeypatch, tmp_path: Path) -> None:
         ["research", "archive"], log=None
     )
 
-    assert [summary.resource_name for summary in summaries] == ["archive", "research"]
+    expected = sorted(["research", "archive"])
+    assert [summary.resource_name for summary in summaries] == expected
     assert all(summary.generated_resources == 1 for summary in summaries)
 
 
