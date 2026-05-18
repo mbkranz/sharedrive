@@ -216,12 +216,19 @@ class SharedriveCatalog:
     def _normalize_selector(
         selector: CatalogSelector | str | Iterable[str] | None,
     ) -> CatalogSelector:
-        """Normalize selector inputs to a `CatalogSelector` instance.
+        """Normalize selector inputs to a `CatalogSelector`.
 
-        Accepts an existing `CatalogSelector`, a selector string, an iterable of
-        selector strings, or `None` ("select all"), and always returns a
-        normalized `CatalogSelector`. This is static because normalization is a
-        pure transformation that does not depend on catalog instance state.
+        Parameters
+        ----------
+        selector:
+            Existing `CatalogSelector`, selector string, iterable of selector
+            strings, or `None` for "select all".
+
+        Returns
+        -------
+        CatalogSelector
+            Normalized selector. This helper is static because normalization is
+            a pure transformation that does not depend on catalog instance state.
         """
         return selector if isinstance(selector, CatalogSelector) else CatalogSelector(selector)
 
@@ -313,10 +320,33 @@ class SharedriveCatalog:
         log: LogFn | None = print,
         use_cloudpathlib: bool = True,
     ) -> DownloadSummary:
-        """Download selected resources to `resolve_cache_path(resource, output_dir)` paths.
+        """Download selected resources to paths from `resolve_cache_path`.
 
-        Relative `_cache` values are resolved under `output_dir`, absolute `_cache`
-        values are used as-is, and missing `_cache` raises `ValueError`.
+        Parameters
+        ----------
+        selector:
+            Resource selector (`None`, string, iterable, or `CatalogSelector`).
+        output_dir:
+            Base directory used when `_cache` is relative.
+        dry_run:
+            When true, only log download actions.
+        check_auth:
+            When true, run adapter auth checks before downloads.
+        log:
+            Optional logger callback for status messages.
+        use_cloudpathlib:
+            For S3, prefer cloudpathlib before boto3 fallback.
+
+        Returns
+        -------
+        DownloadSummary
+            Aggregate result counts for attempted downloads.
+
+        Raises
+        ------
+        ValueError
+            If a selected resource has no `_cache` path or two resources map to
+            the same output destination.
         """
         sel = self._normalize_selector(selector)
         output_dir = Path(output_dir)
