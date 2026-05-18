@@ -10,7 +10,7 @@ from pydantic_core import core_schema
 from dplib.models.resource import Resource
 
 from sharedrive.clients.base import AdapterCapabilities, BaseClient
-from sharedrive.clients.aws import S3Client, download_s3_url
+from sharedrive.clients.aws import S3Client
 from sharedrive.models import (
     DriveCatalog,
     DriveResource,
@@ -404,21 +404,8 @@ class SharedriveCatalogAction:
 
         destination.parent.mkdir(parents=True, exist_ok=True)
         if adapter == "s3":
-            s3_client = self.client(adapter)
-            output_path = (
-                s3_client.download_from_weburl(
-                    resource.path,
-                    destination,
-                    dry_run=False,
-                    use_cloudpathlib=use_cloudpathlib,
-                )
-                if isinstance(s3_client, S3Client)
-                else download_s3_url(
-                    resource.path,
-                    destination,
-                    dry_run=False,
-                    use_cloudpathlib=use_cloudpathlib,
-                )
+            output_path = self._download_s3_resource(
+                resource.path, destination, use_cloudpathlib=use_cloudpathlib
             )
             if output_path is None:
                 raise RuntimeError("S3 download returned no output path")
@@ -426,6 +413,23 @@ class SharedriveCatalogAction:
             item = self.client(adapter).get_from_weburl(resource.path)
             item.download(str(destination))
         summary.downloaded += 1
+
+    def _download_s3_resource(
+        self,
+        resource_path: str,
+        destination: Path,
+        *,
+        use_cloudpathlib: bool,
+    ) -> Path | None:
+        s3_client = self.client("s3")
+        if not isinstance(s3_client, S3Client):
+            raise TypeError("S3 adapter must resolve to an S3Client instance.")
+        return s3_client.download_from_weburl(
+            resource_path,
+            destination,
+            dry_run=False,
+            use_cloudpathlib=use_cloudpathlib,
+        )
 
     @staticmethod
     def _reserve_destination(

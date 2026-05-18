@@ -134,14 +134,14 @@ def test_download_uses_s3_client_method(tmp_path: Path) -> None:
         }
     )
 
-    class _InnerS3Client:
+    class _StubS3BotoClient:
         def __init__(self) -> None:
             self.calls: list[tuple[str, str, str]] = []
 
         def download_file(self, bucket: str, key: str, target: str) -> None:
             self.calls.append((bucket, key, target))
 
-    inner = _InnerS3Client()
+    inner = _StubS3BotoClient()
     action = SharedriveCatalogAction(catalog, client_factory=lambda _: S3Client(client=inner))
 
     summary = action.download(output_dir=tmp_path, dry_run=False, log=None)
