@@ -216,7 +216,12 @@ class SharedriveCatalog:
     def _normalize_selector(
         selector: CatalogSelector | str | Iterable[str] | None,
     ) -> CatalogSelector:
-        """Normalize selector inputs to a `CatalogSelector` instance."""
+        """Normalize selector inputs to a `CatalogSelector` instance.
+
+        Accepts an existing `CatalogSelector`, a selector string, an iterable of
+        selector strings, or `None` ("select all"), and always returns a
+        normalized `CatalogSelector`.
+        """
         return selector if isinstance(selector, CatalogSelector) else CatalogSelector(selector)
 
     def references(
@@ -359,8 +364,8 @@ class SharedriveCatalog:
     def _catalogs_to_fetch(
         self, selector: CatalogSelector, *, depth: int
     ) -> list[tuple[str, DriveCatalog]]:
+        catalogs: list[tuple[str, DriveCatalog]] = []
         if selector.tokens:
-            catalogs: list[tuple[str, DriveCatalog]] = []
             for token in sorted(selector.tokens):
                 entity = self.catalog.get_entity(token)
                 if entity is None:
@@ -375,7 +380,6 @@ class SharedriveCatalog:
                 catalogs.append((str(entity.name or token), entity))
             return catalogs
 
-        catalogs: list[tuple[str, DriveCatalog]] = []
         for ref in self.catalog.iter_entity_paths(include_self=bool(self.catalog.name)):
             if not isinstance(ref.model, DriveCatalog) or not ref.model.accessURL:
                 continue
