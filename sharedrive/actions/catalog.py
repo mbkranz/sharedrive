@@ -10,7 +10,7 @@ from pydantic_core import core_schema
 from dplib.models.resource import Resource
 
 from sharedrive.clients.base import AdapterCapabilities, BaseClient
-from sharedrive.clients.aws import download_s3_url
+from sharedrive.clients.aws import S3Client, download_s3_url
 from sharedrive.models import (
     DriveCatalog,
     DriveResource,
@@ -404,11 +404,21 @@ class SharedriveCatalogAction:
 
         destination.parent.mkdir(parents=True, exist_ok=True)
         if adapter == "s3":
-            output_path = download_s3_url(
-                resource.path,
-                destination,
-                dry_run=False,
-                use_cloudpathlib=use_cloudpathlib,
+            s3_client = self.client(adapter)
+            output_path = (
+                s3_client.download_from_weburl(
+                    resource.path,
+                    destination,
+                    dry_run=False,
+                    use_cloudpathlib=use_cloudpathlib,
+                )
+                if isinstance(s3_client, S3Client)
+                else download_s3_url(
+                    resource.path,
+                    destination,
+                    dry_run=False,
+                    use_cloudpathlib=use_cloudpathlib,
+                )
             )
             if output_path is None:
                 raise RuntimeError("S3 download returned no output path")

@@ -75,18 +75,13 @@ def download_s3_url(
     dry_run: bool = False,
     use_cloudpathlib: bool = True,
 ) -> Path | None:
-    if dry_run:
-        print(f"Would download {source_url} to {output_path}")
-        return None
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    if use_cloudpathlib and S3Path is not None:
-        S3Path(source_url).download_to(str(output_path))
-        return output_path
-
-    bucket, key = parse_s3_source_url(source_url)
-    boto3.client("s3").download_file(bucket, key, str(output_path))
-    return output_path
+    """Backward-compatible helper for downloading an S3 object URL to a local path."""
+    return S3Client().download_from_weburl(
+        source_url,
+        output_path,
+        dry_run=dry_run,
+        use_cloudpathlib=use_cloudpathlib,
+    )
 
 
 @provider("s3")
@@ -131,6 +126,27 @@ class S3Client(BaseClient):
                 if response.get("KeyCount", 0) > 0:
                     return S3Item(client=self, bucket=bucket, key=prefix, is_directory=True)
             raise
+
+    def download_from_weburl(
+        self,
+        source_url: str,
+        output_path: Path,
+        *,
+        dry_run: bool = False,
+        use_cloudpathlib: bool = True,
+    ) -> Path | None:
+        if dry_run:
+            print(f"Would download {source_url} to {output_path}")
+            return None
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if use_cloudpathlib and S3Path is not None:
+            S3Path(source_url).download_to(str(output_path))
+            return output_path
+
+        bucket, key = parse_s3_source_url(source_url)
+        self.client.download_file(bucket, key, str(output_path))
+        return output_path
 
 
 class S3Item(DriveItem):

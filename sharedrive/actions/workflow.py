@@ -19,6 +19,7 @@ def fetch_descriptor_metadata(
     depth: int = -1,
     log=print,
 ) -> list[FetchSummary]:
+    """Fetch metadata and persist descriptor only when material changes occur."""
     action = SharedriveCatalogAction.from_path(descriptor)
     summaries = action.fetch(selector, dry_run=dry_run, depth=depth, log=log)
     if not dry_run and any(summary.changed for summary in summaries):
@@ -36,6 +37,7 @@ def download_descriptor_resources(
     log=print,
     use_cloudpathlib: bool = True,
 ) -> DownloadSummary:
+    """Download descriptor-selected resources through one workflow entrypoint."""
     return SharedriveCatalogAction.from_path(descriptor).download(
         selector,
         output_dir=output_dir,
@@ -52,6 +54,7 @@ def check_descriptor_auth(
     *,
     adapters: Iterable[str] | None = None,
 ) -> list[AuthCheckResult]:
+    """Check auth for descriptor-selected adapters or explicit adapter names."""
     if descriptor is None:
         if adapters is None:
             raise ValueError("descriptor is required when adapters are not provided.")

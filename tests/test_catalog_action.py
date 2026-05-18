@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from sharedrive.actions.catalog import SharedriveCatalogAction
+from sharedrive.clients.aws import S3Client
 from sharedrive.clients.base import AdapterCapabilities
 from sharedrive.models import DriveCatalog
 
@@ -115,3 +116,38 @@ def test_fetch_respects_adapter_capabilities() -> None:
     assert len(summaries) == 1
     assert summaries[0].failures == 1
     assert "does not support fetch operations" in summaries[0].errors[0]
+
+
+def test_download_uses_s3_client_method(tmp_path: Path) -> None:
+    catalog = DriveCatalog.model_validate(
+        {
+            "$schema": "data-package-catalog",
+            "resources": [
+                {
+                    "name": "s3-object",
+                    "path": "s3://example-bucket/path/file.csv",
+                    "_cache": "downloads/file.csv",
+                    "serviceType": "S3",
+                    "entityType": "File",
+                }
+            ],
+        }
+    )
+
+    class _InnerS3Client:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, str]] = []
+
+        def download_file(self, bucket: str, key: str, target: str) -> None:
+            self.calls.append((bucket, key, target))
+
+    inner = _InnerS3Client()
+    action = SharedriveCatalogAction(catalog, client_factory=lambda _: S3Client(client=inner))
+
+    summary = action.download(output_dir=tmp_path, dry_run=False, log=None)
+
+    assert summary.ok
+    assert summary.downloaded == 1
+    assert len(inner.calls) == 1
+    assert inner.calls[0][0] == "example-bucket"
+    assert inner.calls[0][1] == "path/file.csv"
