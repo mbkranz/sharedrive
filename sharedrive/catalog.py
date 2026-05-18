@@ -40,17 +40,18 @@ class CatalogSelector:
 
     __slots__ = ("_tokens",)
 
-    def __init__(self, raw: "CatalogSelector | str | Iterable[str] | None" = None) -> None:
-        if isinstance(raw, CatalogSelector):
-            self._tokens = raw.tokens
-            return
+    def __init__(self, raw: str | Iterable[str] | None = None) -> None:
         if raw is None:
             self._tokens: frozenset[str] | None = None
         else:
             raw_values = [raw] if isinstance(raw, str) else list(raw)
             if not all(isinstance(value, str) for value in raw_values):
+                invalid_types = sorted(
+                    {type(value).__name__ for value in raw_values if not isinstance(value, str)}
+                )
                 raise TypeError(
-                    "selector values must be strings, an iterable of strings, or None"
+                    "selector values must be strings, an iterable of strings, or None; "
+                    f"received invalid value types: {', '.join(invalid_types)}"
                 )
             values = frozenset(
                 stripped
@@ -305,7 +306,7 @@ class SharedriveCatalog:
         log: LogFn | None = print,
         use_cloudpathlib: bool = True,
     ) -> DownloadSummary:
-        """Download selected resources into `output_dir / _cache` destinations."""
+        """Download selected resources to destinations from `resolve_cache_path`."""
         sel = self._normalize_selector(selector)
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
