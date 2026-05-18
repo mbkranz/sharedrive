@@ -11,7 +11,7 @@ from google.auth.credentials import Credentials
 from sharedrive.item import DriveItem
 
 from sharedrive.auth.google import GoogleAuth
-from sharedrive.clients.base import BaseClient
+from sharedrive.clients.base import AdapterCapabilities, BaseClient
 from sharedrive.exceptions import GoogleApiError, GoogleDriveError
 from sharedrive.registry import provider
 
@@ -34,6 +34,12 @@ class GoogleBaseClient(BaseClient):
     # Satisfy BaseClient abstract requirements at the intermediate level so
     # that direct subclasses only need to override if they want custom behaviour.
     auth_methods: ClassVar[list[str]] = ["adc", "service_account", "user_oauth"]
+    capabilities: ClassVar[AdapterCapabilities] = AdapterCapabilities(
+        supports_fetch=True,
+        supports_download=True,
+        supports_auth_check=True,
+        supports_write=False,
+    )
 
     def __init__(
         self,

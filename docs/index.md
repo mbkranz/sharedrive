@@ -20,6 +20,7 @@ The key boundary is that descriptor models are persisted metadata, while runtime
 - finish google drive authentication doc page with info from ppsc-pmd-utils/docs 
 - create the Sharepoint auth documentation page
 - build out the "list" action
+- keep a single provider client surface for read + write operations for now; consider an explicit read/write client split later if write workflows grow.
 
 
 
@@ -59,10 +60,10 @@ sharedrive fetch census-docs --descriptor resources/descriptor.yaml --dry-run
 Python:
 
 ```python
-from sharedrive.auth.google import default_drive_strategy
+from sharedrive.auth.google import GoogleAuth
 from sharedrive.clients.googledrive import GoogleDriveClient
 
-client = GoogleDriveClient(credential_strategy=default_drive_strategy())
+client = GoogleDriveClient(auth=GoogleAuth.from_settings())
 item = client.get_from_weburl("https://drive.google.com/drive/folders/<id>")
 
 item.refresh()
@@ -73,6 +74,15 @@ item.refresh_tree()
 ```
 
 Runtime items use `refresh()` to reload remote state in memory and `refresh_tree()` to hydrate an entire folder subtree before traversal. Descriptor metadata updates remain action-level operations such as `fetch()`.
+
+## Machine-readable transfer output
+
+`fetch` and `download` support structured JSON output for automation:
+
+```bash
+sharedrive fetch research --descriptor resources/descriptor.yaml --dry-run --format json
+sharedrive download --descriptor resources/descriptor.yaml --dry-run --format json
+```
 
 ## Docs site
 

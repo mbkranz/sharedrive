@@ -101,7 +101,7 @@ def test_auth_check_returns_json_and_passes_include(
             AuthCheckResult("googledrive", True, "Google Drive credentials are ready.")
         ]
 
-    monkeypatch.setattr("sharedrive.cli.check_auth_action", fake_check_auth)
+    monkeypatch.setattr("sharedrive.commands.auth.check_auth_action", fake_check_auth)
 
     result = RUNNER.invoke(
         app,
@@ -122,6 +122,37 @@ def test_auth_check_returns_json_and_passes_include(
     assert captured["selector"] == ["googledrive"]
 
 
+def test_auth_check_parses_comma_separated_include(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_descriptor(descriptor)
+    captured: dict[str, object] = {}
+
+    def fake_check_auth(**kwargs):
+        captured.update(kwargs)
+        return [AuthCheckResult("googledrive", True, "ok")]
+
+    monkeypatch.setattr("sharedrive.commands.auth.check_auth_action", fake_check_auth)
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "auth",
+            "check",
+            str(descriptor),
+            "--include",
+            "googledrive,sharepoint",
+            "--format",
+            "json",
+        ],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 0
+    assert captured["selector"] == ["googledrive", "sharepoint"]
+
+
 def test_auth_check_uses_checked_out_descriptor_default(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -137,7 +168,7 @@ def test_auth_check_uses_checked_out_descriptor_default(
             AuthCheckResult("googledrive", True, "Google Drive credentials are ready.")
         ]
 
-    monkeypatch.setattr("sharedrive.cli.check_auth_action", fake_check_auth)
+    monkeypatch.setattr("sharedrive.commands.auth.check_auth_action", fake_check_auth)
 
     checkout_result = RUNNER.invoke(
         app, ["checkout", "resources/descriptor.yaml"], prog_name="sharedrive"
@@ -192,7 +223,7 @@ def test_auth_check_exits_nonzero_on_failure(
     _write_descriptor(descriptor)
 
     monkeypatch.setattr(
-        "sharedrive.cli.check_auth_action",
+        "sharedrive.commands.auth.check_auth_action",
         lambda **_kwargs: [
             AuthCheckResult(
                 "sharepoint", False, "SharePoint authentication failed: bad config"
@@ -345,7 +376,7 @@ def test_download_passes_check_auth_flag(
         captured.update(kwargs)
         return SimpleNamespace(ok=True)
 
-    monkeypatch.setattr("sharedrive.cli.download_action", fake_download)
+    monkeypatch.setattr("sharedrive.commands.transfer.download_action", fake_download)
 
     result = RUNNER.invoke(
         app,
@@ -368,7 +399,7 @@ def test_download_defaults_to_all_when_include_is_omitted(
         captured.update(kwargs)
         return SimpleNamespace(ok=True)
 
-    monkeypatch.setattr("sharedrive.cli.download_action", fake_download)
+    monkeypatch.setattr("sharedrive.commands.transfer.download_action", fake_download)
 
     result = RUNNER.invoke(
         app,
@@ -393,7 +424,7 @@ def test_download_uses_checked_out_entity_and_saved_output_dir(
         captured.update(kwargs)
         return SimpleNamespace(ok=True)
 
-    monkeypatch.setattr("sharedrive.cli.download_action", fake_download)
+    monkeypatch.setattr("sharedrive.commands.transfer.download_action", fake_download)
 
     # checkout sets both the active descriptor and the checked-out entity
     checkout_result = RUNNER.invoke(
@@ -435,6 +466,37 @@ def test_download_exits_nonzero_when_descriptor_is_missing(tmp_path: Path) -> No
     assert "does not exist" in result.output
 
 
+def test_download_supports_json_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_descriptor(descriptor)
+
+    monkeypatch.setattr(
+        "sharedrive.commands.transfer.download_action",
+        lambda **_kwargs: SimpleNamespace(
+            total_resources=2,
+            downloaded=1,
+            skipped=0,
+            dry_run_actions=1,
+            failures=0,
+            ok=True,
+        ),
+    )
+
+    result = RUNNER.invoke(
+        app,
+        ["download", "--descriptor", str(descriptor), "--dry-run", "--format", "json"],
+        prog_name="sharedrive",
+    )
+
+    payload = json.loads(result.output)
+    assert result.exit_code == 0
+    assert payload["descriptor"] == descriptor.as_posix()
+    assert payload["summary"]["ok"] is True
+    assert payload["summary"]["total_resources"] == 2
+
+
 def test_fetch_passes_descriptor_and_dry_run(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -450,7 +512,7 @@ def test_fetch_passes_descriptor_and_dry_run(
             )
         ]
 
-    monkeypatch.setattr("sharedrive.cli.fetch_action", fake_fetch)
+    monkeypatch.setattr("sharedrive.commands.transfer.fetch_action", fake_fetch)
 
     result = RUNNER.invoke(
         app,
@@ -464,6 +526,40 @@ def test_fetch_passes_descriptor_and_dry_run(
     assert captured["dry_run"] is True
     assert "googledrive_client_factory" not in captured
     assert "sharepoint_client_factory" not in captured
+
+
+def test_fetch_supports_json_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_descriptor(descriptor)
+
+    monkeypatch.setattr(
+        "sharedrive.commands.transfer.fetch_action",
+        lambda **_kwargs: [
+            SimpleNamespace(
+                resource_name="research",
+                generated_resources=3,
+                dry_run=True,
+                changed=False,
+                failures=0,
+                errors=[],
+                ok=True,
+            )
+        ],
+    )
+
+    result = RUNNER.invoke(
+        app,
+        ["fetch", "--descriptor", str(descriptor), "--dry-run", "--format", "json"],
+        prog_name="sharedrive",
+    )
+
+    payload = json.loads(result.output)
+    assert result.exit_code == 0
+    assert payload["descriptor"] == descriptor.as_posix()
+    assert payload["summaries"][0]["resource_name"] == "research"
+    assert payload["summaries"][0]["generated_resources"] == 3
 
 
 def test_fetch_uses_checked_out_descriptor_when_omitted(
@@ -483,7 +579,7 @@ def test_fetch_uses_checked_out_descriptor_when_omitted(
             )
         ]
 
-    monkeypatch.setattr("sharedrive.cli.fetch_action", fake_fetch)
+    monkeypatch.setattr("sharedrive.commands.transfer.fetch_action", fake_fetch)
 
     checkout_result = RUNNER.invoke(
         app, ["checkout", "resources/descriptor.yaml"], prog_name="sharedrive"
@@ -515,7 +611,7 @@ def test_fetch_uses_checked_out_entity_when_selector_omitted(
             )
         ]
 
-    monkeypatch.setattr("sharedrive.cli.fetch_action", fake_fetch)
+    monkeypatch.setattr("sharedrive.commands.transfer.fetch_action", fake_fetch)
 
     checkout_result = RUNNER.invoke(
         app,
@@ -579,7 +675,7 @@ def test_fetch_with_selector_arg_prepends_checked_out_entity(
             )
         ]
 
-    monkeypatch.setattr("sharedrive.cli.fetch_action", fake_fetch)
+    monkeypatch.setattr("sharedrive.commands.transfer.fetch_action", fake_fetch)
 
     RUNNER.invoke(
         app,
@@ -595,6 +691,58 @@ def test_fetch_with_selector_arg_prepends_checked_out_entity(
 
     assert result.exit_code == 0
     assert captured["selector"] == "research.archive"
+
+
+def test_fetch_with_comma_selector_arg_scopes_each_selector(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    descriptor = tmp_path / "resources" / "descriptor.yaml"
+    descriptor.parent.mkdir(parents=True, exist_ok=True)
+    _write_descriptor(descriptor)
+    captured: dict[str, object] = {}
+
+    def fake_fetch(**kwargs):
+        captured.update(kwargs)
+        return [SimpleNamespace(resource_name="archive", generated_resources=1, dry_run=False)]
+
+    monkeypatch.setattr("sharedrive.commands.transfer.fetch_action", fake_fetch)
+    RUNNER.invoke(app, ["checkout", "resources/descriptor.yaml", "research"], prog_name="sharedrive")
+
+    result = RUNNER.invoke(
+        app,
+        ["fetch", "archive,nested-package", "--descriptor", str(descriptor)],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 0
+    assert captured["selector"] == "research.archive,research.nested-package"
+
+
+def test_fetch_selector_all_ignores_checked_out_entity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    descriptor = tmp_path / "resources" / "descriptor.yaml"
+    descriptor.parent.mkdir(parents=True, exist_ok=True)
+    _write_descriptor(descriptor)
+    captured: dict[str, object] = {}
+
+    def fake_fetch(**kwargs):
+        captured.update(kwargs)
+        return [SimpleNamespace(resource_name="root", generated_resources=1, dry_run=False)]
+
+    monkeypatch.setattr("sharedrive.commands.transfer.fetch_action", fake_fetch)
+    RUNNER.invoke(app, ["checkout", "resources/descriptor.yaml", "research"], prog_name="sharedrive")
+
+    result = RUNNER.invoke(
+        app,
+        ["fetch", "all", "--descriptor", str(descriptor)],
+        prog_name="sharedrive",
+    )
+
+    assert result.exit_code == 0
+    assert captured["selector"] is None
 
 
 def test_fetch_without_entity_and_without_selector_fetches_from_descriptor_root(
@@ -614,7 +762,7 @@ def test_fetch_without_entity_and_without_selector_fetches_from_descriptor_root(
             )
         ]
 
-    monkeypatch.setattr("sharedrive.cli.fetch_action", fake_fetch)
+    monkeypatch.setattr("sharedrive.commands.transfer.fetch_action", fake_fetch)
 
     # Ensure no entity is checked out
     RUNNER.invoke(
@@ -685,7 +833,7 @@ def test_fetch_command_exits_nonzero_on_error(
     _write_descriptor(descriptor)
 
     monkeypatch.setattr(
-        "sharedrive.cli.fetch_action",
+        "sharedrive.commands.transfer.fetch_action",
         lambda **_kwargs: (_ for _ in ()).throw(
             ValueError("Entity 'missing' was not found in descriptor.")
         ),
@@ -708,7 +856,7 @@ def test_fetch_command_exits_nonzero_on_auth_error(
     _write_descriptor(descriptor)
 
     monkeypatch.setattr(
-        "sharedrive.cli.fetch_action",
+        "sharedrive.commands.transfer.fetch_action",
         lambda **_kwargs: (_ for _ in ()).throw(
             GoogleAuthError("Failed during user OAuth flow: invalid_grant")
         ),

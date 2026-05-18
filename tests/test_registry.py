@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from sharedrive.clients.aws import S3Client
 from sharedrive.clients.base import BaseClient
 from sharedrive.clients.googledrive import GoogleDriveClient
 from sharedrive.clients.sharepoint import SharepointClient
@@ -29,6 +30,11 @@ def test_get_provider_returns_sharepoint_class() -> None:
     assert cls is SharepointClient
 
 
+def test_get_provider_returns_s3_class() -> None:
+    cls = get_provider("s3")
+    assert cls is S3Client
+
+
 def test_get_provider_returns_none_for_unknown() -> None:
     assert get_provider("nonexistent_provider_xyz") is None
 
@@ -42,6 +48,7 @@ def test_list_providers_includes_registered_clients() -> None:
     names = list_providers()
     assert "googledrive" in names
     assert "sharepoint" in names
+    assert "s3" in names
 
 
 def test_provider_decorator_registers_class() -> None:

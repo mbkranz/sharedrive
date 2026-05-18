@@ -4,9 +4,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from pydantic import GetCoreSchemaHandler
+from pydantic_core import core_schema
+
 from dplib.models.resource import Resource
 
-from sharedrive.clients.aws import check_s3_credentials, download_s3_url
+from sharedrive.clients.base import AdapterCapabilities, BaseClient
+from sharedrive.clients.aws import S3Client
 from sharedrive.models import (
     DriveCatalog,
     DriveResource,
@@ -16,6 +20,81 @@ from sharedrive.models import (
 from sharedrive.registry import get_client, get_provider
 
 LogFn = Callable[[str], None]
+
+
+class CatalogSelector:
+    """Normalised selector for catalog entities.
+
+    Accepts a single string (optionally comma-separated), an iterable of
+    strings, or ``None``.  Normalises at construction time.
+
+    A ``None`` raw value, an empty input, or the special token ``"all"``
+    (case-insensitive) all produce a "select-everything" selector (falsy).
+    Any other input yields a truthy selector containing the parsed tokens.
+
+    Designed as a Pydantic-compatible type so it can be used directly as an
+    annotation in Pydantic models or with ``validate_call``.  When used in
+    plain Python code, construct directly — e.g. ``CatalogSelector(raw_value)``
+    — and the normalisation is applied automatically.
+    """
+
+    __slots__ = ("_tokens",)
+
+    def __init__(self, raw: str | Iterable[str] | None = None) -> None:
+        if raw is None:
+            self._tokens: frozenset[str] | None = None
+        else:
+            raw_values = [raw] if isinstance(raw, str) else list(raw)
+            values = frozenset(
+                stripped
+                for raw_value in raw_values
+                for part in raw_value.split(",")
+                if (stripped := part.strip())
+            )
+            if not values or "all" in {v.lower() for v in values}:
+                self._tokens = None
+            else:
+                self._tokens = values
+
+    @property
+    def tokens(self) -> frozenset[str] | None:
+        """The normalised set of filter tokens, or ``None`` for "select all"."""
+        return self._tokens
+
+    def __bool__(self) -> bool:
+        """False when this is a "select all" selector; True when filtering."""
+        return self._tokens is not None
+
+    def __repr__(self) -> str:
+        return f"CatalogSelector({sorted(self._tokens)!r})" if self._tokens else "CatalogSelector()"
+
+    def matches(self, ref: Any) -> bool:
+        """Return True if *ref* matches any selector token.
+
+        Always returns True for a "select all" selector.  Otherwise checks
+        the ref's ``name_path``, model ``name``, ``entity_type``, and adapter
+        name against the stored token set (case-insensitive).
+        """
+        if self._tokens is None:
+            return True
+        adapter = adapter_from_service_type(getattr(ref.model, "serviceType", None))
+        name = str(getattr(ref.model, "name", "") or "")
+        candidates = {ref.name_path, name, ref.entity_type}
+        if adapter:
+            candidates.add(adapter)
+        lower_tokens = {t.lower() for t in self._tokens}
+        return any(c.lower() in lower_tokens for c in candidates)
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source_type: Any, handler: GetCoreSchemaHandler
+    ) -> core_schema.CoreSchema:
+        return core_schema.no_info_plain_validator_function(
+            lambda v: v if isinstance(v, cls) else cls(v),
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                lambda s: sorted(s.tokens) if s.tokens is not None else None,
+            ),
+        )
 
 
 @dataclass(slots=True)
@@ -87,10 +166,21 @@ class SharedriveCatalogAction:
             self.clients[adapter] = self.client_factory(adapter)
         return self.clients[adapter]
 
+    def _provider_capabilities(self, adapter: str) -> AdapterCapabilities | None:
+        provider = self.provider_factory(adapter)
+        if provider is None:
+            return None
+        if isinstance(provider, type) and issubclass(provider, BaseClient):
+            return provider.capabilities
+        capabilities = getattr(provider, "capabilities", None)
+        if isinstance(capabilities, AdapterCapabilities):
+            return capabilities
+        return AdapterCapabilities()
+
     def references(self, selector: str | Iterable[str] | None = None) -> list[Any]:
-        selectors = self._selectors(selector)
+        sel = CatalogSelector(selector)
         refs = self.catalog.iter_entity_paths(include_self=False)
-        if selectors is None:
+        if not sel:
             return refs
 
         selected: list[Any] = []
@@ -98,7 +188,7 @@ class SharedriveCatalogAction:
         for ref in refs:
             if any(ref.name_path.startswith(f"{prefix}.") for prefix in selected_prefixes):
                 selected.append(ref)
-            elif self._matches(ref, selectors):
+            elif sel.matches(ref):
                 selected.append(ref)
                 selected_prefixes.append(ref.name_path)
         return selected
@@ -194,31 +284,6 @@ class SharedriveCatalogAction:
         return summary
 
     @staticmethod
-    def _selectors(selector: str | Iterable[str] | None) -> set[str] | None:
-        if selector is None:
-            return None
-        raw_values = [selector] if isinstance(selector, str) else list(selector)
-        values = {
-            part.strip()
-            for raw_value in raw_values
-            for part in raw_value.split(",")
-            if part.strip()
-        }
-        if not values or "all" in {value.lower() for value in values}:
-            return None
-        return values
-
-    @staticmethod
-    def _matches(ref: Any, selectors: set[str]) -> bool:
-        adapter = adapter_from_service_type(getattr(ref.model, "serviceType", None))
-        name = str(getattr(ref.model, "name", "") or "")
-        candidates = {ref.name_path, name, ref.entity_type}
-        if adapter:
-            candidates.add(adapter)
-        lower_selectors = {selector.lower() for selector in selectors}
-        return any(candidate.lower() in lower_selectors for candidate in candidates)
-
-    @staticmethod
     def _emit(log: LogFn | None, message: str) -> None:
         if log is not None:
             log(message)
@@ -265,6 +330,11 @@ class SharedriveCatalogAction:
         try:
             if not catalog.accessURL:
                 raise ValueError(f"Catalog '{catalog.name}' has no accessURL.")
+            capabilities = self._provider_capabilities(catalog.adapter_name)
+            if capabilities is not None and not capabilities.supports_fetch:
+                raise ValueError(
+                    f"Adapter '{catalog.adapter_name}' does not support fetch operations."
+                )
             root = self.client(catalog.adapter_name).get_from_weburl(catalog.accessURL)
             children = (
                 sorted(root.refresh(include_children=True).children, key=lambda item: (item.path, item.name))
@@ -318,6 +388,9 @@ class SharedriveCatalogAction:
             raise ValueError(f"Resource '{resource.name}' is missing required path.")
         destination = resolve_cache_path(resource, output_dir)
         adapter = resource.adapter_name
+        capabilities = self._provider_capabilities(adapter)
+        if capabilities is not None and not capabilities.supports_download:
+            raise ValueError(f"Adapter '{adapter}' does not support download operations.")
         self._reserve_destination(
             destination,
             seen=seen_destinations,
@@ -331,17 +404,32 @@ class SharedriveCatalogAction:
 
         destination.parent.mkdir(parents=True, exist_ok=True)
         if adapter == "s3":
-            result = download_s3_url(
-                resource.path,
-                destination,
-                dry_run=False,
-                use_cloudpathlib=use_cloudpathlib,
+            output_path = self._download_s3_resource(
+                resource.path, destination, use_cloudpathlib=use_cloudpathlib
             )
-            if result is None:
+            if output_path is None:
                 raise RuntimeError("S3 download returned no output path")
         else:
-            self.client(adapter).get_from_weburl(resource.path).download(str(destination))
+            item = self.client(adapter).get_from_weburl(resource.path)
+            item.download(str(destination))
         summary.downloaded += 1
+
+    def _download_s3_resource(
+        self,
+        resource_path: str,
+        destination: Path,
+        *,
+        use_cloudpathlib: bool,
+    ) -> Path | None:
+        s3_client = self.client("s3")
+        if not isinstance(s3_client, S3Client):
+            raise TypeError("S3 adapter must resolve to an S3Client instance.")
+        return s3_client.download_from_weburl(
+            resource_path,
+            destination,
+            dry_run=False,
+            use_cloudpathlib=use_cloudpathlib,
+        )
 
     @staticmethod
     def _reserve_destination(
@@ -356,21 +444,19 @@ class SharedriveCatalogAction:
         seen[key] = label
 
     def _check_one_adapter(self, adapter: str) -> AuthCheckResult:
-        if adapter == "s3":
-            try:
-                check_s3_credentials()
-                return AuthCheckResult("s3", True, "AWS credentials are ready for S3 operations.")
-            except Exception as exc:
-                return AuthCheckResult("s3", False, f"S3 credential check failed: {exc}")
-
         provider = self.provider_factory(adapter)
         if provider is None:
             return AuthCheckResult(adapter, False, f"Unsupported adapter '{adapter}'.")
+        capabilities = self._provider_capabilities(adapter)
+        supports_auth = capabilities.supports_auth_check if capabilities is not None else True
+        if not supports_auth:
+            return AuthCheckResult(adapter, True, f"Adapter '{adapter}' does not require auth checks.")
         try:
             provider.check_auth()
             message = {
                 "sharepoint": "SharePoint credentials are ready.",
                 "googledrive": "Google Drive credentials are ready.",
+                "s3": "AWS credentials are ready for S3 operations.",
             }.get(adapter, f"Adapter '{adapter}' is ready.")
             return AuthCheckResult(adapter, True, message)
         except Exception as exc:
@@ -383,6 +469,7 @@ class SharedriveCatalogAction:
 
 __all__ = [
     "AuthCheckResult",
+    "CatalogSelector",
     "DownloadSummary",
     "FetchSummary",
     "SharedriveCatalogAction",
