@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from sharedrive.catalog import SharedriveCatalog
+from sharedrive.catalog import CatalogSelector, SharedriveCatalog
 
 
 def _write_descriptor(path: Path) -> None:
@@ -178,3 +178,18 @@ def test_fetch_accepts_multi_selectors(monkeypatch, tmp_path: Path) -> None:
 
     assert [summary.resource_name for summary in summaries] == ["archive", "research"]
     assert all(summary.generated_resources == 1 for summary in summaries)
+
+
+def test_fetch_accepts_catalog_selector_instance(
+    monkeypatch, tmp_path: Path
+) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_descriptor(descriptor)
+    monkeypatch.setattr("sharedrive.catalog.get_client", lambda _name: _Client())
+
+    summaries = SharedriveCatalog.from_path(descriptor).fetch(
+        CatalogSelector("research"), log=None
+    )
+
+    assert len(summaries) == 1
+    assert summaries[0].resource_name == "research"

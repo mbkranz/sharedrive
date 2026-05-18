@@ -306,7 +306,7 @@ class SharedriveCatalog:
         log: LogFn | None = print,
         use_cloudpathlib: bool = True,
     ) -> DownloadSummary:
-        """Download selected resources to destinations from `resolve_cache_path`."""
+        """Download selected resources to paths resolved from each `_cache` and `output_dir`."""
         sel = self._normalize_selector(selector)
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)

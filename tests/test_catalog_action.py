@@ -145,3 +145,22 @@ def test_download_uses_s3_client_method(tmp_path: Path) -> None:
     assert len(inner.calls) == 1
     assert inner.calls[0][0] == "example-bucket"
     assert inner.calls[0][1] == "path/file.csv"
+
+
+def test_selector_rejects_non_string_values() -> None:
+    catalog = DriveCatalog.model_validate({
+        "$schema": "data-package-catalog",
+        "resources": [
+            {
+                "name": "file",
+                "path": "https://docs.google.com/file/d/a",
+                "_cache": "downloads/file.csv",
+                "serviceType": "GoogleDrive",
+                "entityType": "File",
+            }
+        ],
+    })
+    action = SharedriveCatalog(catalog)
+
+    with pytest.raises(TypeError, match="invalid value types: int"):
+        action.references([1])  # type: ignore[list-item]
