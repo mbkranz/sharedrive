@@ -178,7 +178,7 @@ def test_fetch_accepts_multi_selectors_in_sorted_token_order(
         ["research", "archive"], log=None
     )
 
-    expected = sorted(["research", "archive"])
+    expected = ["archive", "research"]
     assert [summary.resource_name for summary in summaries] == expected
     assert all(summary.generated_resources == 1 for summary in summaries)
 

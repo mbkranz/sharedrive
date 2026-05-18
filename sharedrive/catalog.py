@@ -220,7 +220,8 @@ class SharedriveCatalog:
 
         Accepts an existing `CatalogSelector`, a selector string, an iterable of
         selector strings, or `None` ("select all"), and always returns a
-        normalized `CatalogSelector`.
+        normalized `CatalogSelector`. This is static because normalization is a
+        pure transformation that does not depend on catalog instance state.
         """
         return selector if isinstance(selector, CatalogSelector) else CatalogSelector(selector)
 
@@ -366,6 +367,7 @@ class SharedriveCatalog:
     ) -> list[tuple[str, DriveCatalog]]:
         catalogs: list[tuple[str, DriveCatalog]] = []
         if selector.tokens:
+            # Sort for deterministic fetch/summary ordering across runs.
             for token in sorted(selector.tokens):
                 entity = self.catalog.get_entity(token)
                 if entity is None:
