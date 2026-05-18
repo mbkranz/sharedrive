@@ -40,11 +40,18 @@ class CatalogSelector:
 
     __slots__ = ("_tokens",)
 
-    def __init__(self, raw: str | Iterable[str] | None = None) -> None:
+    def __init__(self, raw: "CatalogSelector | str | Iterable[str] | None" = None) -> None:
+        if isinstance(raw, CatalogSelector):
+            self._tokens = raw.tokens
+            return
         if raw is None:
             self._tokens: frozenset[str] | None = None
         else:
             raw_values = [raw] if isinstance(raw, str) else list(raw)
+            if not all(isinstance(value, str) for value in raw_values):
+                raise TypeError(
+                    "selector values must be strings, an iterable of strings, or None"
+                )
             values = frozenset(
                 stripped
                 for raw_value in raw_values
@@ -298,7 +305,7 @@ class SharedriveCatalog:
         log: LogFn | None = print,
         use_cloudpathlib: bool = True,
     ) -> DownloadSummary:
-        """Download selected resources from remote `path` into local `_cache` targets."""
+        """Download selected resources into `output_dir / _cache` destinations."""
         sel = self._normalize_selector(selector)
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
