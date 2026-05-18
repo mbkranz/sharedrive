@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 import typer
 
-from sharedrive.actions.download import check_auth as check_auth_action
+from sharedrive.catalog import SharedriveCatalog
 from sharedrive.commands.toolkit import (
     DESCRIPTOR_DEFAULT_HELP,
     OutputFormat,
@@ -64,7 +64,7 @@ def register_auth_commands(auth_app: typer.Typer, auth_login_app: typer.Typer) -
     ) -> None:
         """Validate credentials for the adapters selected by a descriptor."""
         descriptor_path = prepare_descriptor_path(descriptor, env_file=env_file)
-        results = check_auth_action(descriptor=descriptor_path, selector=include)
+        results = SharedriveCatalog.from_path(descriptor_path).check_auth(include)
         _render_auth_results(results, output_format)
         if any(not result.ok for result in results):
             raise typer.Exit(code=1)

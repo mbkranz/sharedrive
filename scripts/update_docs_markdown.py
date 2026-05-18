@@ -23,8 +23,14 @@ CLI_COMMANDS: list[tuple[str, list[str]]] = [
     ("sharedrive auth check --help", ["auth", "check", "--help"]),
     ("sharedrive auth login --help", ["auth", "login", "--help"]),
     ("sharedrive auth login gdrive --help", ["auth", "login", "gdrive", "--help"]),
-    ("sharedrive auth login microsoft --help", ["auth", "login", "microsoft", "--help"]),
-    ("sharedrive auth login sharepoint --help", ["auth", "login", "sharepoint", "--help"]),
+    (
+        "sharedrive auth login microsoft --help",
+        ["auth", "login", "microsoft", "--help"],
+    ),
+    (
+        "sharedrive auth login sharepoint --help",
+        ["auth", "login", "sharepoint", "--help"],
+    ),
     ("sharedrive checkout --help", ["checkout", "--help"]),
     ("sharedrive set --help", ["set", "--help"]),
     ("sharedrive add --help", ["add", "--help"]),
@@ -34,30 +40,10 @@ CLI_COMMANDS: list[tuple[str, list[str]]] = [
 ]
 
 API_MODULES = [
-    {
-        "module": "sharedrive.helpers",
-        "path": ROOT / "sharedrive" / "helpers.py",
-    },
-    {
-        "module": "sharedrive.models",
-        "path": ROOT / "sharedrive" / "models.py",
-    },
-    {
-        "module": "sharedrive.item",
-        "path": ROOT / "sharedrive" / "item.py",
-    },
-    {
-        "module": "sharedrive.actions.add",
-        "path": ROOT / "sharedrive" / "actions" / "add.py",
-    },
-    {
-        "module": "sharedrive.actions.download",
-        "path": ROOT / "sharedrive" / "actions" / "download.py",
-    },
-    {
-        "module": "sharedrive.actions.fetch",
-        "path": ROOT / "sharedrive" / "actions" / "fetch.py",
-    },
+    {"module": "sharedrive.helpers", "path": ROOT / "sharedrive" / "helpers.py"},
+    {"module": "sharedrive.models", "path": ROOT / "sharedrive" / "models.py"},
+    {"module": "sharedrive.item", "path": ROOT / "sharedrive" / "item.py"},
+    {"module": "sharedrive.catalog", "path": ROOT / "sharedrive" / "catalog.py"},
     {
         "module": "sharedrive.clients.aws",
         "path": ROOT / "sharedrive" / "clients" / "aws.py",
@@ -103,7 +89,9 @@ def _run_help(args: list[str]) -> str:
     rich_utils.MAX_WIDTH = CLI_WIDTH
     result = RUNNER.invoke(app, args, prog_name="sharedrive", color=False)
     if result.exit_code != 0:
-        raise RuntimeError(f"Failed: {' '.join(['sharedrive', *args])}\n{result.stdout}")
+        raise RuntimeError(
+            f"Failed: {' '.join(['sharedrive', *args])}\n{result.stdout}"
+        )
     return _normalize_help_text(result.stdout)
 
 
@@ -169,8 +157,7 @@ def _top_level_maps(
 
 
 def _resolve_module_alias_target(
-    expr: ast.expr,
-    imported_modules: dict[str, str],
+    expr: ast.expr, imported_modules: dict[str, str]
 ) -> tuple[str, str] | None:
     if isinstance(expr, ast.Name):
         target_module = imported_modules.get(expr.id)
@@ -221,7 +208,13 @@ def _resolve_exported_name(
         target_path = module_map.get(target_module)
         if target_path is not None:
             target_ast = _parse_module(target_path)
-            target_functions, target_classes, target_assignments, target_aliases, target_imports = _top_level_maps(target_ast)
+            (
+                target_functions,
+                target_classes,
+                target_assignments,
+                target_aliases,
+                target_imports,
+            ) = _top_level_maps(target_ast)
             resolved = _resolve_exported_name(
                 target_name,
                 top_functions=target_functions,
@@ -327,10 +320,7 @@ def _format_signature(node: ast.FunctionDef, *, name: str | None = None) -> str:
     return sig
 
 
-def _format_assignment_signature(
-    name: str,
-    node: ast.Assign | ast.AnnAssign,
-) -> str:
+def _format_assignment_signature(name: str, node: ast.Assign | ast.AnnAssign) -> str:
     annotation = None
     value = None
     if isinstance(node, ast.AnnAssign):
@@ -382,7 +372,9 @@ def _render_api_markdown() -> str:
     for module_spec in API_MODULES:
         module_name = module_spec["module"]
         module_ast = _parse_module(module_spec["path"])
-        top_functions, top_classes, top_assignments, aliases, imported_modules = _top_level_maps(module_ast)
+        top_functions, top_classes, top_assignments, aliases, imported_modules = (
+            _top_level_maps(module_ast)
+        )
         exported_names = _parse_dunder_all(module_ast)
         module_map = {spec["module"]: spec["path"] for spec in API_MODULES}
 
@@ -403,11 +395,15 @@ def _render_api_markdown() -> str:
             if resolved is None:
                 continue
             resolved_kind, resolved_name, resolved_node = resolved
-            if resolved_kind == "function" and isinstance(resolved_node, ast.FunctionDef):
+            if resolved_kind == "function" and isinstance(
+                resolved_node, ast.FunctionDef
+            ):
                 functions.append((resolved_name, resolved_node))
             elif resolved_kind == "class" and isinstance(resolved_node, ast.ClassDef):
                 classes.append((resolved_name, resolved_node))
-            elif resolved_kind == "constant" and isinstance(resolved_node, (ast.Assign, ast.AnnAssign)):
+            elif resolved_kind == "constant" and isinstance(
+                resolved_node, (ast.Assign, ast.AnnAssign)
+            ):
                 constants.append((resolved_name, resolved_node))
 
         lines.append(f"## `{module_name}`")

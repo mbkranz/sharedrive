@@ -66,7 +66,11 @@ class CatalogSelector:
         return self._tokens is not None
 
     def __repr__(self) -> str:
-        return f"CatalogSelector({sorted(self._tokens)!r})" if self._tokens else "CatalogSelector()"
+        return (
+            f"CatalogSelector({sorted(self._tokens)!r})"
+            if self._tokens
+            else "CatalogSelector()"
+        )
 
     def matches(self, ref: Any) -> bool:
         """Return True if *ref* matches any selector token.
@@ -92,7 +96,7 @@ class CatalogSelector:
         return core_schema.no_info_plain_validator_function(
             lambda v: v if isinstance(v, cls) else cls(v),
             serialization=core_schema.plain_serializer_function_ser_schema(
-                lambda s: sorted(s.tokens) if s.tokens is not None else None,
+                lambda s: sorted(s.tokens) if s.tokens is not None else None
             ),
         )
 
@@ -134,32 +138,55 @@ class AuthCheckResult:
         return {"adapter": self.adapter, "ok": self.ok, "message": self.message}
 
 
-class SharedriveCatalogAction:
-    """Run descriptor actions against one loaded catalog.
+class SharedriveCatalog:
+    """Python workflow API for one shared-drive descriptor catalog.
 
-    The class keeps the catalog and client cache together, so fetch/download
-    methods can read like the workflow they perform instead of repeatedly
-    passing descriptor/client state through helper functions.
+    The object keeps the descriptor model, source path, and adapter client
+    cache together.  This makes the Python API mirror the CLI workflow while
+    still allowing callers to inspect or modify the loaded catalog before
+    saving it.
     """
 
     def __init__(
         self,
         catalog: DriveCatalog,
         *,
+        descriptor_path: Path | str | None = None,
         client_factory: Callable[[str], Any] | None = None,
         provider_factory: Callable[[str], Any] | None = None,
     ) -> None:
         self.catalog = catalog
+        self.descriptor_path = (
+            Path(descriptor_path) if descriptor_path is not None else None
+        )
         self.client_factory = client_factory or get_client
         self.provider_factory = provider_factory or get_provider
         self.clients: dict[str, Any] = {}
 
     @classmethod
-    def from_path(cls, path: Path | str) -> "SharedriveCatalogAction":
+    def from_path(cls, path: Path | str) -> "SharedriveCatalog":
         descriptor = Path(path)
         if not descriptor.exists():
             raise FileNotFoundError(f"Descriptor '{descriptor}' does not exist.")
-        return cls(DriveCatalog.from_path(str(descriptor)))
+        return cls(DriveCatalog.from_path(str(descriptor)), descriptor_path=descriptor)
+
+    def save(self, path: Path | str | None = None) -> Path:
+        """Write the loaded descriptor model to disk.
+
+        ``from_path()`` records the descriptor path, so callers can usually use
+        ``save()`` without arguments.  Passing ``path`` supports "save as"
+        flows without changing the loaded model.
+        """
+        target = Path(path) if path is not None else self.descriptor_path
+        if target is None:
+            raise ValueError(
+                "No descriptor path is known. Use SharedriveCatalog.from_path() "
+                "or pass an explicit path to save()."
+            )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        self.catalog.to_path(str(target))
+        self.descriptor_path = target
+        return target
 
     def client(self, adapter: str) -> Any:
         if adapter not in self.clients:
@@ -186,19 +213,25 @@ class SharedriveCatalogAction:
         selected: list[Any] = []
         selected_prefixes: list[str] = []
         for ref in refs:
-            if any(ref.name_path.startswith(f"{prefix}.") for prefix in selected_prefixes):
+            if any(
+                ref.name_path.startswith(f"{prefix}.") for prefix in selected_prefixes
+            ):
                 selected.append(ref)
             elif sel.matches(ref):
                 selected.append(ref)
                 selected_prefixes.append(ref.name_path)
         return selected
 
-    def resources(self, selector: str | Iterable[str] | None = None) -> list[DriveResource]:
+    def resources(
+        self, selector: str | Iterable[str] | None = None
+    ) -> list[DriveResource]:
         result: list[DriveResource] = []
         for ref in self.references(selector):
             if isinstance(ref.model, DriveResource):
                 result.append(ref.model)
-            elif isinstance(ref.model, Resource) and not isinstance(ref.model, DriveCatalog):
+            elif isinstance(ref.model, Resource) and not isinstance(
+                ref.model, DriveCatalog
+            ):
                 result.append(DriveResource.model_validate(ref.model.to_dict()))
         return result
 
@@ -230,12 +263,15 @@ class SharedriveCatalogAction:
         dry_run: bool = False,
         depth: int = -1,
         log: LogFn | None = print,
+        persist: bool | Path | str = False,
     ) -> list[FetchSummary]:
         catalogs = self._catalogs_to_fetch(selector, depth=depth)
         summaries = [
             self._fetch_one_catalog(catalog, name, dry_run=dry_run, log=log)
             for name, catalog in catalogs
         ]
+        if persist and not dry_run and any(summary.changed for summary in summaries):
+            self.save(None if persist is True else persist)
         return summaries
 
     def download(
@@ -279,7 +315,10 @@ class SharedriveCatalogAction:
             except Exception as exc:
                 if isinstance(exc, ValueError) and "Output collision" in str(exc):
                     raise
-                self._emit(log, f"Warning, {resource.name or resource.path or 'resource'} failed: {exc}")
+                self._emit(
+                    log,
+                    f"Warning, {resource.name or resource.path or 'resource'} failed: {exc}",
+                )
                 summary.failures += 1
         return summary
 
@@ -308,7 +347,11 @@ class SharedriveCatalogAction:
         for ref in self.catalog.iter_entity_paths(include_self=bool(self.catalog.name)):
             if not isinstance(ref.model, DriveCatalog) or not ref.model.accessURL:
                 continue
-            if depth >= 0 and ref.name_path.count(".") > depth and not self.catalog.name:
+            if (
+                depth >= 0
+                and ref.name_path.count(".") > depth
+                and not self.catalog.name
+            ):
                 continue
             catalogs.append((ref.name_path, ref.model))
         if self.catalog.accessURL and not catalogs:
@@ -316,12 +359,7 @@ class SharedriveCatalogAction:
         return catalogs
 
     def _fetch_one_catalog(
-        self,
-        catalog: DriveCatalog,
-        name: str,
-        *,
-        dry_run: bool,
-        log: LogFn | None,
+        self, catalog: DriveCatalog, name: str, *, dry_run: bool, log: LogFn | None
     ) -> FetchSummary:
         errors: list[str] = []
         resources: list[DriveResource] = []
@@ -337,7 +375,10 @@ class SharedriveCatalogAction:
                 )
             root = self.client(catalog.adapter_name).get_from_weburl(catalog.accessURL)
             children = (
-                sorted(root.refresh(include_children=True).children, key=lambda item: (item.path, item.name))
+                sorted(
+                    root.refresh(include_children=True).children,
+                    key=lambda item: (item.path, item.name),
+                )
                 if root.is_directory
                 else [root.refresh(include_children=False)]
             )
@@ -390,7 +431,9 @@ class SharedriveCatalogAction:
         adapter = resource.adapter_name
         capabilities = self._provider_capabilities(adapter)
         if capabilities is not None and not capabilities.supports_download:
-            raise ValueError(f"Adapter '{adapter}' does not support download operations.")
+            raise ValueError(
+                f"Adapter '{adapter}' does not support download operations."
+            )
         self._reserve_destination(
             destination,
             seen=seen_destinations,
@@ -415,27 +458,22 @@ class SharedriveCatalogAction:
         summary.downloaded += 1
 
     def _download_s3_resource(
-        self,
-        resource_path: str,
-        destination: Path,
-        *,
-        use_cloudpathlib: bool,
+        self, resource_path: str, destination: Path, *, use_cloudpathlib: bool
     ) -> Path | None:
         s3_client = self.client("s3")
         if not isinstance(s3_client, S3Client):
             raise TypeError("S3 adapter must resolve to an S3Client instance.")
         return s3_client.download_from_weburl(
-            resource_path,
-            destination,
-            dry_run=False,
-            use_cloudpathlib=use_cloudpathlib,
+            resource_path, destination, dry_run=False, use_cloudpathlib=use_cloudpathlib
         )
 
     @staticmethod
     def _reserve_destination(
         destination: Path, *, seen: dict[str, str], label: str
     ) -> None:
-        key = str(destination.resolve() if destination.exists() else destination.absolute())
+        key = str(
+            destination.resolve() if destination.exists() else destination.absolute()
+        )
         previous = seen.get(key)
         if previous is not None and previous != label:
             raise ValueError(
@@ -448,9 +486,13 @@ class SharedriveCatalogAction:
         if provider is None:
             return AuthCheckResult(adapter, False, f"Unsupported adapter '{adapter}'.")
         capabilities = self._provider_capabilities(adapter)
-        supports_auth = capabilities.supports_auth_check if capabilities is not None else True
+        supports_auth = (
+            capabilities.supports_auth_check if capabilities is not None else True
+        )
         if not supports_auth:
-            return AuthCheckResult(adapter, True, f"Adapter '{adapter}' does not require auth checks.")
+            return AuthCheckResult(
+                adapter, True, f"Adapter '{adapter}' does not require auth checks."
+            )
         try:
             provider.check_auth()
             message = {
@@ -472,5 +514,5 @@ __all__ = [
     "CatalogSelector",
     "DownloadSummary",
     "FetchSummary",
-    "SharedriveCatalogAction",
+    "SharedriveCatalog",
 ]

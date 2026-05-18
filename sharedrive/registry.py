@@ -53,7 +53,7 @@ def get_provider(name: str) -> type | None:
     current environment and ``check_auth()`` to validate credentials without
     building a full client.  Trigger registration by importing the relevant
     client module (e.g. ``sharedrive.clients.googledrive``) before calling
-    this function, or rely on the lazy import in :mod:`sharedrive.actions`.
+    this function, or rely on the built-in lazy imports here.
     """
     ensure_builtin_providers()
     return _registry.get(name)
@@ -99,4 +99,10 @@ def ensure_builtin_providers() -> None:
     _builtins_loaded = True
 
 
-__all__ = ["ensure_builtin_providers", "get_client", "get_provider", "list_providers", "provider"]
+__all__ = [
+    "ensure_builtin_providers",
+    "get_client",
+    "get_provider",
+    "list_providers",
+    "provider",
+]

@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from sharedrive.actions.add import add_resource_to_descriptor, infer_drive_service
+from sharedrive.commands.descriptor import _add_resource_to_descriptor
+from sharedrive.models import infer_service_type
 
 
 def _write_catalog_descriptor(path: Path) -> None:
@@ -24,7 +25,7 @@ def test_add_resource_to_descriptor_writes_path_cache_and_service_type(
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(descriptor)
 
-    resource = add_resource_to_descriptor(
+    resource = _add_resource_to_descriptor(
         descriptor,
         name="source-export",
         path="s3://my-bucket/path/to/source-export.csv",
@@ -46,7 +47,7 @@ def test_add_resource_to_descriptor_writes_path_cache_and_service_type(
 def test_add_resource_to_descriptor_rejects_duplicate_names(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(descriptor)
-    add_resource_to_descriptor(
+    _add_resource_to_descriptor(
         descriptor,
         name="source-export",
         path="s3://bucket/existing.csv",
@@ -54,7 +55,7 @@ def test_add_resource_to_descriptor_rejects_duplicate_names(tmp_path: Path) -> N
     )
 
     with pytest.raises(ValueError, match="already exists"):
-        add_resource_to_descriptor(
+        _add_resource_to_descriptor(
             descriptor,
             name="source-export",
             path="s3://my-bucket/path/to/source-export.csv",
@@ -69,7 +70,7 @@ def test_add_resource_to_descriptor_rejects_unsupported_service_type(
     _write_catalog_descriptor(descriptor)
 
     with pytest.raises(NotImplementedError, match="not implemented"):
-        add_resource_to_descriptor(
+        _add_resource_to_descriptor(
             descriptor,
             name="local-file",
             path="https://example.com/files/local-file.txt",
@@ -82,7 +83,7 @@ def test_add_resource_to_descriptor_creates_access_url_catalog(tmp_path: Path) -
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(descriptor)
 
-    catalog = add_resource_to_descriptor(
+    catalog = _add_resource_to_descriptor(
         descriptor,
         name="census-docs",
         access_url="https://drive.google.com/drive/folders/folder123",
@@ -101,12 +102,14 @@ def test_add_resource_to_descriptor_creates_access_url_catalog(tmp_path: Path) -
     assert document["catalogs"][0]["entityType"] == "Directory"
 
 
-def test_add_resource_to_descriptor_rejects_directory_as_resource(tmp_path: Path) -> None:
+def test_add_resource_to_descriptor_rejects_directory_as_resource(
+    tmp_path: Path,
+) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(descriptor)
 
     with pytest.raises(ValueError, match="Non-file drive entries"):
-        add_resource_to_descriptor(
+        _add_resource_to_descriptor(
             descriptor,
             name="census-docs",
             path="https://drive.google.com/drive/folders/folder123",
@@ -122,7 +125,7 @@ def test_add_resource_to_descriptor_requires_existing_descriptor_by_default(
     descriptor = tmp_path / "missing.yaml"
 
     with pytest.raises(FileNotFoundError, match="does not exist"):
-        add_resource_to_descriptor(
+        _add_resource_to_descriptor(
             descriptor,
             name="source-export",
             path="s3://my-bucket/path/to/source-export.csv",
@@ -133,7 +136,7 @@ def test_add_resource_to_descriptor_requires_existing_descriptor_by_default(
 def test_add_resource_to_descriptor_allows_create_if_missing(tmp_path: Path) -> None:
     descriptor = tmp_path / "created.yaml"
 
-    resource = add_resource_to_descriptor(
+    resource = _add_resource_to_descriptor(
         descriptor,
         name="source-export",
         path="s3://my-bucket/path/to/source-export.csv",
@@ -156,10 +159,10 @@ def test_add_resource_to_descriptor_allows_create_if_missing(tmp_path: Path) -> 
         ("https://docs.google.com/spreadsheets/d/test-sheet/edit", "GoogleDrive"),
     ],
 )
-def test_infer_drive_service(source: str, expected: str) -> None:
-    assert infer_drive_service(source) == expected
+def test_infer_service_type(source: str, expected: str) -> None:
+    assert infer_service_type(source) == expected
 
 
-def test_infer_drive_service_raises_when_unknown() -> None:
+def test_infer_service_type_raises_when_unknown() -> None:
     with pytest.raises(NotImplementedError, match="Could not infer serviceType"):
-        infer_drive_service("C:/tmp/local-file.txt")
+        infer_service_type("C:/tmp/local-file.txt")

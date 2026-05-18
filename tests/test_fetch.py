@@ -5,8 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from sharedrive.actions.download import check_auth, download
-from sharedrive.actions.fetch import fetch
+from sharedrive.catalog import SharedriveCatalog
 
 
 def _write_descriptor(path: Path) -> None:
@@ -86,9 +85,11 @@ class _Client:
 def test_fetch_populates_catalog_from_access_url(monkeypatch, tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(descriptor)
-    monkeypatch.setattr("sharedrive.actions.catalog.get_client", lambda _name: _Client())
+    monkeypatch.setattr("sharedrive.catalog.get_client", lambda _name: _Client())
 
-    summaries = fetch(descriptor, "research", log=None)
+    summaries = SharedriveCatalog.from_path(descriptor).fetch(
+        "research", log=None, persist=True
+    )
 
     document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
     assert summaries[0].generated_resources == 1
@@ -99,9 +100,11 @@ def test_fetch_populates_catalog_from_access_url(monkeypatch, tmp_path: Path) ->
 def test_download_uses_resource_cache(monkeypatch, tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(descriptor)
-    monkeypatch.setattr("sharedrive.actions.catalog.get_client", lambda _name: _Client())
+    monkeypatch.setattr("sharedrive.catalog.get_client", lambda _name: _Client())
 
-    summary = download(descriptor, "drive-export", output_dir=tmp_path, log=None)
+    summary = SharedriveCatalog.from_path(descriptor).download(
+        "drive-export", output_dir=tmp_path, log=None
+    )
 
     assert summary.ok
     assert summary.downloaded == 1
@@ -119,11 +122,11 @@ def test_check_auth_selects_service_type_adapters(monkeypatch, tmp_path: Path) -
             calls.append("googledrive")
 
     monkeypatch.setattr(
-        "sharedrive.actions.catalog.get_provider",
+        "sharedrive.catalog.get_provider",
         lambda name: Provider if name == "googledrive" else None,
     )
 
-    results = check_auth(descriptor)
+    results = SharedriveCatalog.from_path(descriptor).check_auth()
 
     assert [result.adapter for result in results] == ["googledrive"]
     assert calls == ["googledrive"]
@@ -131,7 +134,7 @@ def test_check_auth_selects_service_type_adapters(monkeypatch, tmp_path: Path) -
 
 def test_download_requires_existing_descriptor(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="does not exist"):
-        download(tmp_path / "missing.yaml", log=None)
+        SharedriveCatalog.from_path(tmp_path / "missing.yaml").download(log=None)
 
 
 def test_fetch_rejects_standalone_resource(tmp_path: Path) -> None:
@@ -139,4 +142,4 @@ def test_fetch_rejects_standalone_resource(tmp_path: Path) -> None:
     _write_descriptor(descriptor)
 
     with pytest.raises(ValueError, match="standalone resource"):
-        fetch(descriptor, "drive-export", log=None)
+        SharedriveCatalog.from_path(descriptor).fetch("drive-export", log=None)

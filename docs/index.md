@@ -73,7 +73,7 @@ for child in item.children:
 item.refresh_tree()
 ```
 
-Runtime items use `refresh()` to reload remote state in memory and `refresh_tree()` to hydrate an entire folder subtree before traversal. Descriptor metadata updates remain action-level operations such as `fetch()`.
+Runtime items use `refresh()` to reload remote state in memory and `refresh_tree()` to hydrate an entire folder subtree before traversal. Descriptor metadata updates use `SharedriveCatalog.fetch(..., persist=True)`.
 
 ## Machine-readable transfer output
 

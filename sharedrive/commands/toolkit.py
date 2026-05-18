@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 from sharedrive.helpers import get_checked_out_entity
 from sharedrive.helpers import resolve_descriptor_path as resolve_descriptor_path_helper
-from sharedrive.actions.catalog import CatalogSelector
+from sharedrive.catalog import CatalogSelector
 from sharedrive.models import (
     DriveCatalog,
     DrivePackage,
@@ -200,10 +200,7 @@ def normalize_update_property(property_name: str, *, resource_target: bool) -> s
     if not resource_target:
         return normalized
 
-    aliases = {
-        "source": "path",
-        "driveService": "serviceType",
-    }
+    aliases = {"source": "path", "driveService": "serviceType"}
     return aliases.get(normalized, normalized)
 
 

@@ -141,49 +141,93 @@ Auto-generated from source signatures and docstrings.
     - Deprecated alias for :meth:`to_resource`.
 
 
-## `sharedrive.actions.add`
+## `sharedrive.catalog`
 
-### Functions
+### Classes
 
-- `def add_resource_to_descriptor(descriptor: Path | str, *, name: str, path: str | None = None, cache: str | None = None, source: str | None = None, access_url: str | None = None, title: str | None = None, description: str | None = None, service_type: str | None = None, entity_type: str | None = None, drive_service: str | None = None, catalog: bool = False, package: bool = False, sync_target: str | None = None, profile: str | None = None, create_if_missing: bool = False) -> dict[str, Any]`
-  - Append a standards-aligned resource or catalog entry to a descriptor.
-- `def infer_drive_service(source: str) -> str`
-  - Backward-compatible alias for inferring canonical serviceType.
+#### `AuthCheckResult`
+- Fields:
+  - `adapter: str`
+  - `ok: bool`
+  - `message: str`
+- Methods:
+  - `def to_dict(self) -> dict[str, str | bool]`
 
+#### `CatalogSelector`
+- Normalised selector for catalog entities.
+- Methods:
+  - `def tokens(self) -> frozenset[str] | None`
+    - The normalised set of filter tokens, or ``None`` for "select all".
+  - `def matches(self, ref: Any) -> bool`
+    - Return True if *ref* matches any selector token.
 
-## `sharedrive.actions.workflow`
+#### `DownloadSummary`
+- Fields:
+  - `total_resources: int`
+  - `downloaded: int`
+  - `skipped: int`
+  - `dry_run_actions: int`
+  - `failures: int`
+- Methods:
+  - `def ok(self) -> bool`
 
-Stable descriptor workflow API built around `SharedriveCatalogAction`.
+#### `FetchSummary`
+- Fields:
+  - `resource_name: str`
+  - `generated_resources: int`
+  - `dry_run: bool`
+  - `changed: bool`
+  - `failures: int`
+  - `errors: list[str]`
+- Methods:
+  - `def ok(self) -> bool`
 
-- `def fetch_descriptor_metadata(...) -> list[FetchSummary]`
-- `def download_descriptor_resources(...) -> DownloadSummary`
-- `def check_descriptor_auth(...) -> list[AuthCheckResult]`
-
-
-## `sharedrive.actions.download`
-
-### Functions
-
-- `def check_auth(descriptor: Path | str | None = None, selector: str | Iterable[str] | None = None, *, adapters: Iterable[str] | None = None) -> list[AuthCheckResult]`
-  - Validate credentials for selected descriptor entities or explicit adapters.
-- `def download(descriptor: Path | str, selector: str | Iterable[str] | None = None, *, output_dir: Path | str = Path('resources'), dry_run: bool = False, check_auth: bool = False, log = None, use_cloudpathlib: bool = True) -> DownloadSummary`
-  - Download selected resources from `path` to `_cache`.
-
-
-## `sharedrive.actions.fetch`
-
-### Functions
-
-- `def fetch(descriptor: Path | str, selector: str | None = None, *, dry_run: bool = False, depth: int = -1, log: LogFn | None = print) -> list[FetchSummary]`
-  - Fetch remote folder metadata from catalog accessURL values.
+#### `SharedriveCatalog`
+- Python workflow API for one shared-drive descriptor catalog.
+- Methods:
+  - `def from_path(cls, path: Path | str) -> 'SharedriveCatalog'`
+  - `def save(self, path: Path | str | None = None) -> Path`
+    - Write the loaded descriptor model to disk.
+  - `def client(self, adapter: str) -> Any`
+  - `def references(self, selector: str | Iterable[str] | None = None) -> list[Any]`
+  - `def resources(self, selector: str | Iterable[str] | None = None) -> list[DriveResource]`
+  - `def adapter_names(self, selector: str | Iterable[str] | None = None) -> list[str]`
+  - `def check_auth(self, selector: str | Iterable[str] | None = None, *, adapters: Iterable[str] | None = None) -> list[AuthCheckResult]`
+  - `def fetch(self, selector: str | None = None, *, dry_run: bool = False, depth: int = -1, log: LogFn | None = print, persist: bool | Path | str = False) -> list[FetchSummary]`
+  - `def download(self, selector: str | Iterable[str] | None = None, *, output_dir: Path | str = Path('resources'), dry_run: bool = False, check_auth: bool = False, log: LogFn | None = print, use_cloudpathlib: bool = True) -> DownloadSummary`
 
 
 ## `sharedrive.clients.aws`
 
 ### Functions
 
+- `def check_s3_credentials() -> None`
+  - Validate that AWS credentials are available for S3 operations.
 - `def download_s3_url(source_url: str, output_path: Path, *, dry_run: bool = False, use_cloudpathlib: bool = True) -> Path | None`
-- `def parse_s3_source_url(source_url: str) -> tuple[str, str]`
+  - Backward-compatible helper for downloading an S3 object URL to a local path.
+- `def parse_s3_source_url(source_url: str, *, allow_empty_key: bool = False) -> tuple[str, str]`
+  - Parse an S3 URL into bucket/key.
+
+### Classes
+
+#### `S3Client`
+- Methods:
+  - `def build_default(cls) -> 'S3Client'`
+  - `def check_auth(cls) -> None`
+  - `def get_from_weburl(self, url: str) -> 'S3Item'`
+  - `def download_from_weburl(self, source_url: str, output_path: Path, *, dry_run: bool = False, use_cloudpathlib: bool = True) -> Path | None`
+
+#### `S3Item`
+- Methods:
+  - `def id(self) -> str`
+  - `def name(self) -> str`
+  - `def path(self) -> str`
+  - `def service_type(self) -> str`
+  - `def source_url(self) -> str`
+  - `def is_directory(self) -> bool`
+  - `def children(self) -> list['S3Item']`
+  - `def refresh(self, *, include_children: bool = True) -> 'S3Item'`
+  - `def download(self, target_dir: str | Path) -> None`
 
 
 ## `sharedrive.clients.googledrive`
@@ -194,6 +238,7 @@ Stable descriptor workflow API built around `SharedriveCatalogAction`.
 - Shared Google client base: auth lifecycle and HTTP transport helpers.
 - Fields:
   - `auth_methods: ClassVar[list[str]]`
+  - `capabilities: ClassVar[AdapterCapabilities]`
 - Methods:
   - `def refresh(self) -> None`
   - `def get_from_weburl(self, url: str)`
@@ -373,6 +418,7 @@ Stable descriptor workflow API built around `SharedriveCatalogAction`.
 - SharePoint / OneDrive client backed by the Microsoft Graph API.
 - Fields:
   - `auth_methods: ClassVar[list[str]]`
+  - `capabilities: ClassVar[AdapterCapabilities]`
 - Methods:
   - `def build_default(cls) -> 'SharepointClient'`
     - Construct from environment variables / settings.

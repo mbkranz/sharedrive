@@ -4,10 +4,8 @@ from pathlib import Path
 
 import yaml
 
-from sharedrive.actions.add import add_resource_to_descriptor
-from sharedrive.actions.download import download
-from sharedrive.actions.fetch import fetch
-from sharedrive.actions.migrate import migrate_descriptor
+from sharedrive.catalog import SharedriveCatalog
+from sharedrive.commands.descriptor import _add_resource_to_descriptor, _migrate_descriptor
 
 
 class _FileItem:
@@ -72,14 +70,14 @@ class _Client:
 def test_add_writes_path_cache_resource_and_access_url_catalog(tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
 
-    resource = add_resource_to_descriptor(
+    resource = _add_resource_to_descriptor(
         descriptor,
         name="raw",
         path="s3://bucket/raw.csv",
         cache="downloads/raw.csv",
         create_if_missing=True,
     )
-    catalog = add_resource_to_descriptor(
+    catalog = _add_resource_to_descriptor(
         descriptor,
         name="research",
         access_url="https://drive.google.com/drive/folders/folder-1",
@@ -100,7 +98,7 @@ def test_fetch_expands_catalog_and_download_uses_cache(
     monkeypatch, tmp_path: Path
 ) -> None:
     descriptor = tmp_path / "descriptor.yaml"
-    add_resource_to_descriptor(
+    _add_resource_to_descriptor(
         descriptor,
         name="research",
         access_url="https://drive.google.com/drive/folders/folder-1",
@@ -108,8 +106,10 @@ def test_fetch_expands_catalog_and_download_uses_cache(
         create_if_missing=True,
     )
 
-    monkeypatch.setattr("sharedrive.actions.catalog.get_client", lambda _name: _Client())
-    summaries = fetch(descriptor, "research", log=None)
+    monkeypatch.setattr("sharedrive.catalog.get_client", lambda _name: _Client())
+    summaries = SharedriveCatalog.from_path(descriptor).fetch(
+        "research", log=None, persist=True
+    )
 
     document = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
     child = document["catalogs"][0]["resources"][0]
@@ -117,8 +117,10 @@ def test_fetch_expands_catalog_and_download_uses_cache(
     assert child["path"] == "https://drive.google.com/file/d/file-1"
     assert child["_cache"] == "reports/report.csv"
 
-    monkeypatch.setattr("sharedrive.actions.catalog.get_client", lambda _name: _Client())
-    summary = download(descriptor, output_dir=tmp_path, log=None)
+    monkeypatch.setattr("sharedrive.catalog.get_client", lambda _name: _Client())
+    summary = SharedriveCatalog.from_path(descriptor).download(
+        output_dir=tmp_path, log=None
+    )
 
     assert summary.downloaded == 1
     assert (tmp_path / "reports" / "report.csv").read_text(encoding="utf-8") == "ok"
@@ -127,41 +129,39 @@ def test_fetch_expands_catalog_and_download_uses_cache(
 def test_migrate_legacy_descriptor_to_canonical_shape(tmp_path: Path) -> None:
     descriptor = tmp_path / "legacy.yaml"
     descriptor.write_text(
-        yaml.safe_dump(
-            {
-                "resources": [
-                    {
-                        "name": "raw",
-                        "path": "downloads/raw.csv",
-                        "sources": [
-                            {
-                                "path": "s3://bucket/raw.csv",
-                                "serviceType": "S3",
-                                "entityType": "File",
-                            }
-                        ],
-                    }
-                ],
-                "packages": [
-                    {
-                        "name": "research",
-                        "path": "downloads/research",
-                        "sources": [
-                            {
-                                "path": "https://drive.google.com/drive/folders/folder-1",
-                                "serviceType": "GoogleDrive",
-                                "entityType": "Directory",
-                            }
-                        ],
-                        "resources": [],
-                    }
-                ],
-            }
-        ),
+        yaml.safe_dump({
+            "resources": [
+                {
+                    "name": "raw",
+                    "path": "downloads/raw.csv",
+                    "sources": [
+                        {
+                            "path": "s3://bucket/raw.csv",
+                            "serviceType": "S3",
+                            "entityType": "File",
+                        }
+                    ],
+                }
+            ],
+            "packages": [
+                {
+                    "name": "research",
+                    "path": "downloads/research",
+                    "sources": [
+                        {
+                            "path": "https://drive.google.com/drive/folders/folder-1",
+                            "serviceType": "GoogleDrive",
+                            "entityType": "Directory",
+                        }
+                    ],
+                    "resources": [],
+                }
+            ],
+        }),
         encoding="utf-8",
     )
 
-    migrated = migrate_descriptor(descriptor, dry_run=True).to_dict()
+    migrated = _migrate_descriptor(descriptor, dry_run=True).to_dict()
 
     assert migrated["resources"][0]["path"] == "s3://bucket/raw.csv"
     assert migrated["resources"][0]["_cache"] == "downloads/raw.csv"

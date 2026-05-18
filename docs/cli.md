@@ -19,10 +19,10 @@ Commands:
   update    Update descriptor-root or resource properties using flag-style...
   checkout  Activate a descriptor and optionally an entity within it for...
   list      List local descriptor entities, paths, and source metadata.
-  set       Set reusable key/value parameters for sharedrive descriptor...
   add       Add a standards-aligned resource or catalog entry to a descriptor.
-  fetch     Fetch remote metadata for one selector into the descriptor.
   migrate   Migrate legacy sources/path descriptors to path/_cache/accessURL.
+  set       Set reusable key/value parameters for sharedrive descriptor...
+  fetch     Fetch remote metadata for one selector into the descriptor.
   download  Download resources from a selector in the descriptor.
   auth      Authentication helpers.
   clone     Clone descriptor state for new local variants.
@@ -105,17 +105,6 @@ Commands:
 Usage: sharedrive auth login gdrive [OPTIONS]
 
   Run the Google installed-app OAuth flow and optionally persist a token.
-
-  Sample .env for using Google user OAuth with descriptor-based commands such as
-  ``sharedrive fetch`` and ``sharedrive download``:
-
-  ```env GOOGLE_AUTH_MODE=user_oauth #
-  GOOGLE_APPLICATION_CREDENTIALS=.google/service-account.json #
-  GOOGLE_SERVICE_ACCOUNT_CREDENTIALS=.google/service-account.json
-  GOOGLE_OAUTH_CREDENTIALS=.google/oauth-credentials.json
-  GOOGLE_SCOPES=https://www.googleapis.com/auth/drive
-  GOOGLE_OAUTH_USE_LOCAL_SERVER=true GOOGLE_OAUTH_TOKEN_PATH=.google/oauth-
-  token.json ```
 
 Options:
   --oauth-client-secrets PATH  Path to Google OAuth client secrets JSON.
@@ -223,11 +212,6 @@ Options:
 Usage: sharedrive checkout [OPTIONS] DESCRIPTOR [ENTITY]
 
   Activate a descriptor and optionally an entity within it for later commands.
-
-  When an entity is checked out, ``fetch`` and ``download`` without a selector
-  argument operate on the whole entity.  A selector argument is then treated as
-  a path relative to the checked-out entity (e.g. ``fetch archive`` becomes
-  ``research.archive`` when ``research`` is checked out).
 
 Arguments:
   DESCRIPTOR  Descriptor path to activate for later commands.  [required]
@@ -346,8 +330,6 @@ Usage: sharedrive fetch [OPTIONS] [ENTITY]
 
   Fetch remote metadata for one selector into the descriptor.
 
-  TODO(manage_todo_list): reconsider direct source-path fetch flow.
-
 Arguments:
   [ENTITY]  Entity or package dot-path to fetch. If omitted, uses the checked-
             out entity.
@@ -357,6 +339,7 @@ Options:
                             descriptor or the first standard descriptor path.
   --dry-run / --no-dry-run  Preview descriptor changes without writing them.
                             [default: no-dry-run]
+  --format [text|json]      Output format.  [default: text]
   --env-file PATH           Path to .env file for credentials. Defaults to .env
                             in the current directory.
   --help                    Show this message and exit.
@@ -402,6 +385,7 @@ Options:
   --dry-run / --no-dry-run  Print actions without downloading.  [default: no-
                             dry-run]
   --check-auth              Validate service credentials before downloading.
+  --format [text|json]      Output format.  [default: text]
   --env-file PATH           Path to .env file for credentials. Defaults to .env
                             in the current directory.
   --help                    Show this message and exit.

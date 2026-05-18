@@ -8,11 +8,66 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from sharedrive.actions.download import AuthCheckResult
+from sharedrive.catalog import AuthCheckResult
 from sharedrive.cli import app
 from sharedrive.exceptions import GoogleAuthError
 
 RUNNER = CliRunner()
+
+
+def _patch_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+    module_path: str,
+    *,
+    captured: dict[str, object] | None = None,
+    auth_result: object | None = None,
+    download_result: object | None = None,
+    fetch_result: object | None = None,
+    auth_error: Exception | None = None,
+    download_error: Exception | None = None,
+    fetch_error: Exception | None = None,
+) -> None:
+    captured = captured if captured is not None else {}
+
+    class _Catalog:
+        def __init__(self, descriptor: Path) -> None:
+            self.descriptor = descriptor
+
+        def check_auth(self, selector=None, *, adapters=None):
+            if auth_error is not None:
+                raise auth_error
+            captured["descriptor"] = self.descriptor
+            if isinstance(selector, list):
+                captured["selector"] = [
+                    part.strip()
+                    for value in selector
+                    for part in value.split(",")
+                    if part.strip()
+                ]
+            else:
+                captured["selector"] = selector
+            captured["adapters"] = adapters
+            return auth_result
+
+        def download(self, selector=None, **kwargs):
+            if download_error is not None:
+                raise download_error
+            captured["descriptor"] = self.descriptor
+            captured["selector"] = selector
+            captured.update(kwargs)
+            return download_result
+
+        def fetch(self, selector=None, **kwargs):
+            if fetch_error is not None:
+                raise fetch_error
+            captured["descriptor"] = self.descriptor
+            captured["selector"] = selector
+            captured.update(kwargs)
+            return fetch_result
+
+    monkeypatch.setattr(
+        f"{module_path}.SharedriveCatalog.from_path", lambda path: _Catalog(Path(path))
+    )
 
 
 def _write_descriptor(path: Path) -> None:
@@ -95,13 +150,14 @@ def test_auth_check_returns_json_and_passes_include(
     _write_descriptor(descriptor)
     captured: dict[str, object] = {}
 
-    def fake_check_auth(**kwargs):
-        captured.update(kwargs)
-        return [
+    _patch_catalog(
+        monkeypatch,
+        "sharedrive.commands.auth",
+        captured=captured,
+        auth_result=[
             AuthCheckResult("googledrive", True, "Google Drive credentials are ready.")
-        ]
-
-    monkeypatch.setattr("sharedrive.commands.auth.check_auth_action", fake_check_auth)
+        ],
+    )
 
     result = RUNNER.invoke(
         app,
@@ -129,11 +185,12 @@ def test_auth_check_parses_comma_separated_include(
     _write_descriptor(descriptor)
     captured: dict[str, object] = {}
 
-    def fake_check_auth(**kwargs):
-        captured.update(kwargs)
-        return [AuthCheckResult("googledrive", True, "ok")]
-
-    monkeypatch.setattr("sharedrive.commands.auth.check_auth_action", fake_check_auth)
+    _patch_catalog(
+        monkeypatch,
+        "sharedrive.commands.auth",
+        captured=captured,
+        auth_result=[AuthCheckResult("googledrive", True, "ok")],
+    )
 
     result = RUNNER.invoke(
         app,
@@ -162,13 +219,14 @@ def test_auth_check_uses_checked_out_descriptor_default(
     _write_descriptor(descriptor)
     captured: dict[str, object] = {}
 
-    def fake_check_auth(**kwargs):
-        captured.update(kwargs)
-        return [
+    _patch_catalog(
+        monkeypatch,
+        "sharedrive.commands.auth",
+        captured=captured,
+        auth_result=[
             AuthCheckResult("googledrive", True, "Google Drive credentials are ready.")
-        ]
-
-    monkeypatch.setattr("sharedrive.commands.auth.check_auth_action", fake_check_auth)
+        ],
+    )
 
     checkout_result = RUNNER.invoke(
         app, ["checkout", "resources/descriptor.yaml"], prog_name="sharedrive"
@@ -222,9 +280,10 @@ def test_auth_check_exits_nonzero_on_failure(
     descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(descriptor)
 
-    monkeypatch.setattr(
-        "sharedrive.commands.auth.check_auth_action",
-        lambda **_kwargs: [
+    _patch_catalog(
+        monkeypatch,
+        "sharedrive.commands.auth",
+        auth_result=[
             AuthCheckResult(
                 "sharepoint", False, "SharePoint authentication failed: bad config"
             )
@@ -372,11 +431,12 @@ def test_download_passes_check_auth_flag(
     _write_descriptor(descriptor)
     captured: dict[str, object] = {}
 
-    def fake_download(**kwargs):
-        captured.update(kwargs)
-        return SimpleNamespace(ok=True)
-
-    monkeypatch.setattr("sharedrive.commands.transfer.download_action", fake_download)
+    _patch_catalog(
+        monkeypatch,
+        "sharedrive.commands.transfer",
+        captured=captured,
+        download_result=SimpleNamespace(ok=True),
+    )
 
     result = RUNNER.invoke(
         app,
@@ -395,11 +455,12 @@ def test_download_defaults_to_all_when_include_is_omitted(
     _write_descriptor(descriptor)
     captured: dict[str, object] = {}
 
-    def fake_download(**kwargs):
-        captured.update(kwargs)
-        return SimpleNamespace(ok=True)
-
-    monkeypatch.setattr("sharedrive.commands.transfer.download_action", fake_download)
+    _patch_catalog(
+        monkeypatch,
+        "sharedrive.commands.transfer",
+        captured=captured,
+        download_result=SimpleNamespace(ok=True),
+    )
 
     result = RUNNER.invoke(
         app,
@@ -420,11 +481,12 @@ def test_download_uses_checked_out_entity_and_saved_output_dir(
     _write_descriptor(descriptor)
     captured: dict[str, object] = {}
 
-    def fake_download(**kwargs):
-        captured.update(kwargs)
-        return SimpleNamespace(ok=True)
-
-    monkeypatch.setattr("sharedrive.commands.transfer.download_action", fake_download)
+    _patch_catalog(
+        monkeypatch,
+        "sharedrive.commands.transfer",
+        captured=captured,
+        download_result=SimpleNamespace(ok=True),
+    )
 
     # checkout sets both the active descriptor and the checked-out entity
     checkout_result = RUNNER.invoke(
@@ -472,9 +534,10 @@ def test_download_supports_json_output(
     descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(descriptor)
 
-    monkeypatch.setattr(
-        "sharedrive.commands.transfer.download_action",
-        lambda **_kwargs: SimpleNamespace(
+    _patch_catalog(
+        monkeypatch,
+        "sharedrive.commands.transfer",
+        download_result=SimpleNamespace(
             total_resources=2,
             downloaded=1,
             skipped=0,
@@ -504,15 +567,16 @@ def test_fetch_passes_descriptor_and_dry_run(
     _write_descriptor(descriptor)
     captured: dict[str, object] = {}
 
-    def fake_fetch(**kwargs):
-        captured.update(kwargs)
-        return [
+    _patch_catalog(
+        monkeypatch,
+        "sharedrive.commands.transfer",
+        captured=captured,
+        fetch_result=[
             SimpleNamespace(
                 resource_name="census-package", generated_resources=2, dry_run=True
             )
-        ]
-
-    monkeypatch.setattr("sharedrive.commands.transfer.fetch_action", fake_fetch)
+        ],
+    )
 
     result = RUNNER.invoke(
         app,
@@ -534,9 +598,10 @@ def test_fetch_supports_json_output(
     descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(descriptor)
 
-    monkeypatch.setattr(
-        "sharedrive.commands.transfer.fetch_action",
-        lambda **_kwargs: [
+    _patch_catalog(
+        monkeypatch,
+        "sharedrive.commands.transfer",
+        fetch_result=[
             SimpleNamespace(
                 resource_name="research",
                 generated_resources=3,
@@ -571,15 +636,16 @@ def test_fetch_uses_checked_out_descriptor_when_omitted(
     _write_descriptor(descriptor)
     captured: dict[str, object] = {}
 
-    def fake_fetch(**kwargs):
-        captured.update(kwargs)
-        return [
+    _patch_catalog(
+        monkeypatch,
+        "sharedrive.commands.transfer",
+        captured=captured,
+        fetch_result=[
             SimpleNamespace(
                 resource_name="census-package", generated_resources=1, dry_run=True
             )
-        ]
-
-    monkeypatch.setattr("sharedrive.commands.transfer.fetch_action", fake_fetch)
+        ],
+    )
 
     checkout_result = RUNNER.invoke(
         app, ["checkout", "resources/descriptor.yaml"], prog_name="sharedrive"
@@ -603,15 +669,16 @@ def test_fetch_uses_checked_out_entity_when_selector_omitted(
     _write_descriptor(descriptor)
     captured: dict[str, object] = {}
 
-    def fake_fetch(**kwargs):
-        captured.update(kwargs)
-        return [
+    _patch_catalog(
+        monkeypatch,
+        "sharedrive.commands.transfer",
+        captured=captured,
+        fetch_result=[
             SimpleNamespace(
                 resource_name="nested-package", generated_resources=1, dry_run=True
             )
-        ]
-
-    monkeypatch.setattr("sharedrive.commands.transfer.fetch_action", fake_fetch)
+        ],
+    )
 
     checkout_result = RUNNER.invoke(
         app,
@@ -667,15 +734,16 @@ def test_fetch_with_selector_arg_prepends_checked_out_entity(
     _write_descriptor(descriptor)
     captured: dict[str, object] = {}
 
-    def fake_fetch(**kwargs):
-        captured.update(kwargs)
-        return [
+    _patch_catalog(
+        monkeypatch,
+        "sharedrive.commands.transfer",
+        captured=captured,
+        fetch_result=[
             SimpleNamespace(
                 resource_name="archive", generated_resources=1, dry_run=False
             )
-        ]
-
-    monkeypatch.setattr("sharedrive.commands.transfer.fetch_action", fake_fetch)
+        ],
+    )
 
     RUNNER.invoke(
         app,
@@ -702,12 +770,21 @@ def test_fetch_with_comma_selector_arg_scopes_each_selector(
     _write_descriptor(descriptor)
     captured: dict[str, object] = {}
 
-    def fake_fetch(**kwargs):
-        captured.update(kwargs)
-        return [SimpleNamespace(resource_name="archive", generated_resources=1, dry_run=False)]
-
-    monkeypatch.setattr("sharedrive.commands.transfer.fetch_action", fake_fetch)
-    RUNNER.invoke(app, ["checkout", "resources/descriptor.yaml", "research"], prog_name="sharedrive")
+    _patch_catalog(
+        monkeypatch,
+        "sharedrive.commands.transfer",
+        captured=captured,
+        fetch_result=[
+            SimpleNamespace(
+                resource_name="archive", generated_resources=1, dry_run=False
+            )
+        ],
+    )
+    RUNNER.invoke(
+        app,
+        ["checkout", "resources/descriptor.yaml", "research"],
+        prog_name="sharedrive",
+    )
 
     result = RUNNER.invoke(
         app,
@@ -728,17 +805,22 @@ def test_fetch_selector_all_ignores_checked_out_entity(
     _write_descriptor(descriptor)
     captured: dict[str, object] = {}
 
-    def fake_fetch(**kwargs):
-        captured.update(kwargs)
-        return [SimpleNamespace(resource_name="root", generated_resources=1, dry_run=False)]
-
-    monkeypatch.setattr("sharedrive.commands.transfer.fetch_action", fake_fetch)
-    RUNNER.invoke(app, ["checkout", "resources/descriptor.yaml", "research"], prog_name="sharedrive")
+    _patch_catalog(
+        monkeypatch,
+        "sharedrive.commands.transfer",
+        captured=captured,
+        fetch_result=[
+            SimpleNamespace(resource_name="root", generated_resources=1, dry_run=False)
+        ],
+    )
+    RUNNER.invoke(
+        app,
+        ["checkout", "resources/descriptor.yaml", "research"],
+        prog_name="sharedrive",
+    )
 
     result = RUNNER.invoke(
-        app,
-        ["fetch", "all", "--descriptor", str(descriptor)],
-        prog_name="sharedrive",
+        app, ["fetch", "all", "--descriptor", str(descriptor)], prog_name="sharedrive"
     )
 
     assert result.exit_code == 0
@@ -754,15 +836,16 @@ def test_fetch_without_entity_and_without_selector_fetches_from_descriptor_root(
     _write_descriptor(descriptor)
     captured: dict[str, object] = {}
 
-    def fake_fetch(**kwargs):
-        captured.update(kwargs)
-        return [
+    _patch_catalog(
+        monkeypatch,
+        "sharedrive.commands.transfer",
+        captured=captured,
+        fetch_result=[
             SimpleNamespace(
                 resource_name="census-package", generated_resources=1, dry_run=False
             )
-        ]
-
-    monkeypatch.setattr("sharedrive.commands.transfer.fetch_action", fake_fetch)
+        ],
+    )
 
     # Ensure no entity is checked out
     RUNNER.invoke(
@@ -832,11 +915,10 @@ def test_fetch_command_exits_nonzero_on_error(
     descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(descriptor)
 
-    monkeypatch.setattr(
-        "sharedrive.commands.transfer.fetch_action",
-        lambda **_kwargs: (_ for _ in ()).throw(
-            ValueError("Entity 'missing' was not found in descriptor.")
-        ),
+    _patch_catalog(
+        monkeypatch,
+        "sharedrive.commands.transfer",
+        fetch_error=ValueError("Entity 'missing' was not found in descriptor."),
     )
 
     result = RUNNER.invoke(
@@ -855,11 +937,10 @@ def test_fetch_command_exits_nonzero_on_auth_error(
     descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(descriptor)
 
-    monkeypatch.setattr(
-        "sharedrive.commands.transfer.fetch_action",
-        lambda **_kwargs: (_ for _ in ()).throw(
-            GoogleAuthError("Failed during user OAuth flow: invalid_grant")
-        ),
+    _patch_catalog(
+        monkeypatch,
+        "sharedrive.commands.transfer",
+        fetch_error=GoogleAuthError("Failed during user OAuth flow: invalid_grant"),
     )
 
     result = RUNNER.invoke(

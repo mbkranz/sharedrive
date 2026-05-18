@@ -5,11 +5,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 import typer
+import yaml
 from dplib.error import Error
 
-from sharedrive.actions.add import add_resource_to_descriptor
-from sharedrive.actions.list import list_descriptor_entities
-from sharedrive.actions.migrate import migrate_descriptor
 from sharedrive.commands.toolkit import (
     DESCRIPTOR_DEFAULT_HELP,
     OutputFormat,
@@ -22,11 +20,233 @@ from sharedrive.commands.toolkit import (
     resolve_resource_reference,
 )
 from sharedrive.exceptions import GoogleApiError, GraphApiError
-from sharedrive.helpers import (
-    has_saved_global_descriptor,
-    set_active_descriptor,
+from sharedrive.helpers import has_saved_global_descriptor, set_active_descriptor
+from sharedrive.models import (
+    CATALOG_PROFILE,
+    DriveCatalog,
+    DriveResource,
+    adapter_from_service_type,
+    resolve_entity_type,
+    resolve_service_type,
 )
-from sharedrive.models import DriveCatalog
+
+
+def _add_resource_to_descriptor(
+    descriptor: Path | str,
+    *,
+    name: str,
+    path: str | None = None,
+    cache: str | None = None,
+    source: str | None = None,
+    access_url: str | None = None,
+    title: str | None = None,
+    description: str | None = None,
+    service_type: str | None = None,
+    entity_type: str | None = None,
+    catalog: bool = False,
+    package: bool = False,
+    profile: str | None = None,
+    create_if_missing: bool = False,
+) -> dict[str, Any]:
+    def non_empty(value: str, field_name: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError(f"{field_name} must be a non-empty string")
+        return normalized
+
+    descriptor_path = Path(descriptor)
+    entity_name = non_empty(name, "name")
+    if descriptor_path.exists():
+        document = DriveCatalog.from_path(str(descriptor_path))
+    elif create_if_missing:
+        document = DriveCatalog.empty()
+    else:
+        raise FileNotFoundError(f"Descriptor '{descriptor_path}' does not exist.")
+
+    normalized_name = entity_name.lower()
+    top_level_entries = [*document.resources, *document.packages, *document.catalogs]
+    if any(
+        str(getattr(entry, "name", "") or "").strip().lower() == normalized_name
+        for entry in top_level_entries
+    ):
+        raise ValueError(f"Entity '{entity_name}' already exists in the descriptor")
+
+    if source is not None and path is not None and cache is None and not catalog:
+        cache = path
+        path = source
+    if source is not None and access_url is None and catalog:
+        access_url = source
+    if package:
+        raise ValueError(
+            "Remote folders are now catalogs. Use catalog=True/--catalog instead of package=True/--package."
+        )
+
+    if catalog:
+        folder_url = non_empty(access_url or path or "", "accessURL")
+        resolved_service_type = resolve_service_type(folder_url, service_type=service_type)
+        resolved_entity_type = resolve_entity_type(
+            folder_url,
+            service_type=resolved_service_type,
+            entity_type=entity_type or "Directory",
+        )
+        if resolved_entity_type not in {"Directory", "Container"}:
+            raise ValueError("Catalog entries must use entityType Directory or Container.")
+
+        payload: dict[str, Any] = {
+            "name": entity_name,
+            "accessURL": folder_url,
+            "serviceType": resolved_service_type,
+            "entityType": resolved_entity_type,
+            "resources": [],
+            "catalogs": [],
+        }
+        if title:
+            payload["title"] = title.strip()
+        if description:
+            payload["description"] = description.strip()
+        if profile:
+            payload["profile"] = profile.strip()
+
+        entry = DriveCatalog.model_validate(payload)
+        document.catalogs.append(entry)
+        descriptor_path.parent.mkdir(parents=True, exist_ok=True)
+        document.to_path(str(descriptor_path))
+        return entry.to_dict()
+
+    resource_path = non_empty(path or "", "path")
+    resource_cache = non_empty(cache or "", "cache")
+    resolved_service_type = resolve_service_type(
+        resource_path, service_type=service_type
+    )
+    resolved_entity_type = resolve_entity_type(
+        resource_path,
+        service_type=resolved_service_type,
+        entity_type=entity_type or "File",
+    )
+    if resolved_entity_type != "File":
+        raise ValueError(
+            "Non-file drive entries should be added as catalogs with accessURL."
+        )
+
+    payload: dict[str, Any] = {
+        "name": entity_name,
+        "path": resource_path,
+        "_cache": resource_cache,
+        "serviceType": resolved_service_type,
+        "entityType": resolved_entity_type,
+    }
+    if title:
+        payload["title"] = title.strip()
+    if description:
+        payload["description"] = description.strip()
+    if profile:
+        payload["profile"] = profile.strip()
+
+    entry = DriveResource.model_validate(payload)
+    document.resources.append(entry)
+    descriptor_path.parent.mkdir(parents=True, exist_ok=True)
+    document.to_path(str(descriptor_path))
+    return entry.to_dict()
+
+
+def _migrate_descriptor(
+    descriptor: Path | str,
+    *,
+    output: Path | str | None = None,
+    dry_run: bool = False,
+) -> DriveCatalog:
+    descriptor_path = Path(descriptor)
+    text = descriptor_path.read_text(encoding="utf-8")
+    document = (
+        json.loads(text)
+        if descriptor_path.suffix.lower() == ".json"
+        else yaml.safe_load(text)
+    )
+    if not isinstance(document, dict):
+        raise ValueError(f"Descriptor '{descriptor_path}' must contain an object.")
+
+    def first_source(entry: dict[str, Any]) -> dict[str, Any]:
+        sources = entry.get("sources")
+        if isinstance(sources, list) and sources and isinstance(sources[0], dict):
+            return sources[0]
+        return {}
+
+    def resource(entry: dict[str, Any]) -> dict[str, Any]:
+        source = first_source(entry)
+        cache = entry.get("_cache") or entry.get("path")
+        migrated = {
+            key: value
+            for key, value in entry.items()
+            if key not in {"sources", "syncTarget", "targets", "target", "resources"}
+        }
+        migrated["path"] = source.get("path") or entry.get("path")
+        if cache:
+            migrated["_cache"] = cache
+        migrated["serviceType"] = entry.get("serviceType") or source.get("serviceType")
+        migrated["entityType"] = (
+            entry.get("entityType") or source.get("entityType") or "File"
+        )
+        return {key: value for key, value in migrated.items() if value is not None}
+
+    def catalog(entry: dict[str, Any]) -> dict[str, Any]:
+        source = first_source(entry)
+        migrated = {
+            key: value
+            for key, value in entry.items()
+            if key
+            not in {
+                "accessUrl",
+                "sources",
+                "syncTarget",
+                "targets",
+                "target",
+                "path",
+                "resources",
+                "packages",
+                "catalogs",
+            }
+        }
+        migrated["accessURL"] = (
+            entry.get("accessURL") or source.get("path") or entry.get("path")
+        )
+        migrated["serviceType"] = entry.get("serviceType") or source.get("serviceType")
+        migrated["entityType"] = (
+            entry.get("entityType") or source.get("entityType") or "Directory"
+        )
+        migrated["resources"] = [
+            resource(item)
+            for item in entry.get("resources", [])
+            if isinstance(item, dict)
+        ]
+        migrated["catalogs"] = [
+            catalog(item)
+            for item in [*entry.get("catalogs", []), *entry.get("packages", [])]
+            if isinstance(item, dict)
+        ]
+        return {key: value for key, value in migrated.items() if value is not None}
+
+    migrated = {
+        "$schema": document.get("$schema", CATALOG_PROFILE),
+        "resources": [
+            resource(item)
+            for item in document.get("resources", [])
+            if isinstance(item, dict)
+        ],
+        "packages": [],
+        "catalogs": [
+            catalog(item)
+            for item in [*document.get("catalogs", []), *document.get("packages", [])]
+            if isinstance(item, dict)
+        ],
+    }
+    for key in ("name", "title", "description"):
+        if key in document:
+            migrated[key] = document[key]
+
+    catalog = DriveCatalog.model_validate(migrated)
+    if not dry_run:
+        catalog.to_path(str(Path(output) if output is not None else descriptor_path))
+    return catalog
 
 
 def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> None:
@@ -105,7 +325,9 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
             except Error as exc:
                 raise typer.BadParameter(str(exc)) from exc
             resolved = resolve_resource_reference(resource, descriptor_model)
-            target = DriveCatalog.get_json_pointer_value(document, resolved.json_pointer)
+            target = DriveCatalog.get_json_pointer_value(
+                document, resolved.json_pointer
+            )
             if not isinstance(target, dict):
                 raise typer.BadParameter(
                     f"Resolved resource '{resolved.name_path}' is not an object."
@@ -187,18 +409,34 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
         descriptor_path = prepare_descriptor_path(descriptor)
 
         try:
-            entities = list_descriptor_entities(descriptor_path)
+            model = DriveCatalog.from_path(str(descriptor_path))
+            model.assert_valid_entity_paths()
+            references = model.iter_entity_paths(include_self=False)
         except (FileNotFoundError, ValueError, Error) as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1) from exc
 
+        def entity_dict(reference) -> dict[str, Any]:
+            item = reference.model
+            service_type = getattr(item, "serviceType", None)
+            return {
+                "name": reference.name_path.split(".")[-1],
+                "path": reference.name_path,
+                "jsonPointer": reference.json_pointer,
+                "type": reference.entity_type,
+                "resourcePath": getattr(item, "path", None),
+                "_cache": getattr(item, "cache", None),
+                "accessURL": getattr(item, "accessURL", None),
+                "adapter": adapter_from_service_type(service_type),
+                "serviceType": service_type,
+                "entityType": getattr(item, "entityType", None),
+            }
+
         if output_format == OutputFormat.JSON:
-            echo_json(
-                {
-                    "descriptor": descriptor_path.as_posix(),
-                    "entities": [entity.to_dict() for entity in entities],
-                }
-            )
+            echo_json({
+                "descriptor": descriptor_path.as_posix(),
+                "entities": [entity_dict(reference) for reference in references],
+            })
             return
 
         from rich.console import Console
@@ -206,26 +444,27 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
 
         root = Tree(descriptor_path.name)
         nodes: dict[str, Any] = {}
-        for entity in entities:
-            parent_path = entity.name_path.rpartition(".")[0]
+        for reference in references:
+            entity = entity_dict(reference)
+            parent_path = entity["path"].rpartition(".")[0]
             parent_node = nodes.get(parent_path, root) if parent_path else root
             label = (
-                f"{entity.name} ({entity.entity_type}) "
-                f"[dim]{entity.name_path} {entity.json_pointer}[/dim]"
+                f"{entity['name']} ({entity['type']}) "
+                f"[dim]{entity['path']} {entity['jsonPointer']}[/dim]"
             )
             node = parent_node.add(label)
-            nodes[entity.name_path] = node
+            nodes[entity["path"]] = node
             details = []
-            if entity.path:
-                details.append(f"path={entity.path}")
-            if entity.cache:
-                details.append(f"_cache={entity.cache}")
-            if entity.access_url:
-                details.append(f"accessURL={entity.access_url}")
-            if entity.service_type:
-                details.append(f"serviceType={entity.service_type}")
-            if entity.drive_entity_type:
-                details.append(f"entityType={entity.drive_entity_type}")
+            if entity["resourcePath"]:
+                details.append(f"path={entity['resourcePath']}")
+            if entity["_cache"]:
+                details.append(f"_cache={entity['_cache']}")
+            if entity["accessURL"]:
+                details.append(f"accessURL={entity['accessURL']}")
+            if entity["serviceType"]:
+                details.append(f"serviceType={entity['serviceType']}")
+            if entity["entityType"]:
+                details.append(f"entityType={entity['entityType']}")
             if details:
                 node.add("[dim]" + ", ".join(details) + "[/dim]")
 
@@ -239,7 +478,9 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
         ),
     )
     def add(
-        name: str = typer.Argument(..., help="Resource name to store in the descriptor."),
+        name: str = typer.Argument(
+            ..., help="Resource name to store in the descriptor."
+        ),
         path: Optional[str] = typer.Option(
             None, "--path", help="Canonical resource path, usually a remote file URL."
         ),
@@ -276,9 +517,7 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
             help="Deprecated; remote folders are catalogs. Use --catalog.",
         ),
         catalog: bool = typer.Option(
-            False,
-            "--catalog",
-            help="Treat as a catalog with accessURL.",
+            False, "--catalog", help="Treat as a catalog with accessURL."
         ),
         profile: Optional[str] = typer.Option(
             None, "--profile", help="Optional metadata profile for the resource."
@@ -289,12 +528,13 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
     ) -> None:
         """Add a standards-aligned resource or catalog entry to a descriptor."""
         descriptor_path = prepare_descriptor_path(
-            descriptor, require_exists=descriptor is not None or has_saved_global_descriptor()
+            descriptor,
+            require_exists=descriptor is not None or has_saved_global_descriptor(),
         )
         explicit_descriptor = descriptor is not None or has_saved_global_descriptor()
 
         try:
-            resource = add_resource_to_descriptor(
+            resource = _add_resource_to_descriptor(
                 descriptor=descriptor_path,
                 name=name,
                 path=path,
@@ -345,7 +585,7 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
     ) -> None:
         """Migrate legacy sources/path descriptors to path/_cache/accessURL."""
         try:
-            catalog = migrate_descriptor(descriptor, output=output, dry_run=dry_run)
+            catalog = _migrate_descriptor(descriptor, output=output, dry_run=dry_run)
         except (FileNotFoundError, ValueError, Error) as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1) from exc

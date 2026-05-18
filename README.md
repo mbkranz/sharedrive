@@ -250,11 +250,11 @@ Python API:
 
 ```python
 from pathlib import Path
-from sharedrive.actions.download import download
+from sharedrive import SharedriveCatalog
 
-summary = download(
-    descriptor=Path("resources/descriptor.yaml"),
-    selector=None,  # or: "sharepoint", "s3", "googledrive", ["s3", "sharepoint"]
+catalog = SharedriveCatalog.from_path(Path("resources/descriptor.yaml"))
+summary = catalog.download(
+    None,  # or: "sharepoint", "s3", "googledrive", ["s3", "sharepoint"]
     output_dir=Path("resources"),
     dry_run=True,
 )
@@ -283,10 +283,7 @@ Runtime items returned by service clients are live adapter-backed objects.
 Use `refresh()` to reload a file or folder from the backing service.
 Use `refresh_tree()` when you want a folder and its descendants refreshed recursively before traversal.
 For folders, `children` exposes the current immediate child items and `iter_files()` flattens nested files.
-Descriptor fetch remains an action-layer workflow: `sharedrive fetch ...` updates descriptor metadata, while runtime item refresh updates in-memory remote objects.
-
-For a stable Python workflow surface, use `SharedriveCatalogAction` (or
-`sharedrive.actions.workflow` helpers) for descriptor-scoped fetch/download/auth orchestration.
+Descriptor fetch remains a catalog workflow: `sharedrive fetch ...` updates descriptor metadata, while runtime item refresh updates in-memory remote objects. In Python, use `SharedriveCatalog.fetch(..., persist=True)` when fetched metadata should be written back to the descriptor.
 
 ## Descriptor format
 

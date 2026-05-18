@@ -5,8 +5,7 @@ from typing import Optional
 
 import typer
 
-from sharedrive.actions.download import download as download_action
-from sharedrive.actions.fetch import fetch as fetch_action
+from sharedrive.catalog import SharedriveCatalog
 from sharedrive.commands.toolkit import (
     DESCRIPTOR_DEFAULT_HELP,
     OutputFormat,
@@ -72,8 +71,8 @@ def register_transfer_commands(app: typer.Typer) -> None:
                 typer.echo(f"Fetching all metadata in {descriptor_path}")
 
         try:
-            summaries = fetch_action(
-                descriptor=descriptor_path, selector=entity_name, dry_run=dry_run, log=None
+            summaries = SharedriveCatalog.from_path(descriptor_path).fetch(
+                entity_name, dry_run=dry_run, log=None, persist=True
             )
         except (
             FileNotFoundError,
@@ -86,24 +85,22 @@ def register_transfer_commands(app: typer.Typer) -> None:
             raise typer.Exit(code=1) from exc
 
         if output_format == OutputFormat.JSON:
-            echo_json(
-                {
-                    "descriptor": descriptor_path.as_posix(),
-                    "selector": entity_name,
-                    "summaries": [
-                        {
-                            "resource_name": summary.resource_name,
-                            "generated_resources": summary.generated_resources,
-                            "dry_run": summary.dry_run,
-                            "changed": summary.changed,
-                            "failures": summary.failures,
-                            "errors": summary.errors,
-                            "ok": summary.ok,
-                        }
-                        for summary in summaries
-                    ],
-                }
-            )
+            echo_json({
+                "descriptor": descriptor_path.as_posix(),
+                "selector": entity_name,
+                "summaries": [
+                    {
+                        "resource_name": summary.resource_name,
+                        "generated_resources": summary.generated_resources,
+                        "dry_run": summary.dry_run,
+                        "changed": summary.changed,
+                        "failures": summary.failures,
+                        "errors": summary.errors,
+                        "ok": summary.ok,
+                    }
+                    for summary in summaries
+                ],
+            })
             return
 
         if not summaries:
@@ -136,7 +133,9 @@ def register_transfer_commands(app: typer.Typer) -> None:
         ),
         dry_run: bool = typer.Option(False, help="Print actions without downloading."),
         check_auth: bool = typer.Option(
-            False, "--check-auth", help="Validate service credentials before downloading."
+            False,
+            "--check-auth",
+            help="Validate service credentials before downloading.",
         ),
         output_format: OutputFormat = typer.Option(
             OutputFormat.TEXT, "--format", help="Output format."
@@ -153,25 +152,22 @@ def register_transfer_commands(app: typer.Typer) -> None:
 
         output_dir_path = resolve_output_dir(output_dir, descriptor=descriptor_path)
 
-        summary = download_action(
-            descriptor=descriptor_path,
-            selector=entity_name,
+        summary = SharedriveCatalog.from_path(descriptor_path).download(
+            entity_name,
             output_dir=output_dir_path,
             dry_run=dry_run,
             check_auth=check_auth,
             log=(typer.echo if output_format == OutputFormat.TEXT else None),
         )
         if output_format == OutputFormat.JSON:
-            echo_json(
-                {
-                    "descriptor": descriptor_path.as_posix(),
-                    "selector": entity_name,
-                    "output_dir": output_dir_path.as_posix(),
-                    "dry_run": dry_run,
-                    "check_auth": check_auth,
-                    "summary": _summary_to_dict(summary),
-                }
-            )
+            echo_json({
+                "descriptor": descriptor_path.as_posix(),
+                "selector": entity_name,
+                "output_dir": output_dir_path.as_posix(),
+                "dry_run": dry_run,
+                "check_auth": check_auth,
+                "summary": _summary_to_dict(summary),
+            })
         if not summary.ok:
             raise typer.Exit(code=1)
 
