@@ -23,7 +23,7 @@ dependencies = [
     "google>=3.0.0",
     # TODO: add to dedicated lib
     "msal>=1.33.0",
-    "dplib-py @ git+https://github.com/mbkranz/dplib-py.git@feat/catalog",
+    "dplib-py",
 ]   
 
 [project.scripts]

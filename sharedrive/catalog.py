@@ -352,6 +352,9 @@ class SharedriveCatalog:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         resources = self.resources(sel)
+        if not resources:
+            raise ValueError(f"No resources found for the given selector: {selector!r}")
+        
         summary = DownloadSummary(total_resources=len(resources))
         seen_destinations: dict[str, str] = {}
 
