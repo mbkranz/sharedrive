@@ -685,7 +685,7 @@ wheels = [
 [[package]]
 name = "dplib-py"
 version = "1.1.0"
-source = { git = "https://github.com/mbkranz/dplib-py.git?rev=feat%2Fcatalog#242e38716ec430019b0cbc7fd3149ea6724f9c67" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fsspec", extra = ["http"] },
     { name = "jsonschema" },
@@ -693,6 +693,10 @@ dependencies = [
     { name = "python-slugify" },
     { name = "pyyaml" },
     { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1c/3d/ee02995275fb0ab4888a460076a840c1f307300d1f5a6ddb768a2b55f41f/dplib_py-1.1.0.tar.gz", hash = "sha256:816b1a412ee014e077f8452195e6a2b623f252452e9ecca55067c4ea98cdf637", size = 169049, upload-time = "2024-09-26T11:53:50.137Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/62/bb/a38c3f394dcf855a469480f8ca989e607424696cf0873c928eb0c61a35dd/dplib_py-1.1.0-py3-none-any.whl", hash = "sha256:d1430bfd5886fa0d233dca250251d4c01363e4e320c9c2988d526bdbe41cf470", size = 156781, upload-time = "2024-09-26T11:53:48.346Z" },
 ]
 
 [[package]]
@@ -2862,7 +2866,7 @@ test = [
 requires-dist = [
     { name = "boto3", specifier = ">=1.42.55" },
     { name = "cloudpathlib", extras = ["s3"], specifier = ">=0.23.0" },
-    { name = "dplib-py", git = "https://github.com/mbkranz/dplib-py.git?rev=feat%2Fcatalog" },
+    { name = "dplib-py" },
     { name = "frictionless", marker = "extra == 'dev-datamgmt'" },
     { name = "gitpython", specifier = ">=3.1.44" },
     { name = "google", specifier = ">=3.0.0" },
