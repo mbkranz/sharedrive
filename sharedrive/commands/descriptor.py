@@ -59,7 +59,7 @@ def _add_resource_to_descriptor(
     if descriptor_path.exists():
         document = DriveCatalog.from_path(str(descriptor_path))
     elif create_if_missing:
-        document = DriveCatalog.empty()
+        document = DriveCatalog.init()
     else:
         raise FileNotFoundError(f"Descriptor '{descriptor_path}' does not exist.")
 
@@ -149,106 +149,6 @@ def _add_resource_to_descriptor(
     return entry.to_dict()
 
 
-def _migrate_descriptor(
-    descriptor: Path | str,
-    *,
-    output: Path | str | None = None,
-    dry_run: bool = False,
-) -> DriveCatalog:
-    descriptor_path = Path(descriptor)
-    text = descriptor_path.read_text(encoding="utf-8")
-    document = (
-        json.loads(text)
-        if descriptor_path.suffix.lower() == ".json"
-        else yaml.safe_load(text)
-    )
-    if not isinstance(document, dict):
-        raise ValueError(f"Descriptor '{descriptor_path}' must contain an object.")
-
-    def first_source(entry: dict[str, Any]) -> dict[str, Any]:
-        sources = entry.get("sources")
-        if isinstance(sources, list) and sources and isinstance(sources[0], dict):
-            return sources[0]
-        return {}
-
-    def resource(entry: dict[str, Any]) -> dict[str, Any]:
-        source = first_source(entry)
-        cache = entry.get("_cache") or entry.get("path")
-        migrated = {
-            key: value
-            for key, value in entry.items()
-            if key not in {"sources", "syncTarget", "targets", "target", "resources"}
-        }
-        migrated["path"] = source.get("path") or entry.get("path")
-        if cache:
-            migrated["_cache"] = cache
-        migrated["serviceType"] = entry.get("serviceType") or source.get("serviceType")
-        migrated["entityType"] = (
-            entry.get("entityType") or source.get("entityType") or "File"
-        )
-        return {key: value for key, value in migrated.items() if value is not None}
-
-    def catalog(entry: dict[str, Any]) -> dict[str, Any]:
-        source = first_source(entry)
-        migrated = {
-            key: value
-            for key, value in entry.items()
-            if key
-            not in {
-                "accessUrl",
-                "sources",
-                "syncTarget",
-                "targets",
-                "target",
-                "path",
-                "resources",
-                "packages",
-                "catalogs",
-            }
-        }
-        migrated["accessURL"] = (
-            entry.get("accessURL") or source.get("path") or entry.get("path")
-        )
-        migrated["serviceType"] = entry.get("serviceType") or source.get("serviceType")
-        migrated["entityType"] = (
-            entry.get("entityType") or source.get("entityType") or "Directory"
-        )
-        migrated["resources"] = [
-            resource(item)
-            for item in entry.get("resources", [])
-            if isinstance(item, dict)
-        ]
-        migrated["catalogs"] = [
-            catalog(item)
-            for item in [*entry.get("catalogs", []), *entry.get("packages", [])]
-            if isinstance(item, dict)
-        ]
-        return {key: value for key, value in migrated.items() if value is not None}
-
-    migrated = {
-        "$schema": document.get("$schema", CATALOG_PROFILE),
-        "resources": [
-            resource(item)
-            for item in document.get("resources", [])
-            if isinstance(item, dict)
-        ],
-        "packages": [],
-        "catalogs": [
-            catalog(item)
-            for item in [*document.get("catalogs", []), *document.get("packages", [])]
-            if isinstance(item, dict)
-        ],
-    }
-    for key in ("name", "title", "description"):
-        if key in document:
-            migrated[key] = document[key]
-
-    catalog = DriveCatalog.model_validate(migrated)
-    if not dry_run:
-        catalog.to_path(str(Path(output) if output is not None else descriptor_path))
-    return catalog
-
-
 def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> None:
     @clone_app.command(
         "descriptor",
@@ -301,8 +201,8 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
         descriptor: Optional[Path] = typer.Option(
             None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP
         ),
-        resource: Optional[str] = typer.Option(
-            None, "--resource", help="Exact resource name or dot-path to update."
+        name: Optional[str] = typer.Option(
+            None, "--name", help="Exact entity name or dot-path to update."
         ),
         dry_run: bool = typer.Option(
             False, "--dry-run", help="Show what would be updated without writing files."
@@ -319,12 +219,12 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
         document = descriptor_model.to_dict()
         target_label = str(descriptor_path)
         target: dict[str, Any] = document
-        if resource is not None:
+        if name is not None:
             try:
                 descriptor_model.assert_valid_entity_paths()
             except Error as exc:
                 raise typer.BadParameter(str(exc)) from exc
-            resolved = resolve_resource_reference(resource, descriptor_model)
+            resolved = resolve_resource_reference(name, descriptor_model)
             target = DriveCatalog.get_json_pointer_value(
                 document, resolved.json_pointer
             )
@@ -337,7 +237,7 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
         changed_properties: list[str] = []
         for property_name, raw_value in parsed.items():
             property_path = normalize_update_property(
-                property_name, resource_target=resource is not None
+                property_name, resource_target=name is not None
             )
             value = normalize_update_value(property_path, raw_value)
             try:
@@ -566,34 +466,4 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
             f"at {location} with serviceType '{resource.get('serviceType')}', "
             f"entityType '{resource.get('entityType')}'."
         )
-
-    @app.command(
-        "migrate",
-        epilog=examples_epilog(
-            "sharedrive migrate resources/descriptor.yaml --dry-run",
-            "sharedrive migrate resources/descriptor.yaml --output resources/descriptor.v2.yaml",
-        ),
-    )
-    def migrate(
-        descriptor: Path = typer.Argument(..., help="Legacy descriptor to migrate."),
-        output: Optional[Path] = typer.Option(
-            None, "--output", help="Write migrated descriptor to this path."
-        ),
-        dry_run: bool = typer.Option(
-            False, "--dry-run", help="Print migrated descriptor JSON without writing."
-        ),
-    ) -> None:
-        """Migrate legacy sources/path descriptors to path/_cache/accessURL."""
-        try:
-            catalog = _migrate_descriptor(descriptor, output=output, dry_run=dry_run)
-        except (FileNotFoundError, ValueError, Error) as exc:
-            typer.echo(str(exc), err=True)
-            raise typer.Exit(code=1) from exc
-
-        if dry_run:
-            echo_json(catalog.to_dict())
-            return
-        typer.echo(f"Migrated descriptor: {output or descriptor}")
-
-
 __all__ = ["register_descriptor_commands"]

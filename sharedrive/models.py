@@ -5,12 +5,12 @@ from typing import Annotated, Any, Optional
 from urllib.parse import urlparse
 
 import pydantic
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, BeforeValidator, Field
 
-from dplib.models.catalog import Catalog
-from dplib.models.package import Package
-from dplib.models.resource import Resource
-from dplib.models.source import Source
+from dplib.models import Catalog
+from dplib.models import Package
+from dplib.models import Resource
+
 
 
 CATALOG_PROFILE = "data-package-catalog"
@@ -163,13 +163,8 @@ def resolve_cache_path(resource: "DriveResource", output_dir: Path) -> Path:
     cache_path = Path(resource.cache.strip())
     return cache_path if cache_path.is_absolute() else output_dir / cache_path
 
-
-class DriveSource(Source):
-    """Provenance source.
-
-    This intentionally does not carry adapter access metadata. Operational
-    access lives on DriveResource.path or DriveCatalog.accessURL.
-    """
+serviceType = Annotated[str,BeforeValidator(normalize_service_type)]
+entityType = Annotated[str,BeforeValidator(normalize_entity_type)]
 
 
 class DriveResource(Resource):
@@ -183,19 +178,9 @@ class DriveResource(Resource):
         Optional[str],
         Field(default=None, alias="_cache", validation_alias=AliasChoices("_cache", "cache")),
     ] = None
-    serviceType: Optional[str] = None
-    entityType: Optional[str] = None
-    sources: list[DriveSource] = pydantic.Field(default_factory=list)
-
-    @pydantic.field_validator("serviceType", mode="before")
-    @classmethod
-    def _normalize_service_type(cls, value: str | None) -> str | None:
-        return normalize_service_type(value)
-
-    @pydantic.field_validator("entityType", mode="before")
-    @classmethod
-    def _normalize_entity_type(cls, value: str | None) -> str | None:
-        return normalize_entity_type(value)
+    serviceType: Optional[serviceType] = None
+    serviceId: Optional[str] = None
+    entityType: Optional[entityType] = None
 
     @property
     def adapter_name(self) -> str:
@@ -208,60 +193,27 @@ class DriveResource(Resource):
             "Resource must declare serviceType or a path with a recognizable host"
         )
 
-    @classmethod
-    def from_drive_metadata(
-        cls,
-        *,
-        name: str,
-        path: str,
-        service_type: str,
-        entity_type: str,
-        source_url: str,
-        format_str: str | None = None,
-        drive_id: str | None = None,
-    ) -> "DriveResource":
-        """Create a standards-aligned resource from runtime drive metadata."""
-        data: dict[str, Any] = {
-            "name": name,
-            "path": source_url,
-            "_cache": path,
-            "serviceType": service_type,
-            "entityType": entity_type,
-        }
-        if format_str:
-            data["format"] = format_str
-        if drive_id:
-            data["driveId"] = drive_id
-        return cls.model_validate(data)
-
-
 class DrivePackage(Package):
-    """Logical Data Package; not used as a remote folder surrogate."""
+    serviceType: Optional[serviceType] = None
+    serviceId: Optional[str] = None
+    entityType: Optional[entityType] = None
 
-    resources: list["DriveResource | DrivePackage"] = pydantic.Field(
-        default_factory=list
-    )
-    sources: list[DriveSource] = pydantic.Field(default_factory=list)
-
+    @property
+    def adapter_name(self) -> str:
+        adapter = adapter_from_service_type(self.serviceType)
+        if adapter:
+            return adapter
+        raise ValueError("Package must declare serviceType to determine adapter")
 
 class DriveCatalog(Catalog, json_schema_extra={"$schema": CATALOG_PROFILE}):
     profile: str = pydantic.Field(default=CATALOG_PROFILE, alias="$schema")
     accessURL: Optional[str] = None
-    serviceType: Optional[str] = None
-    entityType: Optional[str] = None
+    serviceType: Optional[serviceType] = None
+    serviceId: Optional[str] = None
+    entityType: Optional[entityType] = None
     resources: list[DriveResource] = pydantic.Field(default_factory=list)
     packages: list[DrivePackage] = pydantic.Field(default_factory=list)
     catalogs: list["DriveCatalog"] = pydantic.Field(default_factory=list)
-
-    @pydantic.field_validator("serviceType", mode="before")
-    @classmethod
-    def _normalize_service_type(cls, value: str | None) -> str | None:
-        return normalize_service_type(value)
-
-    @pydantic.field_validator("entityType", mode="before")
-    @classmethod
-    def _normalize_entity_type(cls, value: str | None) -> str | None:
-        return normalize_entity_type(value)
 
     @property
     def adapter_name(self) -> str:
@@ -280,7 +232,7 @@ class DriveCatalog(Catalog, json_schema_extra={"$schema": CATALOG_PROFILE}):
         return data
 
     @classmethod
-    def empty(cls) -> "DriveCatalog":
+    def init(cls) -> "DriveCatalog":
         return cls.model_validate(_empty_catalog_document())
 
 
@@ -294,7 +246,6 @@ __all__ = [
     "DriveCatalog",
     "DrivePackage",
     "DriveResource",
-    "DriveSource",
     "SUPPORTED_SERVICE_TYPES",
     "adapter_from_locator",
     "adapter_from_service_type",
