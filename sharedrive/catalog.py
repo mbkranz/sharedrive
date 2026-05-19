@@ -7,7 +7,7 @@ from typing import Any, Callable, Iterable
 from pydantic import GetCoreSchemaHandler
 from pydantic_core import core_schema
 
-from dplib.models.resource import Resource
+from dplib.models import Resource
 
 from sharedrive.clients.base import AdapterCapabilities, BaseClient
 from sharedrive.clients.aws import S3Client
