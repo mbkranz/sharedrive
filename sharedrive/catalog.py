@@ -45,6 +45,14 @@ class CatalogSelector:
             self._tokens: frozenset[str] | None = None
         else:
             raw_values = [raw] if isinstance(raw, str) else list(raw)
+            if not all(isinstance(value, str) for value in raw_values):
+                invalid_types = sorted(
+                    {type(value).__name__ for value in raw_values if not isinstance(value, str)}
+                )
+                raise TypeError(
+                    "selector values must be strings, an iterable of strings, or None; "
+                    f"received invalid value types: {', '.join(invalid_types)}"
+                )
             values = frozenset(
                 stripped
                 for raw_value in raw_values
@@ -204,8 +212,30 @@ class SharedriveCatalog:
             return capabilities
         return AdapterCapabilities()
 
-    def references(self, selector: str | Iterable[str] | None = None) -> list[Any]:
-        sel = CatalogSelector(selector)
+    @staticmethod
+    def _normalize_selector(
+        selector: CatalogSelector | str | Iterable[str] | None,
+    ) -> CatalogSelector:
+        """Normalize selector inputs to a `CatalogSelector`.
+
+        Parameters
+        ----------
+        selector:
+            Existing `CatalogSelector`, selector string, iterable of selector
+            strings, or `None` for "select all".
+
+        Returns
+        -------
+        CatalogSelector
+            Normalized selector. This helper is static because normalization is
+            a pure transformation that does not depend on catalog instance state.
+        """
+        return selector if isinstance(selector, CatalogSelector) else CatalogSelector(selector)
+
+    def references(
+        self, selector: CatalogSelector | str | Iterable[str] | None = None
+    ) -> list[Any]:
+        sel = self._normalize_selector(selector)
         refs = self.catalog.iter_entity_paths(include_self=False)
         if not sel:
             return refs
@@ -223,10 +253,11 @@ class SharedriveCatalog:
         return selected
 
     def resources(
-        self, selector: str | Iterable[str] | None = None
+        self, selector: CatalogSelector | str | Iterable[str] | None = None
     ) -> list[DriveResource]:
+        sel = self._normalize_selector(selector)
         result: list[DriveResource] = []
-        for ref in self.references(selector):
+        for ref in self.references(sel):
             if isinstance(ref.model, DriveResource):
                 result.append(ref.model)
             elif isinstance(ref.model, Resource) and not isinstance(
@@ -235,9 +266,12 @@ class SharedriveCatalog:
                 result.append(DriveResource.model_validate(ref.model.to_dict()))
         return result
 
-    def adapter_names(self, selector: str | Iterable[str] | None = None) -> list[str]:
+    def adapter_names(
+        self, selector: CatalogSelector | str | Iterable[str] | None = None
+    ) -> list[str]:
+        sel = self._normalize_selector(selector)
         adapters: list[str] = []
-        for ref in self.references(selector):
+        for ref in self.references(sel):
             adapter = adapter_from_service_type(getattr(ref.model, "serviceType", None))
             if adapter and adapter not in adapters:
                 adapters.append(adapter)
@@ -245,27 +279,29 @@ class SharedriveCatalog:
 
     def check_auth(
         self,
-        selector: str | Iterable[str] | None = None,
+        selector: CatalogSelector | str | Iterable[str] | None = None,
         *,
         adapters: Iterable[str] | None = None,
     ) -> list[AuthCheckResult]:
+        sel = self._normalize_selector(selector)
         names = (
             list(dict.fromkeys(adapter.strip().lower() for adapter in adapters))
             if adapters is not None
-            else self.adapter_names(selector)
+            else self.adapter_names(sel)
         )
         return [self._check_one_adapter(adapter) for adapter in names]
 
     def fetch(
         self,
-        selector: str | None = None,
+        selector: CatalogSelector | str | Iterable[str] | None = None,
         *,
         dry_run: bool = False,
         depth: int = -1,
         log: LogFn | None = print,
         persist: bool | Path | str = False,
     ) -> list[FetchSummary]:
-        catalogs = self._catalogs_to_fetch(selector, depth=depth)
+        sel = self._normalize_selector(selector)
+        catalogs = self._catalogs_to_fetch(sel, depth=depth)
         summaries = [
             self._fetch_one_catalog(catalog, name, dry_run=dry_run, log=log)
             for name, catalog in catalogs
@@ -276,7 +312,7 @@ class SharedriveCatalog:
 
     def download(
         self,
-        selector: str | Iterable[str] | None = None,
+        selector: CatalogSelector | str | Iterable[str] | None = None,
         *,
         output_dir: Path | str = Path("resources"),
         dry_run: bool = False,
@@ -284,14 +320,43 @@ class SharedriveCatalog:
         log: LogFn | None = print,
         use_cloudpathlib: bool = True,
     ) -> DownloadSummary:
+        """Download selected resources to paths from `resolve_cache_path`.
+
+        Parameters
+        ----------
+        selector:
+            Resource selector (`None`, string, iterable, or `CatalogSelector`).
+        output_dir:
+            Base directory used when `_cache` is relative.
+        dry_run:
+            When true, only log download actions.
+        check_auth:
+            When true, run adapter auth checks before downloads.
+        log:
+            Optional logger callback for status messages.
+        use_cloudpathlib:
+            For S3, prefer cloudpathlib before boto3 fallback.
+
+        Returns
+        -------
+        DownloadSummary
+            Aggregate result counts for attempted downloads.
+
+        Raises
+        ------
+        ValueError
+            If a selected resource has no `_cache` path or two resources map to
+            the same output destination.
+        """
+        sel = self._normalize_selector(selector)
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        resources = self.resources(selector)
+        resources = self.resources(sel)
         summary = DownloadSummary(total_resources=len(resources))
         seen_destinations: dict[str, str] = {}
 
         if check_auth:
-            auth_results = self.check_auth(selector)
+            auth_results = self.check_auth(sel)
             for result in auth_results:
                 self._emit(
                     log,
@@ -328,22 +393,25 @@ class SharedriveCatalog:
             log(message)
 
     def _catalogs_to_fetch(
-        self, selector: str | None, *, depth: int
+        self, selector: CatalogSelector, *, depth: int
     ) -> list[tuple[str, DriveCatalog]]:
-        if selector and selector.strip():
-            entity = self.catalog.get_entity(selector.strip())
-            if entity is None:
-                raise ValueError(f"Entity '{selector}' was not found in descriptor.")
-            if isinstance(entity, DriveResource):
-                raise ValueError(
-                    f"Entity '{selector}' is a standalone resource. "
-                    "Only catalogs with accessURL support fetch."
-                )
-            if not isinstance(entity, DriveCatalog):
-                raise ValueError(f"Entity '{selector}' is not a fetchable catalog.")
-            return [(str(entity.name or selector), entity)]
-
         catalogs: list[tuple[str, DriveCatalog]] = []
+        if selector.tokens:
+            # Sort for deterministic fetch/summary ordering across runs.
+            for token in sorted(selector.tokens):
+                entity = self.catalog.get_entity(token)
+                if entity is None:
+                    raise ValueError(f"Entity '{token}' was not found in descriptor.")
+                if isinstance(entity, DriveResource):
+                    raise ValueError(
+                        f"Entity '{token}' is a standalone resource. "
+                        "Only catalogs with accessURL support fetch."
+                    )
+                if not isinstance(entity, DriveCatalog):
+                    raise ValueError(f"Entity '{token}' is not a fetchable catalog.")
+                catalogs.append((str(entity.name or token), entity))
+            return catalogs
+
         for ref in self.catalog.iter_entity_paths(include_self=bool(self.catalog.name)):
             if not isinstance(ref.model, DriveCatalog) or not ref.model.accessURL:
                 continue

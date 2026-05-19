@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from sharedrive.catalog import SharedriveCatalog
+from sharedrive.catalog import CatalogSelector, SharedriveCatalog
 
 
 def _write_descriptor(path: Path) -> None:
@@ -143,3 +143,56 @@ def test_fetch_rejects_standalone_resource(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="standalone resource"):
         SharedriveCatalog.from_path(descriptor).fetch("drive-export", log=None)
+
+
+def test_fetch_accepts_multi_selectors_in_sorted_token_order(
+    monkeypatch, tmp_path: Path
+) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    descriptor.write_text(
+        yaml.safe_dump(
+            {
+                "$schema": "data-package-catalog",
+                "catalogs": [
+                    {
+                        "name": "research",
+                        "accessURL": "https://drive.google.com/drive/folders/folder123",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "Directory",
+                    },
+                    {
+                        "name": "archive",
+                        "accessURL": "https://drive.google.com/drive/folders/folder456",
+                        "serviceType": "GoogleDrive",
+                        "entityType": "Directory",
+                    },
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("sharedrive.catalog.get_client", lambda _name: _Client())
+
+    summaries = SharedriveCatalog.from_path(descriptor).fetch(
+        ["research", "archive"], log=None
+    )
+
+    expected = ["archive", "research"]
+    assert [summary.resource_name for summary in summaries] == expected
+    assert all(summary.generated_resources == 1 for summary in summaries)
+
+
+def test_fetch_accepts_catalog_selector_instance(
+    monkeypatch, tmp_path: Path
+) -> None:
+    descriptor = tmp_path / "descriptor.yaml"
+    _write_descriptor(descriptor)
+    monkeypatch.setattr("sharedrive.catalog.get_client", lambda _name: _Client())
+
+    summaries = SharedriveCatalog.from_path(descriptor).fetch(
+        CatalogSelector("research"), log=None
+    )
+
+    assert len(summaries) == 1
+    assert summaries[0].resource_name == "research"
