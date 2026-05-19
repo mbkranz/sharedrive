@@ -86,7 +86,7 @@ def test_update_resource_properties_exact_match(tmp_path: Path) -> None:
             "update",
             "--descriptor",
             str(descriptor),
-            "--resource",
+            "--name",
             "spec-workbook",
             "--title",
             "Updated title",
@@ -103,24 +103,22 @@ def test_update_resource_properties_exact_match(tmp_path: Path) -> None:
     assert "title" not in document["resources"][1]
 
 
-def test_update_resource_uses_checked_out_descriptor(monkeypatch, tmp_path: Path) -> None:
+def test_update_resource_uses_checked_out_descriptor(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.chdir(tmp_path)
     descriptor = tmp_path / "resources" / "descriptor.yaml"
     descriptor.parent.mkdir(parents=True, exist_ok=True)
     _write_descriptor(descriptor)
 
-    checkout_result = RUNNER.invoke(app, ["checkout", "resources/descriptor.yaml"], prog_name="sharedrive")
+    checkout_result = RUNNER.invoke(
+        app, ["checkout", "resources/descriptor.yaml"], prog_name="sharedrive"
+    )
     assert checkout_result.exit_code == 0
 
     result = RUNNER.invoke(
         app,
-        [
-            "update",
-            "--resource",
-            "spec-workbook",
-            "--title",
-            "Checked out title",
-        ],
+        ["update", "--name", "spec-workbook", "--title", "Checked out title"],
         prog_name="sharedrive",
     )
 
@@ -137,7 +135,9 @@ def test_update_descriptor_override_with_resource(monkeypatch, tmp_path: Path) -
     override = tmp_path / "override.yaml"
     _write_descriptor(override)
 
-    checkout_result = RUNNER.invoke(app, ["checkout", "resources/descriptor.yaml"], prog_name="sharedrive")
+    checkout_result = RUNNER.invoke(
+        app, ["checkout", "resources/descriptor.yaml"], prog_name="sharedrive"
+    )
     assert checkout_result.exit_code == 0
 
     result = RUNNER.invoke(
@@ -146,7 +146,7 @@ def test_update_descriptor_override_with_resource(monkeypatch, tmp_path: Path) -
             "update",
             "--descriptor",
             str(override),
-            "--resource",
+            "--name",
             "spec-workbook",
             "--title",
             "Override title",
@@ -171,7 +171,7 @@ def test_update_resource_normalizes_service_type(tmp_path: Path) -> None:
             "update",
             "--descriptor",
             str(descriptor),
-            "--resource",
+            "--name",
             "spec-workbook",
             "--service-type",
             "sharepoint",
@@ -195,7 +195,7 @@ def test_update_dry_run_does_not_write(tmp_path: Path) -> None:
             "update",
             "--descriptor",
             str(descriptor),
-            "--resource",
+            "--name",
             "spec-workbook",
             "--title",
             "Dry run title",
@@ -214,9 +214,7 @@ def test_update_requires_fields(tmp_path: Path) -> None:
     _write_descriptor(descriptor)
 
     result = RUNNER.invoke(
-        app,
-        ["update", "--descriptor", str(descriptor)],
-        prog_name="sharedrive",
+        app, ["update", "--descriptor", str(descriptor)], prog_name="sharedrive"
     )
 
     assert result.exit_code != 0
@@ -233,7 +231,7 @@ def test_update_missing_resource_errors(tmp_path: Path) -> None:
             "update",
             "--descriptor",
             str(descriptor),
-            "--resource",
+            "--name",
             "missing",
             "--title",
             "Hello",

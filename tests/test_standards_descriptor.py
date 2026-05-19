@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 
 from sharedrive.catalog import SharedriveCatalog
-from sharedrive.commands.descriptor import _add_resource_to_descriptor, _migrate_descriptor
+from sharedrive.commands.descriptor import _add_resource_to_descriptor
 
 
 class _FileItem:
@@ -19,17 +19,17 @@ class _FileItem:
     def refresh(self, *, include_children: bool = True):
         return self
 
-    def to_resource(self):
+    def to_catalog(self):
         from sharedrive.models import DriveResource
 
-        return DriveResource.from_drive_metadata(
+        return DriveResource(
             name=self.path,
-            path=self.path,
-            service_type=self.service_type,
-            entity_type="File",
-            source_url=self.source_url,
-            format_str="csv",
-            drive_id=self.id,
+            path=self.source_url,
+            cache=self.path,
+            serviceId=self.id,
+            serviceType=self.service_type,
+            entityType="File",
+            format="csv",
         )
 
     def download(self, target: Path | str) -> None:
@@ -51,12 +51,13 @@ class _FolderItem:
     def refresh(self, *, include_children: bool = True):
         return self
 
-    def to_resource(self):
+    def to_catalog(self):
         from sharedrive.models import DriveCatalog
 
         return DriveCatalog(
             name=self.path,
             accessURL=self.source_url,
+            serviceId=self.id,
             serviceType=self.service_type,
             entityType="Directory",
         )
@@ -124,45 +125,3 @@ def test_fetch_expands_catalog_and_download_uses_cache(
 
     assert summary.downloaded == 1
     assert (tmp_path / "reports" / "report.csv").read_text(encoding="utf-8") == "ok"
-
-
-def test_migrate_legacy_descriptor_to_canonical_shape(tmp_path: Path) -> None:
-    descriptor = tmp_path / "legacy.yaml"
-    descriptor.write_text(
-        yaml.safe_dump({
-            "resources": [
-                {
-                    "name": "raw",
-                    "path": "downloads/raw.csv",
-                    "sources": [
-                        {
-                            "path": "s3://bucket/raw.csv",
-                            "serviceType": "S3",
-                            "entityType": "File",
-                        }
-                    ],
-                }
-            ],
-            "packages": [
-                {
-                    "name": "research",
-                    "path": "downloads/research",
-                    "sources": [
-                        {
-                            "path": "https://drive.google.com/drive/folders/folder-1",
-                            "serviceType": "GoogleDrive",
-                            "entityType": "Directory",
-                        }
-                    ],
-                    "resources": [],
-                }
-            ],
-        }),
-        encoding="utf-8",
-    )
-
-    migrated = _migrate_descriptor(descriptor, dry_run=True).to_dict()
-
-    assert migrated["resources"][0]["path"] == "s3://bucket/raw.csv"
-    assert migrated["resources"][0]["_cache"] == "downloads/raw.csv"
-    assert migrated["catalogs"][0]["accessURL"].endswith("folder-1")

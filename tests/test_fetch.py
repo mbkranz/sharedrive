@@ -48,17 +48,17 @@ class _File:
     def refresh(self, *, include_children: bool = True):
         return self
 
-    def to_resource(self):
+    def to_catalog(self):
         from sharedrive.models import DriveResource
 
-        return DriveResource.from_drive_metadata(
+        return DriveResource(
             name=self.path,
-            path=self.path,
-            service_type=self.service_type,
-            entity_type="File",
-            source_url=self.source_url,
-            format_str="csv",
-            drive_id=self.id,
+            path=self.source_url,
+            cache=self.path,
+            serviceId=self.id,
+            serviceType=self.service_type,
+            entityType="File",
+            format="csv",
         )
 
     def download(self, target_path: str) -> None:
@@ -183,9 +183,7 @@ def test_fetch_accepts_multi_selectors_in_sorted_token_order(
     assert all(summary.generated_resources == 1 for summary in summaries)
 
 
-def test_fetch_accepts_catalog_selector_instance(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_fetch_accepts_catalog_selector_instance(monkeypatch, tmp_path: Path) -> None:
     descriptor = tmp_path / "descriptor.yaml"
     _write_descriptor(descriptor)
     monkeypatch.setattr("sharedrive.catalog.get_client", lambda _name: _Client())

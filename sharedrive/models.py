@@ -12,7 +12,6 @@ from dplib.models import Package
 from dplib.models import Resource
 
 
-
 CATALOG_PROFILE = "data-package-catalog"
 
 SERVICE_TYPE_ALIASES = {
@@ -42,12 +41,7 @@ ENTITY_TYPE_ALIASES = {
 
 
 def _empty_catalog_document() -> dict[str, Any]:
-    return {
-        "$schema": CATALOG_PROFILE,
-        "resources": [],
-        "packages": [],
-        "catalogs": [],
-    }
+    return {"$schema": CATALOG_PROFILE, "resources": [], "packages": [], "catalogs": []}
 
 
 def _require_non_empty(value: str, field_name: str) -> str:
@@ -163,8 +157,9 @@ def resolve_cache_path(resource: "DriveResource", output_dir: Path) -> Path:
     cache_path = Path(resource.cache.strip())
     return cache_path if cache_path.is_absolute() else output_dir / cache_path
 
-serviceType = Annotated[str,BeforeValidator(normalize_service_type)]
-entityType = Annotated[str,BeforeValidator(normalize_entity_type)]
+
+ServiceTypeValue = Annotated[str, BeforeValidator(normalize_service_type)]
+EntityTypeValue = Annotated[str, BeforeValidator(normalize_entity_type)]
 
 
 class DriveResource(Resource):
@@ -176,11 +171,15 @@ class DriveResource(Resource):
 
     cache: Annotated[
         Optional[str],
-        Field(default=None, alias="_cache", validation_alias=AliasChoices("_cache", "cache")),
+        Field(
+            default=None,
+            alias="_cache",
+            validation_alias=AliasChoices("_cache", "cache"),
+        ),
     ] = None
-    serviceType: Optional[serviceType] = None
+    serviceType: Optional[ServiceTypeValue] = None
     serviceId: Optional[str] = None
-    entityType: Optional[entityType] = None
+    entityType: Optional[EntityTypeValue] = None
 
     @property
     def adapter_name(self) -> str:
@@ -193,10 +192,11 @@ class DriveResource(Resource):
             "Resource must declare serviceType or a path with a recognizable host"
         )
 
+
 class DrivePackage(Package):
-    serviceType: Optional[serviceType] = None
+    serviceType: Optional[ServiceTypeValue] = None
     serviceId: Optional[str] = None
-    entityType: Optional[entityType] = None
+    entityType: Optional[EntityTypeValue] = None
 
     @property
     def adapter_name(self) -> str:
@@ -205,12 +205,13 @@ class DrivePackage(Package):
             return adapter
         raise ValueError("Package must declare serviceType to determine adapter")
 
+
 class DriveCatalog(Catalog, json_schema_extra={"$schema": CATALOG_PROFILE}):
     profile: str = pydantic.Field(default=CATALOG_PROFILE, alias="$schema")
     accessURL: Optional[str] = None
-    serviceType: Optional[serviceType] = None
+    serviceType: Optional[ServiceTypeValue] = None
     serviceId: Optional[str] = None
-    entityType: Optional[entityType] = None
+    entityType: Optional[EntityTypeValue] = None
     resources: list[DriveResource] = pydantic.Field(default_factory=list)
     packages: list[DrivePackage] = pydantic.Field(default_factory=list)
     catalogs: list["DriveCatalog"] = pydantic.Field(default_factory=list)

@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Iterable
 
-from sharedrive.models import DriveCatalog, DrivePackage, DriveResource, DriveSource
+from sharedrive.models import DriveCatalog, DrivePackage, DriveResource
 
 
 class DriveItem(ABC):
@@ -111,11 +111,7 @@ class DriveItem(ABC):
             "Concrete subclasses must override download()."
         )
 
-    def to_source(self) -> DriveSource:
-        """Convert to a provenance source entry."""
-        return DriveSource(title=self.name, path=self.source_url)
-
-    def to_resource(self) -> DriveResource | DrivePackage | DriveCatalog:
+    def to_catalog(self) -> DriveResource | DrivePackage | DriveCatalog:
         """Convert to a descriptor resource, package, or catalog entry.
 
         - Files → :class:`~sharedrive.models.DriveResource` with the remote URL
@@ -127,19 +123,20 @@ class DriveItem(ABC):
             format_str = None
             if "." in self.name:
                 format_str = self.name.rsplit(".", 1)[-1].lower()
-            return DriveResource.from_drive_metadata(
+            return DriveResource(
                 name=self.path,
-                path=self.path,
-                service_type=self.service_type,
-                entity_type="File",
-                source_url=self.source_url,
-                format_str=format_str,
-                drive_id=self.id,
+                path=self.source_url,
+                cache=self.path,
+                serviceId=self.id,
+                serviceType=self.service_type,
+                entityType="File",
+                format=format_str,
+                
             )
         resources: list[DriveResource] = []
         catalogs: list[DriveCatalog] = []
         for child in self.children:
-            entry = child.to_resource()
+            entry = child.to_catalog()
             if isinstance(entry, DriveCatalog):
                 catalogs.append(entry)
             elif isinstance(entry, DriveResource):
@@ -147,21 +144,12 @@ class DriveItem(ABC):
         return DriveCatalog(
             name=self.path,
             accessURL=self.source_url,
+            serviceId=self.id,
             serviceType=self.service_type,
             entityType="Directory",
-            driveId=self.id,
             resources=resources,
             catalogs=catalogs,
         )
-
-    def to_dp(self) -> DriveResource | DrivePackage:
-        """Deprecated alias for :meth:`to_resource`.
-
-        .. deprecated::
-            Use :meth:`to_resource` instead.
-        """
-        return self.to_resource()
-
 
 class DriveFile(DriveItem):
     """Backward-compatible file item base class."""

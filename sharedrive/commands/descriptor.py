@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 import typer
-import yaml
 from dplib.error import Error
 
 from sharedrive.commands.toolkit import (
@@ -22,7 +21,6 @@ from sharedrive.commands.toolkit import (
 from sharedrive.exceptions import GoogleApiError, GraphApiError
 from sharedrive.helpers import has_saved_global_descriptor, set_active_descriptor
 from sharedrive.models import (
-    CATALOG_PROFILE,
     DriveCatalog,
     DriveResource,
     adapter_from_service_type,
@@ -83,14 +81,18 @@ def _add_resource_to_descriptor(
 
     if catalog:
         folder_url = non_empty(access_url or path or "", "accessURL")
-        resolved_service_type = resolve_service_type(folder_url, service_type=service_type)
+        resolved_service_type = resolve_service_type(
+            folder_url, service_type=service_type
+        )
         resolved_entity_type = resolve_entity_type(
             folder_url,
             service_type=resolved_service_type,
             entity_type=entity_type or "Directory",
         )
         if resolved_entity_type not in {"Directory", "Container"}:
-            raise ValueError("Catalog entries must use entityType Directory or Container.")
+            raise ValueError(
+                "Catalog entries must use entityType Directory or Container."
+            )
 
         payload: dict[str, Any] = {
             "name": entity_name,
@@ -192,8 +194,8 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
         context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
         epilog=examples_epilog(
             'sharedrive update --title "Hello" --description "hello"',
-            'sharedrive update --resource file1 --title "Hello" --description "hello"',
-            'sharedrive update --descriptor resources/descriptor.yaml --resource file1 --title "Hello"',
+            'sharedrive update --name file1 --title "Hello" --description "hello"',
+            'sharedrive update --descriptor resources/descriptor.yaml --name file1 --title "Hello"',
         ),
     )
     def update_command(
@@ -466,4 +468,6 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
             f"at {location} with serviceType '{resource.get('serviceType')}', "
             f"entityType '{resource.get('entityType')}'."
         )
+
+
 __all__ = ["register_descriptor_commands"]

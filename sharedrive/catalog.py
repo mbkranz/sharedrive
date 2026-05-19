@@ -451,7 +451,7 @@ class SharedriveCatalog:
                 else [root.refresh(include_children=False)]
             )
             for child in children:
-                entry = child.to_resource()
+                entry = child.to_catalog()
                 if isinstance(entry, DriveCatalog):
                     catalogs.append(entry)
                 elif isinstance(entry, DriveResource):
