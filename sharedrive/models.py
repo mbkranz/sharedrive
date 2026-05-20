@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
-import warnings
 from pathlib import Path
-from typing import Annotated, Any, Optional, TypeVar
+from typing import Annotated, Any, Literal, Optional, TypeVar
 from urllib.parse import urlparse
 
 import pydantic
-from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler
-from pydantic.types import AnyUrl
+from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler,AnyUrl, InstanceOf
 from pydantic_core import core_schema
 
 from dplib.helpers.path import assert_safe_path
@@ -173,11 +171,7 @@ def adapter_from_locator(locator: str) -> str:
 
 ServiceTypeValue = Annotated[str, BeforeValidator(normalize_service_type)]
 EntityTypeValue = Annotated[str, BeforeValidator(normalize_entity_type)]
-CachePath = Annotated[Path,Field(
-            default=None,
-            alias="_cache",
-            validation_alias=AliasChoices("_cache", "cache"),
-        )]
+CachePath = Annotated[str,Field(alias="_cache",validation_alias=AliasChoices("_cache", "cache"))]
 
 def resolve_cache_path(cache: str|None, basepath: str|None):
     if cache and basepath:
@@ -192,63 +186,29 @@ def resolve_cache_path(cache: str|None, basepath: str|None):
 # ---------------------------------------------------------------------
 
 
-
-class DriveResource(Resource):
+class DriveRemoteResource(Resource):
     """Data Package resource with shared-drive adapter metadata.
 
     `path` remains the canonical Data Package data locator. `_cache` follows
     the Data Package caching recipe as the local materialized copy location.
     """
-
-
-
+    path: AnyUrl
     serviceType: Optional[ServiceTypeValue] = None
     serviceId: Optional[str] = None
     entityType: Optional[EntityTypeValue] = None
-    cache: Optional[CachePath]
-    accessUrl: Optional[AnyUrl] = None
-    @model_validator(mode="after")
-    def validate_cache(self) -> DriveResource:
-        is_url = isinstance(self.path,AnyUrl)
-        
-        if not is_url and self.cache:
-            raise ValueError("cache path should not be set for non-URL resources")
-        elif is_url and self.cache and self.basepath:
-            assert_safe_path(str(self.path), basepath=self.basepath)
-            self.cache = Path(self.basepath).joinpath(self.cache)
-        elif is_url and self.cache and not self.basepath:
-            raise ValueError("cache path is required for URL resources without a basepath")
-        elif is_url and not self.cache:
-            warnings.warn("Resource with URL path is missing _cache path. This is required for downloading")
-        
-        return self      
-class DrivePackage(Package):
+    cache: Optional[CachePath] = None
+   
+class DriveRemotePackage(Package):
     """Data Package package with shared-drive adapter metadata."""
 
+    accessUrl: AnyUrl
+    cache: Optional[CachePath] = None
     serviceType: Optional[ServiceTypeValue] = None
     serviceId: Optional[str] = None
     entityType: Optional[EntityTypeValue] = None
-    cache: CachePath
-    accessUrl: Optional[AnyUrl] = None
-    # Override upstream resources so nested resources validate as DriveResource.
-    resources: list[DriveResource] = pydantic.Field(default_factory=list)
     
-    @model_validator(mode="after")
-    def validate_cache(self) -> DrivePackage:
-        
-        if self.accessUrl:
-            if self.cache and self.basepath:
-                assert_safe_path(str(self.cache), basepath=self.basepath)
-                self.cache = Path(self.basepath).joinpath(self.cache)
-            elif self.cache and not self.basepath:
-                raise ValueError("cache path is required for URL resources without a basepath")
-            elif not self.cache:
-                warnings.warn("Resource with URL path is missing _cache path. This is required for downloading")
-        else:
-            if self.cache:
-                raise ValueError("cache path should not be set for packages without an accessUrl")
-        
-        return self      
+    
+  
 # ---------------------------------------------------------------------
 # Selector
 # ---------------------------------------------------------------------
@@ -342,26 +302,16 @@ class CatalogSelector:
             ),
         )
 
-
-_T = TypeVar("_T", bound=Model)
-
-
 # ---------------------------------------------------------------------
 # Catalog reference and catalog models
 # ---------------------------------------------------------------------
-class DriveCatalogReference(Model):
-    """Unresolved reference to an external DriveCatalog document.
-
-    `path` stays exactly as authored. `basepath` is inherited from the parent
-    catalog and used only for resolution/loading.
-    """
-
+class DriveReference(Model):
+    """ Base class for any named references to other metadata"""
     name: Optional[str] = None
     path: str
     basepath: Optional[str] = pydantic.Field(default=None, exclude=True)
-    accessURL: Optional[str] = None
-
-    def with_basepath(self, basepath: str | None) -> "DriveCatalogReference":
+    conformsTo: type[Model] # NOTE: https://www.w3.org/TR/vocab-dcat-3/#Property:record_conforms_to
+    def with_basepath(self, basepath: str | None) -> "DriveReference":
         """Return a copy with inherited basepath, without rewriting path."""
         if basepath is None or self.basepath is not None:
             return self
@@ -369,23 +319,22 @@ class DriveCatalogReference(Model):
         assert_safe_path(self.path, basepath=basepath)
         return self.model_copy(update={"basepath": basepath})
 
-    def load(self, catalog_type: type["DriveCatalog"] | None = None) -> "DriveCatalog":
+    def load(self) -> Model:
         """Load this reference as a DriveCatalog."""
-        catalog_type = catalog_type or DriveCatalog
-
         if self.basepath is not None:
             assert_safe_path(self.path, basepath=self.basepath)
 
-        catalog = catalog_type.from_path(self.path, basepath=self.basepath)
+        catalog = self.conformsTo.from_path(self.path, basepath=self.basepath)
 
         if catalog.name is None and self.name is not None:
             catalog.name = self.name
-
-        if catalog.accessURL is None and self.accessURL is not None:
-            catalog.accessURL = self.accessURL
-
+        else:
+            raise ValueError(
+                f"Loaded catalog from '{self.path}' must have a name, or the reference must have a name"
+            )
+            
         return catalog
-
+    
     def normalized(self, basepath: str | None) -> "DriveCatalogReference":
         """Return a copy with path/basepath normalized relative to inherited basepath."""
         if basepath is None:
@@ -400,66 +349,77 @@ class DriveCatalogReference(Model):
                 "path": resolved.name,
             }
         )
+class DriveCatalogReference(DriveReference):
+    """Unresolved reference to an external DriveCatalog document.
 
+    `path` stays exactly as authored. `basepath` is inherited from the parent
+    catalog and used only for resolution/loading.
+    """
+    conformsTo: type[DriveCatalog] = type[DriveCatalog]
+
+
+        
+class DriveRemoteCatalog(Model):
+    
+    name: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    cache: Optional[CachePath] = None
+    accessUrl: Optional[AnyUrl] = None
+    serviceType: Optional[ServiceTypeValue] = None
+    serviceId: Optional[str] = None
+    entityType: Optional[EntityTypeValue] = None
+    
+DriveResourceChild = DriveRemoteResource | Resource
+DrivePackageChild = DriveRemotePackage | Package
+DriveCatalogChild = DriveRemoteCatalog | DriveCatalogReference
 
 class DriveCatalog(Model):
     """A registry, library, or folder containing independent data entities."""
 
     profile: str = pydantic.Field(default=CATALOG_PROFILE, alias="$schema")
-
     basepath: Optional[str] = pydantic.Field(default=None, exclude=True)
     name: Optional[str] = None
     title: Optional[str] = None
     description: Optional[str] = None
 
-    cache: Optional[str] = None
-    accessUrl: Optional[str] = None
-    serviceType: Optional[ServiceTypeValue] = None
-    serviceId: Optional[str] = None
-    entityType: Optional[EntityTypeValue] = None
-
-    resources: list[DriveResource] = pydantic.Field(default_factory=list)
-    packages: list[DrivePackage] = pydantic.Field(default_factory=list)
-    catalogs: list[DriveCatalog | DriveCatalogReference] = pydantic.Field(
+    resources: list[DriveResourceChild] = pydantic.Field(default_factory=list)
+    packages: list[DrivePackageChild] = pydantic.Field(default_factory=list)
+    catalogs: list[DriveCatalog | DriveCatalogChild] = pydantic.Field(
         default_factory=list
     )
-
     def model_post_init(self, _) -> None:
+        
         if self.basepath is None:
             return
-
+        
         for resource in self.resources:
             resource.basepath = self.basepath
-            if resource.cache:
-                resource.cache = resolve_cache_path(resource.cache, self.basepath)
-            
 
         for package in self.packages:
-            
-            if isinstance(package, Package):
-                package.basepath = self.basepath
-            elif isinstance(package, DrivePackage):
-                if package.accessUrl:
-                    package.cache = resolve_cache_path(package.cache, self.basepath)
+            package.basepath = self.basepath
+            if isinstance(package, DriveRemotePackage):
+                package.cache = resolve_cache_path(package.cache, self.basepath)
             package.model_post_init(None)
 
-        normalized_catalogs: list[DriveCatalog | DriveCatalogReference] = []
+        normalized_catalogs = []
 
         for catalog in self.catalogs:
             if isinstance(catalog, DriveCatalogReference):
-                normalized_catalogs.append(catalog.with_basepath(self.basepath))
-                continue
+                catalog = catalog.with_basepath(self.basepath)
+            
+            if isinstance(catalog, DriveRemoteCatalog):
+                catalog.cache = resolve_cache_path(catalog.cache, self.basepath)
             elif isinstance(catalog, DriveCatalog):
                 catalog.basepath = self.basepath
-                if catalog.accessUrl:
-                    catalog.cache = resolve_cache_path(catalog.cache, self.basepath)
-                catalog.model_post_init(None)
-                normalized_catalogs.append(catalog)
             else:
                 raise TypeError(
-                    f"Expected catalogs to be DriveCatalog or DriveCatalogReference, "
+                    f"Expected catalogs to be DriveCatalog, DriveRemoteCatalog, or DriveCatalogReference, "
                     f"got {type(catalog).__name__}"
                 )
+                
+            normalized_catalogs.append(catalog)
+            catalog.model_post_init(None)
 
         self.catalogs = normalized_catalogs
 
@@ -522,93 +482,69 @@ class DriveCatalog(Model):
     # Lookup helpers
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _label(model_type: type[Model]) -> str:
-        name = model_type.__name__.lower()
-        return next(
-            (
-                suffix
-                for suffix in ("resource", "package", "catalog")
-                if name.endswith(suffix)
-            ),
-            name,
-        )
-
-    def _coerce_match(
-        self,
-        model: Model,
-        expected_type: type[_T],
-        *,
-        path: str,
-    ) -> _T:
-        """Return model as expected_type, loading references when appropriate."""
-        if isinstance(model, DriveCatalogReference) and expected_type is DriveCatalog:
-            return model.load(type(self))  # type: ignore[return-value]
-
-        if not isinstance(model, expected_type):
-            raise ValueError(
-                f"Entity with name/path '{path}' was found but is of type "
-                f"'{self._label(type(model))}', expected '{self._label(expected_type)}'"
-            )
-
-        return model
 
     def _find_in_walk(
         self,
         selector: CatalogSelector,
-        expected_type: type[_T],
+        expected_class: type[Model],
         rows: Iterable[tuple[str, Model]],
-    ) -> _T | None:
+    ) -> Model | None:
         for path, model in rows:
             if selector.matches(model, path=path):
-                return self._coerce_match(model, expected_type, path=path)
+                if isinstance(model,DriveReference):
+                    return model.load()
+                else:
+                    return model
 
         return None
 
-    def _find(self, name: str, expected_type: type[_T]) -> _T:
+    def _find(self, name: str, expected_class: type[Model]) -> Model:
         selector = CatalogSelector(name)
 
+        entity_iter = self._walk(self, traverse_references=True)
         found = self._find_in_walk(
             selector,
-            expected_type,
-            self._walk(self, traverse_references=True),
+            expected_class,
+            entity_iter,
         )
         if found is not None:
             return found
-
-        raise ValueError(
-            f"{self._label(expected_type).capitalize()} with name '{name}' not found"
-        )
+        else:
+            raise ValueError(
+                f"{expected_class.__name__} with name '{name}' not found"
+            )
 
     # ------------------------------------------------------------------
     # Public lookup API
     # ------------------------------------------------------------------
 
-    def get_package(self, name: str, default=None) -> Optional[DrivePackage]:
+    def get_package(self, name: str, default=None) -> Optional[DrivePackageChild]:
         """Get a package by name or dot-path, traversing catalog references lazily."""
         try:
-            return self._find(name, DrivePackage)
+            return self._find(name, DrivePackageChild)
         except ValueError:
             if default is not None:
                 return default
             raise
 
-    def get_resource(self, name: str, default=None) -> Optional[DriveResource]:
+    def get_resource(self, name: str, default=None) -> Optional[DriveResourceChild]:
         """Get a resource by name or dot-path, traversing catalog references lazily."""
         try:
-            return self._find(name, DriveResource)
+            return self._find(name, DriveResourceChild)
         except ValueError:
             if default is not None:
                 return default
             raise
 
-    def get_catalog(self, name: str, default=None) -> Optional["DriveCatalog"]:
+    def get_catalog(self, name: str, default=None) -> Optional[DriveCatalog]:
         """Get a catalog by name or dot-path.
 
         Matching DriveCatalogReference objects are loaded and returned.
         """
         try:
-            return self._find(name, DriveCatalog)
+            catalog = self._find(name, DriveCatalog | DriveCatalogReference | DriveRemoteCatalog)
+            if isinstance(catalog, DriveCatalogReference):
+                return catalog.load(type(self))
         except ValueError:
             if default is not None:
                 return default
@@ -647,9 +583,10 @@ class DriveCatalog(Model):
     def from_path_dereferenced(cls, path: str) -> "DriveCatalog":
         return cls.from_path(path).dereference()
 
-DriveResource.model_rebuild()
-DrivePackage.model_rebuild()
+DriveRemoteResource.model_rebuild()
+DriveRemotePackage.model_rebuild()
 DriveCatalogReference.model_rebuild()
+DriveRemoteCatalog.model_rebuild()
 DriveCatalog.model_rebuild()
 
 
@@ -661,8 +598,8 @@ __all__ = [
     "CatalogSelector",
     "DriveCatalog",
     "DriveCatalogReference",
-    "DrivePackage",
-    "DriveResource",
+    "DriveRemotePackage",
+    "DriveRemoteResource",
     "EntityTypeValue",
     "ServiceTypeValue",
     "adapter_from_locator",
