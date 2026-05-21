@@ -13,7 +13,7 @@ from sharedrive.clients.base import AdapterCapabilities, BaseClient
 from sharedrive.clients.aws import S3Client
 from sharedrive.models import (
     DriveCatalog,
-    DriveResource,
+    DriveResourceChild,
     adapter_from_service_type,
     resolve_cache_path,
 )
@@ -254,11 +254,11 @@ class SharedriveCatalog:
 
     def resources(
         self, selector: CatalogSelector | str | Iterable[str] | None = None
-    ) -> list[DriveResource]:
+    ) -> list[DriveResourceChild]:
         sel = self._normalize_selector(selector)
-        result: list[DriveResource] = []
+        result: list[DriveResourceChild] = []
         for ref in self.references(sel):
-            if isinstance(ref.model, DriveResource):
+            if isinstance(ref.model, DriveResourceChild):
                 result.append(ref.model)
             elif isinstance(ref.model, Resource) and not isinstance(
                 ref.model, DriveCatalog

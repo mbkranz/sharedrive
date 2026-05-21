@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Iterable
 
-from sharedrive.models import DriveCatalog, DrivePackage, DriveResource
+from sharedrive.models import DriveRemoteCatalog,DriveRemoteResource
 
 
 class DriveItem(ABC):
@@ -111,7 +111,7 @@ class DriveItem(ABC):
             "Concrete subclasses must override download()."
         )
 
-    def to_catalog(self) -> DriveResource | DrivePackage | DriveCatalog:
+    def to_catalog(self) -> DriveRemoteCatalog | DriveRemoteResource:
         """Convert to a descriptor resource, package, or catalog entry.
 
         - Files → :class:`~sharedrive.models.DriveResource` with the remote URL
@@ -123,7 +123,7 @@ class DriveItem(ABC):
             format_str = None
             if "." in self.name:
                 format_str = self.name.rsplit(".", 1)[-1].lower()
-            return DriveResource(
+            return DriveRemoteResource(
                 name=self.path,
                 path=self.source_url,
                 cache=self.path,
@@ -133,17 +133,17 @@ class DriveItem(ABC):
                 format=format_str,
                 
             )
-        resources: list[DriveResource] = []
-        catalogs: list[DriveCatalog] = []
+        resources: list[DriveRemoteResource] = []
+        catalogs: list[DriveRemoteCatalog] = []
         for child in self.children:
             entry = child.to_catalog()
-            if isinstance(entry, DriveCatalog):
+            if isinstance(entry, DriveRemoteCatalog):
                 catalogs.append(entry)
-            elif isinstance(entry, DriveResource):
+            elif isinstance(entry, DriveRemoteResource):
                 resources.append(entry)
-        return DriveCatalog(
+        return DriveRemoteCatalog(
             name=self.path,
-            accessURL=self.source_url,
+            accessUrl=self.source_url,
             serviceId=self.id,
             serviceType=self.service_type,
             entityType="Directory",

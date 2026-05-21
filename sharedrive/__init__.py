@@ -1,6 +1,6 @@
 from .catalog import SharedriveCatalog
 from .registry import get_client, get_provider, list_providers, provider
-from .models import DriveCatalog, DrivePackage, DriveResource
+from .models import DriveCatalog
 
 __all__ = [
     "SharedriveCatalog",
@@ -8,7 +8,5 @@ __all__ = [
     "provider",
     "list_providers",
     "get_provider",
-    "DriveCatalog",
-    "DrivePackage",
-    "DriveResource",
+    "DriveCatalog"
 ]

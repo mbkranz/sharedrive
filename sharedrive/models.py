@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal, Optional, TypeVar
 from urllib.parse import urlparse
 
 import pydantic
-from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler,AnyUrl, InstanceOf
+from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler,AnyUrl, InstanceOf, TypeAdapter
 from pydantic_core import core_schema
 
 from dplib.helpers.path import assert_safe_path
@@ -355,10 +355,9 @@ class DriveCatalogReference(DriveReference):
     `path` stays exactly as authored. `basepath` is inherited from the parent
     catalog and used only for resolution/loading.
     """
-    conformsTo: type[DriveCatalog] = type[DriveCatalog]
+    conformsTo: type[DriveCatalog] = pydantic.Field(default_factory=lambda: DriveCatalog)
 
-
-        
+       
 class DriveRemoteCatalog(Model):
     
     name: Optional[str] = None
@@ -369,6 +368,10 @@ class DriveRemoteCatalog(Model):
     serviceType: Optional[ServiceTypeValue] = None
     serviceId: Optional[str] = None
     entityType: Optional[EntityTypeValue] = None
+    resources: list[DriveRemoteResource] = pydantic.Field(default_factory=list)
+    packages: list[DriveRemotePackage] = pydantic.Field(default_factory=list)
+    catalogs: list[DriveRemoteCatalog] = pydantic.Field(default_factory=list)
+
     
 DriveResourceChild = DriveRemoteResource | Resource
 DrivePackageChild = DriveRemotePackage | Package
@@ -406,7 +409,7 @@ class DriveCatalog(Model):
 
         for catalog in self.catalogs:
             if isinstance(catalog, DriveCatalogReference):
-                catalog = catalog.with_basepath(self.basepath)
+                catalog = catalog.with_basepath(self.basepath).load()
             
             if isinstance(catalog, DriveRemoteCatalog):
                 catalog.cache = resolve_cache_path(catalog.cache, self.basepath)
@@ -541,14 +544,12 @@ class DriveCatalog(Model):
 
         Matching DriveCatalogReference objects are loaded and returned.
         """
-        try:
-            catalog = self._find(name, DriveCatalog | DriveCatalogReference | DriveRemoteCatalog)
-            if isinstance(catalog, DriveCatalogReference):
-                return catalog.load(type(self))
-        except ValueError:
-            if default is not None:
-                return default
-            raise
+        catalog_classes = TypeAdapter(DriveCatalog | DriveCatalogReference | DriveRemoteCatalog)
+        catalog = self._find(name, catalog_classes)
+        if isinstance(catalog, DriveReference):
+            return catalog.load()
+        else:
+            return catalog
 
     # ------------------------------------------------------------------
     # Dereferencing
