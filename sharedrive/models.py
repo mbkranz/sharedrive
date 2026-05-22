@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Annotated, Any, Literal, Optional, TypeAlias, TypeVar
+from typing import Annotated, Any, Literal, Optional, TypeAlias, TypeVar, Union
 from urllib.parse import urlparse
 
 import pydantic
@@ -321,9 +321,9 @@ class DriveRemoteCatalog(Model):
     catalogs: list[DriveRemoteCatalog] = pydantic.Field(default_factory=list)
 
     
-DriveResourceChild: TypeAlias = DriveRemoteResource | Resource
-DrivePackageChild: TypeAlias = DriveRemotePackage | Package
-DriveCatalogChild: TypeAlias = DriveRemoteCatalog | DriveCatalogReference | DriveCatalog
+DriveResourceChild: TypeAlias = Union["DriveRemoteResource", "Resource"]
+DrivePackageChild: TypeAlias = Union["DriveRemotePackage", "Package"]
+DriveCatalogChild: TypeAlias = Union["DriveRemoteCatalog", "DriveCatalogReference", "DriveCatalog"]
 
 
 class DriveReference(Model):
