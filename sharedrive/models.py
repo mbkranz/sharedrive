@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Annotated, Any, Literal, Optional, TypeVar
+from typing import Annotated, Any, Literal, Optional, TypeAlias, TypeVar
 from urllib.parse import urlparse
 
 import pydantic
@@ -305,6 +305,27 @@ class CatalogSelector:
 # ---------------------------------------------------------------------
 # Catalog reference and catalog models
 # ---------------------------------------------------------------------
+
+class DriveRemoteCatalog(Model):
+    
+    name: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    cache: Optional[CachePath] = None
+    accessUrl: Optional[AnyUrl] = None
+    serviceType: Optional[ServiceTypeValue] = None
+    serviceId: Optional[str] = None
+    entityType: Optional[EntityTypeValue] = None
+    resources: list[DriveRemoteResource] = pydantic.Field(default_factory=list)
+    packages: list[DriveRemotePackage] = pydantic.Field(default_factory=list)
+    catalogs: list[DriveRemoteCatalog] = pydantic.Field(default_factory=list)
+
+    
+DriveResourceChild: TypeAlias = DriveRemoteResource | Resource
+DrivePackageChild: TypeAlias = DriveRemotePackage | Package
+DriveCatalogChild: TypeAlias = DriveRemoteCatalog | DriveCatalogReference | DriveCatalog
+
+
 class DriveReference(Model):
     """ Base class for any named references to other metadata"""
     name: Optional[str] = None
@@ -335,48 +356,15 @@ class DriveReference(Model):
             
         return catalog
     
-    def normalized(self, basepath: str | None) -> "DriveCatalogReference":
-        """Return a copy with path/basepath normalized relative to inherited basepath."""
-        if basepath is None:
-            return self
-
-        assert_safe_path(self.path, basepath=basepath)
-        resolved = Path(basepath, self.path)
-
-        return self.model_copy(
-            update={
-                "basepath": resolved.parent.as_posix(),
-                "path": resolved.name,
-            }
-        )
 class DriveCatalogReference(DriveReference):
     """Unresolved reference to an external DriveCatalog document.
 
     `path` stays exactly as authored. `basepath` is inherited from the parent
     catalog and used only for resolution/loading.
     """
-    conformsTo: type[DriveCatalog] = pydantic.Field(default_factory=lambda: DriveCatalog)
+    conformsTo: type[DriveCatalogChild] = pydantic.Field(default_factory=lambda: DriveCatalog)
 
        
-class DriveRemoteCatalog(Model):
-    
-    name: Optional[str] = None
-    title: Optional[str] = None
-    description: Optional[str] = None
-    cache: Optional[CachePath] = None
-    accessUrl: Optional[AnyUrl] = None
-    serviceType: Optional[ServiceTypeValue] = None
-    serviceId: Optional[str] = None
-    entityType: Optional[EntityTypeValue] = None
-    resources: list[DriveRemoteResource] = pydantic.Field(default_factory=list)
-    packages: list[DriveRemotePackage] = pydantic.Field(default_factory=list)
-    catalogs: list[DriveRemoteCatalog] = pydantic.Field(default_factory=list)
-
-    
-DriveResourceChild = DriveRemoteResource | Resource
-DrivePackageChild = DriveRemotePackage | Package
-DriveCatalogChild = DriveRemoteCatalog | DriveCatalogReference
-
 class DriveCatalog(Model):
     """A registry, library, or folder containing independent data entities."""
 
@@ -388,7 +376,7 @@ class DriveCatalog(Model):
 
     resources: list[DriveResourceChild] = pydantic.Field(default_factory=list)
     packages: list[DrivePackageChild] = pydantic.Field(default_factory=list)
-    catalogs: list[DriveCatalog | DriveCatalogChild] = pydantic.Field(
+    catalogs: list[DriveCatalogChild] = pydantic.Field(
         default_factory=list
     )
     def model_post_init(self, _) -> None:
@@ -457,7 +445,7 @@ class DriveCatalog(Model):
                     if not traverse_references:
                         continue
 
-                    loaded = child.load(type(self))
+                    loaded = child.load()
 
                     # Reference name wins as the traversal prefix. If the
                     # reference is unnamed, fall back to the loaded catalog name.
@@ -521,36 +509,22 @@ class DriveCatalog(Model):
     # Public lookup API
     # ------------------------------------------------------------------
 
-    def get_package(self, name: str, default=None) -> Optional[DrivePackageChild]:
+    def get_package(self, name: str) -> DrivePackageChild:
         """Get a package by name or dot-path, traversing catalog references lazily."""
-        try:
-            return self._find(name, DrivePackageChild)
-        except ValueError:
-            if default is not None:
-                return default
-            raise
+        return self._find(name, DrivePackageChild)
 
-    def get_resource(self, name: str, default=None) -> Optional[DriveResourceChild]:
+    def get_resource(self, name: str) -> DriveResourceChild:
         """Get a resource by name or dot-path, traversing catalog references lazily."""
-        try:
-            return self._find(name, DriveResourceChild)
-        except ValueError:
-            if default is not None:
-                return default
-            raise
+        return self._find(name, DriveResourceChild)
 
-    def get_catalog(self, name: str, default=None) -> Optional[DriveCatalog]:
+    def get_catalog(self, name: str) -> DriveCatalog | DriveCatalogReference | DriveRemoteCatalog:
         """Get a catalog by name or dot-path.
 
         Matching DriveCatalogReference objects are loaded and returned.
         """
         catalog_classes = TypeAdapter(DriveCatalog | DriveCatalogReference | DriveRemoteCatalog)
         catalog = self._find(name, catalog_classes)
-        if isinstance(catalog, DriveReference):
-            return catalog.load()
-        else:
-            return catalog
-
+        return catalog
     # ------------------------------------------------------------------
     # Dereferencing
     # ------------------------------------------------------------------
@@ -566,7 +540,7 @@ class DriveCatalog(Model):
 
         for catalog in self.catalogs:
             if isinstance(catalog, DriveCatalogReference):
-                resolved = catalog.load(type(self))
+                resolved = catalog.load()
             elif isinstance(catalog, DriveCatalog):
                 resolved = catalog
             else:
