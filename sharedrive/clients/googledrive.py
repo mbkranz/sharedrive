@@ -372,7 +372,7 @@ class GoogleDriveClient(GoogleBaseClient):
 
         response = self._request(
             "GET",
-            f"{DRIVE_URL}/files/{file_id}",
+            f"{DRIVE_URL}/files/{str(file_id)}",
             headers=build_headers(),
             params=build_params(),
             stream=True,
@@ -408,7 +408,7 @@ class GoogleDriveClient(GoogleBaseClient):
 
         response = self._request(
             "GET",
-            f"{DRIVE_URL}/files/{file_id}/export",
+            f"{DRIVE_URL}/files/{str(file_id)}/export",
             params=build_params(mime_type),
             stream=True,
         )
@@ -563,7 +563,7 @@ class GoogleDriveClient(GoogleBaseClient):
         """Return metadata for a Google Drive file or folder given a web URL,
         mapped to the unified :class:`GDriveItem` model.
         """
-        file_id = self._extract_id_from_url(web_url)
+        file_id = self._extract_id_from_url(str(web_url))
         metadata = self.get_file(file_id, fields=fields + ",mimeType,webViewLink")
         return self._to_item(metadata, scope_root=True)
 
