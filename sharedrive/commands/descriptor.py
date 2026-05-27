@@ -16,7 +16,6 @@ from sharedrive.commands.toolkit import (
     normalize_update_value,
     parse_set_args,
     prepare_descriptor_path,
-    resolve_resource_reference,
 )
 from sharedrive.exceptions import GoogleApiError, GraphApiError
 from sharedrive.helpers import has_saved_global_descriptor, set_active_descriptor
@@ -226,7 +225,10 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
                 descriptor_model.assert_valid_entity_paths()
             except Error as exc:
                 raise typer.BadParameter(str(exc)) from exc
-            resolved = resolve_resource_reference(name, descriptor_model)
+            resolved = getattr(descriptor_model, f"get_resource")(name) if descriptor_model.get_resource(name) else descriptor_model._find(name, (DrivePackageChild, DriveCatalog, DriveCatalogReference, DriveRemoteCatalog))
+            if not resolved:
+                raise typer.BadParameter(f'Entity selector "{name}" was not found.')
+            
             target = DriveCatalog.get_json_pointer_value(
                 document, resolved.json_pointer
             )

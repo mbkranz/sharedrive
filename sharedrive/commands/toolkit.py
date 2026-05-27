@@ -12,11 +12,8 @@ from sharedrive.helpers import get_checked_out_entity
 from sharedrive.helpers import resolve_descriptor_path as resolve_descriptor_path_helper
 from sharedrive.models import (
     DriveCatalog,
-    DrivePackage,
-    DriveResource,
     normalize_entity_type,
     normalize_service_type,
-    CatalogSelector
 )
 
 
@@ -147,43 +144,6 @@ def parse_set_args(args: list[str]) -> dict[str, Any]:
     return parsed
 
 
-def scoped_selector(selector: str | None) -> str | None:
-    """Return selector scoped to the checked-out entity, preserving string API shape.
-
-    If no selector is given and an entity is checked out, the entity's dot-path
-    becomes the implicit filter.  If tokens are provided, each is prefixed as
-    ``"{scope}.{token}"``.  An explicit ``"all"`` or empty selector always wins
-    and is returned as ``None`` (select everything).
-
-    Returns a comma-separated ``str`` or ``None`` so existing action call sites
-    continue to work.
-    """
-    scope = get_checked_out_entity()
-    sel = CatalogSelector(selector)
-    if not sel:
-        # Explicit "all" / empty — scope cannot override; select everything.
-        if selector is None and scope:
-            # No selector at all — use scope as the implicit single filter.
-            return scope
-        return None
-    if scope:
-        tokens = sorted(f"{scope}.{t}" for t in sel.tokens)  # type: ignore[union-attr]
-    else:
-        tokens = sorted(sel.tokens)  # type: ignore[union-attr]
-    return tokens[0] if len(tokens) == 1 else ",".join(tokens)
-
-
-def resolve_resource_reference(resource_selector: str, descriptor: DriveCatalog):
-    for reference in descriptor.iter_entity_paths(include_self=False):
-        if reference.name_path == resource_selector or (
-            "." not in resource_selector
-            and reference.name_path.split(".")[-1] == resource_selector
-        ):
-            if isinstance(reference.model, (DriveResource, DrivePackage, DriveCatalog)):
-                return reference
-    raise typer.BadParameter(f'Entity selector "{resource_selector}" was not found.')
-
-
 def normalize_update_property(property_name: str, *, resource_target: bool) -> str:
     normalized = property_name.strip()
     if not normalized:
@@ -232,7 +192,5 @@ __all__ = [
     "normalize_update_value",
     "parse_set_args",
     "prepare_descriptor_path",
-    "resolve_resource_reference",
     "run_microsoft_login",
-    "scoped_selector",
 ]
