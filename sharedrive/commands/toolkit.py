@@ -10,13 +10,13 @@ from dotenv import load_dotenv
 
 from sharedrive.helpers import get_checked_out_entity
 from sharedrive.helpers import resolve_descriptor_path as resolve_descriptor_path_helper
-from sharedrive.catalog import CatalogSelector
 from sharedrive.models import (
     DriveCatalog,
     DrivePackage,
     DriveResource,
     normalize_entity_type,
     normalize_service_type,
+    CatalogSelector
 )
 
 

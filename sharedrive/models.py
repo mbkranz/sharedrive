@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Annotated, Any, Literal, Optional, TypeAlias, TypeVar, Union
+from typing import Annotated, Any, Optional, TypeAlias,  Union
 from urllib.parse import urlparse
 
 import pydantic
-from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler,AnyUrl, InstanceOf, TypeAdapter
+from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler,AnyUrl, TypeAdapter
 from pydantic_core import core_schema
 
 from dplib.helpers.path import assert_safe_path
@@ -171,8 +171,9 @@ def adapter_from_locator(locator: str) -> str:
 
 ServiceTypeValue = Annotated[str, BeforeValidator(normalize_service_type)]
 EntityTypeValue = Annotated[str, BeforeValidator(normalize_entity_type)]
-CachePath = Annotated[str,Field(alias="_cache",validation_alias=AliasChoices("_cache", "cache"))]
-
+LocalCachePath = Annotated[str,Field(alias="_cache",validation_alias=AliasChoices("_cache", "cache"))]
+RemoteAccessUrl = Annotated[AnyUrl, Field(alias="_accessUrl", validation_alias=AliasChoices("accessURL", "accessUrl", "url"))]
+RemotePathUrl = Annotated[AnyUrl, Field(alias="path", validation_alias=AliasChoices("path", "url"))]
 def resolve_cache_path(cache: str|None, basepath: str|None):
     if cache and basepath:
         assert_safe_path(str(cache), basepath=basepath)
@@ -192,17 +193,17 @@ class DriveRemoteResource(Resource):
     `path` remains the canonical Data Package data locator. `_cache` follows
     the Data Package caching recipe as the local materialized copy location.
     """
-    path: AnyUrl
+    path: RemotePathUrl
     serviceType: Optional[ServiceTypeValue] = None
     serviceId: Optional[str] = None
     entityType: Optional[EntityTypeValue] = None
-    cache: Optional[CachePath] = None
+    cache: Optional[LocalCachePath] = None
    
 class DriveRemotePackage(Package):
     """Data Package package with shared-drive adapter metadata."""
 
-    accessUrl: AnyUrl
-    cache: Optional[CachePath] = None
+    accessUrl: RemoteAccessUrl = Field(alias="accessURL")
+    cache: Optional[LocalCachePath] = None
     serviceType: Optional[ServiceTypeValue] = None
     serviceId: Optional[str] = None
     entityType: Optional[EntityTypeValue] = None
@@ -311,8 +312,8 @@ class DriveRemoteCatalog(Model):
     name: Optional[str] = None
     title: Optional[str] = None
     description: Optional[str] = None
-    cache: Optional[CachePath] = None
-    accessUrl: Optional[AnyUrl] = None
+    cache: Optional[LocalCachePath] = None
+    accessUrl: Optional[RemoteAccessUrl] = None
     serviceType: Optional[ServiceTypeValue] = None
     serviceId: Optional[str] = None
     entityType: Optional[EntityTypeValue] = None

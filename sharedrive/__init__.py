@@ -1,9 +1,7 @@
-from .catalog import SharedriveCatalog
 from .registry import get_client, get_provider, list_providers, provider
 from .models import DriveCatalog
 
 __all__ = [
-    "SharedriveCatalog",
     "get_client",
     "provider",
     "list_providers",

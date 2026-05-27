@@ -5,70 +5,15 @@ from typing import Any, Optional
 
 import typer
 
-from sharedrive.catalog import SharedriveCatalog
 from sharedrive.commands.toolkit import (
-    DESCRIPTOR_DEFAULT_HELP,
     OutputFormat,
     echo_json,
     examples_epilog,
     load_env_file,
-    prepare_descriptor_path,
     run_microsoft_login,
 )
 
-
-def _render_auth_results(results: list[Any], output_format: OutputFormat) -> None:
-    if output_format == OutputFormat.JSON:
-        echo_json([result.to_dict() for result in results])
-        return
-
-    if not results:
-        typer.echo("No matching adapters were selected.")
-        return
-
-    for result in results:
-        status = "ready" if result.ok else "failed"
-        typer.echo(f"{result.adapter}: {status} - {result.message}")
-
-
 def register_auth_commands(auth_app: typer.Typer, auth_login_app: typer.Typer) -> None:
-    @auth_app.command(
-        "check",
-        epilog=examples_epilog(
-            "sharedrive auth check resources/descriptor.yaml",
-            "sharedrive auth check resources/descriptor.yaml --include sharepoint",
-            "sharedrive auth check resources/descriptor.yaml --format json",
-        ),
-    )
-    def auth_check(
-        descriptor: Optional[Path] = typer.Argument(
-            None, exists=False, help=DESCRIPTOR_DEFAULT_HELP
-        ),
-        include: Optional[list[str]] = typer.Option(
-            None,
-            "--include",
-            "-i",
-            help=(
-                "Include adapter types and/or resource names. "
-                "Repeat the option or pass a comma-separated list."
-            ),
-        ),
-        output_format: OutputFormat = typer.Option(
-            OutputFormat.TEXT, "--format", help="Output format."
-        ),
-        env_file: Optional[Path] = typer.Option(
-            None,
-            "--env-file",
-            help="Path to .env file for credentials. Defaults to .env in the current directory.",
-        ),
-    ) -> None:
-        """Validate credentials for the adapters selected by a descriptor."""
-        descriptor_path = prepare_descriptor_path(descriptor, env_file=env_file)
-        results = SharedriveCatalog.from_path(descriptor_path).check_auth(include)
-        _render_auth_results(results, output_format)
-        if any(not result.ok for result in results):
-            raise typer.Exit(code=1)
-
     @auth_login_app.command(
         "gdrive",
         epilog=examples_epilog(

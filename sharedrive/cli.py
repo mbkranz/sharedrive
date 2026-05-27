@@ -7,7 +7,6 @@ from sharedrive.commands import (
     register_auth_commands,
     register_config_commands,
     register_descriptor_commands,
-    register_transfer_commands,
 )
 
 load_dotenv(find_dotenv(usecwd=True))
@@ -30,7 +29,6 @@ auth_app.add_typer(auth_login_app, name="login")
 
 register_descriptor_commands(app, clone_app)
 register_config_commands(app)
-register_transfer_commands(app)
 register_auth_commands(auth_app, auth_login_app)
 
 
