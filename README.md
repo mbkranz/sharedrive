@@ -6,19 +6,19 @@
 
 Experimental connectors and workflows for moving files across SharePoint, Google Drive, and S3.
 
+> **TODO: align fetch and pull commands with git fetch and git pull**
+
 ## Current scope
 
 - `sharedrive/clients/sharepoint.py`: Microsoft Graph SharePoint client (`SharepointClient`)
 - `sharedrive/clients/googledrive.py`: Google Drive client (`GoogleDriveClient`)
 - `sharedrive/item.py`: runtime item abstractions for live remote files and folders
-- `sharedrive/models.py`: descriptor and metadata models for persisted catalog/package/resource state
+- `sharedrive/models.py`: descriptor and metadata models for persisted catalog/package/resource state (`DriveCatalog`)
 - `sharedrive/auth/microsoft.py`: SharePoint access-token strategies
 - `sharedrive/auth/settings.py`: Google and SharePoint auth settings/factories
 - `sharedrive/clients/aws.py`: S3 URL parsing/download helpers (cloudpathlib + boto3 fallback)
-- `sharedrive/actions/fetch.py`: reusable descriptor-based fetch Python API
-- `sharedrive/actions/fetch.py`: reusable descriptor metadata refresh API for folder catalogs
 - `sharedrive/cli.py`: Typer CLI (`sharedrive`)
-- `scripts/dev_adapters.py`: manual adapter smoke checks
+- `sharedrive/commands/`: Core command implementations (`auth`, `config`, `descriptor`, `toolkit`)
 
 ## Architecture
 
@@ -27,16 +27,12 @@ Experimental connectors and workflows for moving files across SharePoint, Google
 - Descriptor models in `sharedrive/models.py` represent persisted catalog metadata. They validate YAML/JSON descriptor files, normalize fields such as `serviceType` and `entityType`, and are the source of truth for what gets written back to disk.
 - Runtime items in `sharedrive/item.py` represent live remote files and folders. They are adapter-backed objects returned by service clients and expose runtime behavior such as `download()`, `refresh()`, `children`, and `iter_files()`.
 - Clients in `sharedrive/clients/*.py` translate provider APIs into runtime items. They own provider-specific HTTP calls, URL resolution, pagination, and item construction.
-- Action modules in `sharedrive/actions/*.py` orchestrate workflows across descriptors, clients, and runtime items. They load descriptors, select adapters, resolve runtime roots, traverse items, and save descriptor updates or materialize downloads.
-- The CLI in `sharedrive/cli.py` is the outer interface. It parses user input, resolves defaults, and delegates to action-layer workflows.
+- The CLI in `sharedrive/cli.py` and modular commands in `sharedrive/commands/` form the outer interface. The CLI delegates user input into specific workflows configured by `auth`, `config` and `descriptor` logic.
 
 The important separation is between persisted descriptor state and live runtime state:
 
 - Descriptor models describe what is stored.
 - Runtime items describe what is currently available from a remote service.
-- Actions translate between the two when workflows need both.
-
-This is why `sharedrive fetch ...` remains an action-layer descriptor update, while runtime items use `refresh()` to reload in-memory remote state.
 
 ## Setup
 
@@ -150,23 +146,13 @@ Compatibility note:
 
 `sharedrive` now separates Google credential acquisition from `GoogleDriveClient` itself.
 
-For existing CLI download flows, the compatibility behavior is unchanged:
+The Google Drive client falls back to Application Default Credentials if specific authentication details are omitted.
 
-- `sharedrive download ...` still uses `GOOGLE_APPLICATION_CREDENTIALS` when set.
-- If `GOOGLE_APPLICATION_CREDENTIALS` is not set, the Google Drive client falls back to Application Default Credentials.
+For CLI operators, there are now explicit auth-oriented commands:
 
-For CLI operators, there are now explicit auth-oriented commands in addition to the transfer commands:
-
-- `sharedrive set --global --descriptor resources/descriptor.yaml` saves a reusable default descriptor path for descriptor-based commands.
-- `sharedrive auth check [descriptor]` validates credentials for the adapters selected by a descriptor before any download starts.
 - `sharedrive auth login gdrive` runs the installed-app Google OAuth flow and can persist an authorized-user token to `GOOGLE_OAUTH_TOKEN_PATH` or an explicit `--oauth-token-path`.
 - `sharedrive auth login microsoft` validates Microsoft auth used by SharePoint workflows.
 - `sharedrive auth login sharepoint` validates SharePoint auth using app-only or delegated mode.
-- `sharedrive add ...` can omit `--descriptor` once a default descriptor has been saved.
-- `sharedrive checkout <descriptor>` saves the active descriptor for later commands.
-- `sharedrive add ... --catalog` creates a folder-backed catalog for descriptor metadata fetch.
-- `sharedrive fetch <catalog-name>` refreshes nested resources/catalogs for Google Drive or SharePoint folders inside a descriptor.
-- `sharedrive download ... --check-auth` runs the same descriptor-aware preflight before downloading.
 
 For Python API usage, construct clients with explicit auth objects:
 
@@ -207,28 +193,21 @@ client = GoogleDriveClient(auth=config.to_auth())
 
 The settings layer is additive. Existing `GOOGLE_APPLICATION_CREDENTIALS` behavior in the CLI and retrieval flows still works.
 
-## Fetch And Download
-
-CLI:
+## CLI Usage Examples
 
 ```bash
+# Descriptor configuration commands
 sharedrive checkout resources/descriptor.yaml
 sharedrive set --global --output-dir resources
-sharedrive auth check
-sharedrive auth check resources/descriptor.yaml
+
+# Authentication commands
 sharedrive auth login gdrive --oauth-client-secrets .google/oauth-credentials.json --oauth-token-path .google/oauth-token.json
 sharedrive auth login microsoft --auth-mode delegated
 sharedrive auth login sharepoint --auth-mode delegated
+
+# Descriptor definition commands
 sharedrive add spec-workbook --path https://tenant.sharepoint.com/sites/Test/Shared%20Documents/spec.xlsx --cache background/specs/spec-workbook.xlsx
 sharedrive add census-docs --catalog --access-url https://drive.google.com/drive/folders/<id> --service-type googledrive
-sharedrive fetch census-docs --dry-run
-sharedrive download --dry-run
-sharedrive download resources/descriptor.yaml --dry-run
-sharedrive download resources/descriptor.yaml --check-auth
-sharedrive download sharepoint --descriptor resources/descriptor.yaml
-sharedrive download spec-workbook --descriptor resources/descriptor.yaml
-sharedrive fetch census-docs --dry-run --format json
-sharedrive download --dry-run --format json
 sharedrive update --title "Hello" --description "hello"
 sharedrive update --resource spec-workbook --title "Hello"
 ```
