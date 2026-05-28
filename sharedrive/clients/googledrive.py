@@ -713,7 +713,21 @@ class GDriveItem(DriveItem):
                 refreshed["contents"] = self.raw["contents"]
         self.raw = refreshed
         return self
+    
+    def export(self, target_mime_type: Optional[str] = None, output_path: Optional[str] = None) -> Union[bytes, str]:
+        """Export this item if it's a Google Workspace file, otherwise download it.
 
+        Google Workspace files are exported to their default format or to
+        *target_mime_type* if provided.  Non-Google files are downloaded as-is.
+        """
+        if not self._is_google_workspace_file(self.raw.get("mimeType", "")):
+            return self.download(target_dir=output_path) if output_path else self.client.download_file(self.id)
+
+        return self.client.export_file(
+            file_id=self.id,
+            mime_type=target_mime_type,
+            output_path=output_path,
+        )
     def download(self, target_dir: str | Path) -> None:
         """Download this item.
 

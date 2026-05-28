@@ -389,9 +389,11 @@ class DriveCatalog(Model):
             resource.basepath = self.basepath
 
         for package in self.packages:
-            package.basepath = self.basepath
+            if package.basepath:
+                assert_safe_path(package.basepath, basepath=self.basepath)
+                package.basepath = self.basepath + "/" + package.basepath
             if isinstance(package, DriveRemotePackage):
-                package.cache = resolve_cache_path(package.cache, self.basepath)
+                package.cache = resolve_cache_path(package.cache, package.basepath)
             package.model_post_init(None)
 
         normalized_catalogs = []
