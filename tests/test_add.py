@@ -69,7 +69,7 @@ def test_add_resource_to_descriptor_rejects_unsupported_service_type(
     descriptor = tmp_path / "descriptor.yaml"
     _write_catalog_descriptor(descriptor)
 
-    with pytest.raises(NotImplementedError, match="not implemented"):
+    with pytest.raises(NotImplementedError, match="Could not infer serviceType"):
         _add_resource_to_descriptor(
             descriptor,
             name="local-file",
