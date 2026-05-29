@@ -5,7 +5,12 @@ import json
 import pytest
 
 from sharedrive.auth.google import GoogleAuth
-from sharedrive.clients.googledrive import FOLDER_MIME, GoogleBaseClient, GoogleDriveClient
+from sharedrive.clients.googledrive import (
+    FOLDER_MIME,
+    GDriveItem,
+    GoogleBaseClient,
+    GoogleDriveClient,
+)
 from sharedrive.exceptions import GoogleDriveError
 
 
@@ -231,3 +236,69 @@ def test_list_folder_files_rejects_non_folder() -> None:
 
     with pytest.raises(ValueError, match="not a folder"):
         client.list_folder_files("file123")
+
+
+def test_gdrive_item_iter_files_paths_are_relative_to_weburl_root() -> None:
+    creds = DummyCreds(valid=True)
+    root_metadata = DummyResponse(
+        payload={"id": "root", "name": "NIH approvals", "mimeType": FOLDER_MIME}
+    )
+    root_children = DummyResponse(
+        payload={
+            "files": [
+                {
+                    "id": "proposal-folder",
+                    "name": "01-proposal-process",
+                    "mimeType": FOLDER_MIME,
+                    "parents": ["root"],
+                }
+            ]
+        }
+    )
+    proposal_children = DummyResponse(
+        payload={
+            "files": [
+                {
+                    "id": "term-folder",
+                    "name": "PPI000001",
+                    "mimeType": FOLDER_MIME,
+                    "parents": ["proposal-folder"],
+                }
+            ]
+        }
+    )
+    term_children = DummyResponse(
+        payload={
+            "files": [
+                {
+                    "id": "doc-1",
+                    "name": "PPI000001 approval.docx",
+                    "mimeType": (
+                        "application/vnd.openxmlformats-officedocument."
+                        "wordprocessingml.document"
+                    ),
+                    "parents": ["term-folder"],
+                    "webViewLink": "https://drive.google.com/file/d/doc-1/view",
+                }
+            ]
+        }
+    )
+    session = DummySession(
+        [root_metadata, root_children, proposal_children, term_children]
+    )
+    client = GoogleDriveClient(credentials=creds, session=session)
+
+    root = GDriveItem.from_weburl(
+        "https://drive.google.com/drive/folders/root", client
+    )
+    files = list(root.iter_files())
+
+    assert root.path == ""
+    assert len(files) == 1
+    assert files[0].id == "doc-1"
+    assert files[0].name == "PPI000001 approval.docx"
+    assert (
+        files[0].path
+        == "01-proposal-process/PPI000001/PPI000001 approval.docx"
+    )
+    assert files[0].service_type == "GoogleDrive"

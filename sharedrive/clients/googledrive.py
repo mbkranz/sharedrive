@@ -204,9 +204,6 @@ class GDriveApiFile(BaseModel):
     md5Checksum: Optional[str] = None
     trashed: Optional[bool] = None
 
-class GDriveApiFolderFiles(BaseModel):
-    files: list[GDriveApiFile] = []
-
 @provider("googledrive")
 class GoogleDriveClient(GoogleBaseClient):
     """Google Drive client (ID-first) with read/write and full export coverage.
@@ -283,7 +280,7 @@ class GoogleDriveClient(GoogleBaseClient):
                 "fields": f"nextPageToken, files({', '.join(self.file_fields)})",
                 "supportsAllDrives": "true",
                 "includeItemsFromAllDrives": "true",
-                "query":f"'{folder_file_id}' in parents and trashed = false",
+                "q": f"'{folder_file_id}' in parents and trashed = false",
             }
             if page_token:
                 params["pageToken"] = page_token
@@ -295,6 +292,43 @@ class GoogleDriveClient(GoogleBaseClient):
                 break
 
         return [GDriveApiFile(**f) for f in files]
+
+    def list_folder_files(
+        self,
+        folder_file_id: str,
+        recursive: bool = False,
+        page_size: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List files in a Drive folder with paths relative to that folder."""
+        folder_metadata = self.get_file(folder_file_id, fields="id,mimeType")
+        if folder_metadata.mimeType != FOLDER_MIME:
+            raise ValueError(f"Google Drive item {folder_file_id} is not a folder")
+
+        def collect(
+            current_folder_id: str, parent_path: str = ""
+        ) -> list[dict[str, Any]]:
+            collected: list[dict[str, Any]] = []
+            for child in self.list_files(current_folder_id, page_size=page_size):
+                child_name = child.name or ""
+                relative_path = (
+                    f"{parent_path}/{child_name}".strip("/")
+                    if parent_path
+                    else child_name
+                )
+                if recursive and child.mimeType == FOLDER_MIME:
+                    if child.id is None:
+                        raise ValueError(
+                            f"Folder {child.name} is missing a Google Drive ID"
+                        )
+                    collected.extend(collect(child.id, relative_path))
+                    continue
+
+                child_data = child.model_dump(exclude_none=True)
+                child_data["relative_path"] = relative_path
+                collected.append(child_data)
+            return collected
+
+        return collect(folder_file_id)
 
     def get_file(self, file_id: str, **kwargs) -> GDriveApiFile:
         endpoint = f"{DRIVE_URL}/files/{file_id}"
@@ -540,7 +574,26 @@ class GoogleDriveClient(GoogleBaseClient):
         """
         file_id = self._extract_id_from_url(str(url))
         metadata = self.get_file(file_id)
-        return GDriveItem.from_api_response(api_metadata=metadata,client=self)
+        parents = metadata.parents or [None]
+        if len(parents) > 1:
+            raise ValueError(
+                f"Item {metadata.name} has multiple parents, which is not "
+                "supported by GDriveItem model"
+            )
+
+        if metadata.mimeType == FOLDER_MIME:
+            return GDriveItem(
+                client=self,
+                basepath="",
+                path="",
+                id=metadata.id,
+                name=metadata.name,
+                source_url=metadata.webViewLink,
+                parent_id=parents[0],
+                service_id=metadata.id,
+                mime_type=metadata.mimeType,
+            )
+        return GDriveItem.from_api_response(api_metadata=metadata, client=self)
 
     def download_from_weburl(self, url: str, **kwargs) -> Union[bytes, str]:
         #TODO: deprecate given ServiceItem now handles?
@@ -605,7 +658,6 @@ class GDriveItem(ServiceItem):
     def __init__(
         self,
         client: "GoogleDriveClient",
-        metadata: dict[str, Any] | None = None,
         basepath: str | None = None,
         path: str | None = None,
         id: str | None = None,
@@ -616,7 +668,6 @@ class GDriveItem(ServiceItem):
         mime_type: str | None = None,
     ):
         self._client = client
-        self._metadata = metadata
         self._basepath = basepath
         self._path = path
         self._id = id
@@ -635,37 +686,57 @@ class GDriveItem(ServiceItem):
         return client.get_from_weburl(url)
 
     @classmethod
-    def from_api_response(cls, api_metadata: Union[GDriveApiFile, GDriveApiFolderFiles], client: "GoogleDriveClient", basepath: Optional[str] = None) -> "GDriveItem":
-        
+    def from_api_response(
+        cls,
+        api_metadata: GDriveApiFile,
+        client: "GoogleDriveClient",
+        basepath: Optional[str] = None,
+    ) -> "GDriveItem":
         parents = api_metadata.parents or [None]
         if len(parents) > 1:
-            raise ValueError(f"Item {api_metadata.name} has multiple parents, which is not supported by GDriveItem model")
+            raise ValueError(
+                f"Item {api_metadata.name} has multiple parents, which is not "
+                "supported by GDriveItem model"
+            )
         else:
             _parent_id = parents[0]
-            
-        if isinstance(api_metadata, GDriveApiFile):
-            paths = dict(basepath = basepath,path = api_metadata.name)
-        elif isinstance(api_metadata, GDriveApiFolderFiles):
-            paths = dict(basepath = f"{basepath}/{api_metadata.name}" if basepath else api_metadata.name,path = api_metadata.name)
-        else:
-            raise ValueError(f"Unexpected child metadata type: {type(api_metadata)}. Expected GDriveApiFile or GDriveApiFolderFiles.")
+
+        name = api_metadata.name or ""
+        path = f"{basepath}/{name}".strip("/") if basepath else name
+        item_basepath = path if api_metadata.mimeType == FOLDER_MIME else basepath
         
         return cls(
             client=client,  
-            path=api_metadata.name,
+            basepath=item_basepath,
+            path=path,
+            id=api_metadata.id,
+            name=api_metadata.name,
             service_id=api_metadata.id,
             parent_id=_parent_id,
             mime_type=api_metadata.mimeType,
             source_url=api_metadata.webViewLink,
-            **paths
         )
 
     @property
     def parent(self) -> Optional["GDriveItem"]:
         if self._parent_id:
             parent_metadata = self._client.get_file(self._parent_id)
-            return GDriveItem.from_api_response(api_metadata=parent_metadata, client=self._client)
+            return GDriveItem.from_api_response(
+                api_metadata=parent_metadata, client=self._client
+            )
         return None
+
+    @property
+    def client(self) -> "GoogleDriveClient":
+        return self._client
+
+    @property
+    def parent_id(self) -> Optional[str]:
+        return self._parent_id
+
+    @property
+    def mime_type(self) -> Optional[str]:
+        return self._mime_type
 
     @property
     def resolved_path(self) -> Optional[str]:
@@ -703,8 +774,13 @@ class GDriveItem(ServiceItem):
         if not self.is_directory:
             return []
         
-        children = self._client.list_files(folder_file_id=self._service_id) 
-        return [GDriveItem.from_api_response(api_metadata=child, client=self._client) for child in children]
+        children = self._client.list_files(folder_file_id=self._service_id)
+        return [
+            GDriveItem.from_api_response(
+                api_metadata=child, client=self._client, basepath=self._basepath
+            )
+            for child in children
+        ]
 
     @property
     def id(self) -> str:
@@ -730,6 +806,10 @@ class GDriveItem(ServiceItem):
     def is_directory(self) -> bool:
         return self._mime_type == FOLDER_MIME
 
+    @property
+    def service_type(self) -> str:
+        return "GoogleDrive"
+
 
 
         
@@ -754,14 +834,22 @@ class GDriveItem(ServiceItem):
                 
         return self
     
-    def export(self, target_mime_type: Optional[str] = None, output_path: Optional[str] = None) -> Union[bytes, str]:
+    def export(
+        self,
+        target_mime_type: Optional[str] = None,
+        output_path: Optional[str] = None,
+    ) -> Union[bytes, str]:
         """Export this item if it's a Google Workspace file, otherwise download it.
 
         Google Workspace files are exported to their default format or to
         *target_mime_type* if provided.  Non-Google files are downloaded as-is.
         """
-        if not self._is_google_workspace_file(self.raw.get("mimeType", "")):
-            return self.download(target_dir=output_path) if output_path else self.client.download_file(self.id)
+        if not self.client._is_google_workspace_file(self.mime_type or ""):
+            return (
+                self.download(target_dir=output_path)
+                if output_path
+                else self.client.download_file(self.id)
+            )
 
         return self.client.export_file(
             file_id=self.id,
