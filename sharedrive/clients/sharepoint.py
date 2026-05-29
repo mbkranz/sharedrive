@@ -371,64 +371,6 @@ class SharepointClient(BaseClient):
             )
         return response.content
 
-    def get_from_weburl(self, url: str) -> ServiceItem:
-        resolved = self.resolve_weburl(url)
-        metadata = self.get_item_metadata(
-            resolved["drive_id"], item_path=resolved["item_path"]
-        )
-        return self._to_item(metadata, scope_root=True)
-
-    def _to_item(
-        self,
-        raw_metadata: dict[str, Any],
-        *,
-        current_rel_path: str = "",
-        scope_root: bool = False,
-    ) -> "SharepointItem":
-        return _sharepoint_to_item(
-            self, raw_metadata, current_rel_path=current_rel_path, scope_root=scope_root
-        )
-
-    def download(self, metadata, path):
-        # TODO: refactor/redesign to make object oriented and based on classes from GraphAPI
-        metadata_downloaded = {}
-        if "file" in metadata:
-            drive_id = metadata["parentReference"]["driveId"]
-            item_id = metadata["id"]
-            url = metadata.get(
-                "@microsoft.graph.downloadUrl",
-                f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}/content",
-            )
-            response = requests.get(url, headers=self.auth_header)
-            if response.status_code == 302:
-                # [Handle redirect for download URL](https://learn.microsoft.com/en-us/graph/api/driveitem-get-content?view=graph-rest-1.0&tabs=http#response)
-                download_url = response.headers.get("Location")
-                if download_url:
-                    response = requests.get(download_url)
-                else:
-                    raise GraphApiDriveError(
-                        f"Received 302 but no Location header found for URL: {url}"
-                    )
-
-            if not response.ok:
-                raise GraphApiDriveError(
-                    f"Failed to download item '{item_id}': {response.status_code} {response.reason}",
-                    status_code=response.status_code,
-                    response_text=response.text,
-                )
-            content = response.content
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(content)
-
-            metadata_downloaded[path] = metadata
-
-        if "folder" in metadata:
-            for child in metadata.get("children", []):
-                self.download(child, path / child["name"])
-                metadata_downloaded[path / child["name"]] = child
-
-        return metadata_downloaded
-
     def get_file(self, site_name, file_path, metadata_only=False):
         """
 
@@ -450,11 +392,7 @@ class SharepointClient(BaseClient):
         if metadata_only:
             return item
         else:
-            if item_metadata.get("@microsoft.graph.downloadUrl"):
-                item_content = self.download(item_metadata, Path(file_path))
-            else:
-                print("No Presigned URL detected...using drive id and item id")
-                item_content = self.download(item_metadata, Path(file_path))
+            item_content = SharepointItem(item_metadata, client=self).download(Path(file_path))
 
             item["content"] = item_content
 
@@ -573,34 +511,128 @@ class SharepointItem(ServiceItem):
 
     def __init__(
         self,
-        raw_metadata: dict,
         client: "SharepointClient",
+        raw_metadata: dict[str, Any] | None = None,
+        basepath: str | None = None,
+        path: str | None = None,
+        id: str | None = None,
+        name: str | None = None,
+        source_url: str | None = None,
+        parent_id: str | None = None,
+        service_id: str | None = None,
+        is_folder: bool = False,
         current_rel_path: str = "",
         scope_root: bool = False,
     ):
-        self.raw = raw_metadata
         self.client = client
+        self.raw = raw_metadata or {}
+        self._basepath = basepath
+        self._path = path
+        self._id = id
+        self._name = name
+        self._source_url = source_url
+        self._parent_id = parent_id
+        self._service_id = service_id
+        self._is_folder = is_folder
+        
         self._current_rel_path = current_rel_path
         self._scope_root = scope_root
+        
+    _resolved_path: str | None = None
+    _resolved_path_depth: int | None = None
+    _resolved_path_root_id: str | None = None
+
+    @classmethod
+    def from_weburl(cls, url: str, client: "SharepointClient") -> "SharepointItem":
+        resolved = client.resolve_weburl(url)
+        metadata = client.get_item_metadata(
+            resolved["drive_id"], item_path=resolved["item_path"]
+        )
+        return cls.from_api_response(api_metadata=metadata, client=client, scope_root=True)
+
+    @classmethod
+    def from_api_response(
+        cls,
+        api_metadata: dict[str, Any],
+        client: "SharepointClient",
+        current_rel_path: str = "",
+        scope_root: bool = False,
+    ) -> "SharepointItem":
+        is_folder = "folder" in api_metadata
+        parent_id = api_metadata.get("parentReference", {}).get("id")
+        
+        relative_path = str(api_metadata.get("relative_path", "")).strip()
+        path = relative_path if relative_path else api_metadata.get("name", "")
+        if current_rel_path:
+             path = f"{current_rel_path}/{path}".strip("/")
+
+        return cls(
+            client=client,
+            raw_metadata=api_metadata,
+            id=api_metadata.get("id"),
+            name=api_metadata.get("name"),
+            path=path,
+            source_url=api_metadata.get("webUrl"),
+            parent_id=parent_id,
+            service_id=api_metadata.get("id"),
+            is_folder=is_folder,
+            current_rel_path=current_rel_path,
+            scope_root=scope_root,
+        )
+
+    @property
+    def parent(self) -> SharepointItem | None:
+        if self._parent_id:
+            drive_id = self.raw.get("parentReference", {}).get("driveId")
+            if drive_id:
+                parent_metadata = self.client.get_item_metadata(drive_id, item_id=self._parent_id)
+                return SharepointItem.from_api_response(api_metadata=parent_metadata, client=self.client)
+        return None
+
+    @property
+    def resolved_path(self) -> str | None:
+        return self._resolved_path
+
+    @property
+    def resolved_path_depth(self) -> int | None:
+        return self._resolved_path_depth
+
+    def resolve_path(self, depth: int | None = None) -> str:
+        current_node: SharepointItem = self
+        path_parts = [self.name]
+        current_depth = 0
+        
+        while current_node._parent_id:
+            if depth is not None and current_depth >= depth:
+                break
+            parent_node = current_node.parent
+            if parent_node is None:
+                break
+            
+            path_parts.insert(0, parent_node.name)
+            current_node = parent_node
+            current_depth += 1
+            
+        self._resolved_path = "/".join([p for p in path_parts if p is not None])
+        self._resolved_path_depth = current_depth
+        self._resolved_path_root_id = current_node._service_id
+        return self._resolved_path
 
     @property
     def id(self) -> str:
-        return self.raw.get("id", "")
+        return self._id or ""
 
     @property
     def name(self) -> str:
-        return self.raw.get("name", "")
+        return self._name or ""
 
     @property
     def path(self) -> str:
-        relative_path = str(self.raw.get("relative_path", "")).strip()
-        if relative_path:
-            if self._current_rel_path:
-                return f"{self._current_rel_path}/{relative_path}".strip("/")
-            return relative_path
-        if self._current_rel_path:
-            return f"{self._current_rel_path}/{self.name}"
-        return self.name
+        return self._path or ""
+        
+    @path.setter
+    def path(self, new_path: str) -> None:
+        self._path = new_path
 
     @property
     def service_type(self) -> str:
@@ -608,11 +640,11 @@ class SharepointItem(ServiceItem):
 
     @property
     def source_url(self) -> str:
-        return self.raw.get("webUrl", "")
+        return self._source_url or ""
 
     @property
     def is_directory(self) -> bool:
-        return "folder" in self.raw
+        return self._is_folder
 
     @property
     def children(self) -> list["SharepointItem"]:
@@ -630,8 +662,8 @@ class SharepointItem(ServiceItem):
 
         next_rel_path = "" if self._scope_root else self.path
         return [
-            self.client._to_item(
-                child_raw, current_rel_path=next_rel_path, scope_root=False
+            SharepointItem.from_api_response(
+                child_raw, client=self.client, current_rel_path=next_rel_path, scope_root=False
             )
             for child_raw in contents
         ]
@@ -648,7 +680,51 @@ class SharepointItem(ServiceItem):
         if self.is_directory and not include_children and "children" in self.raw:
             refreshed["children"] = self.raw["children"]
         self.raw = refreshed
+        self._name = refreshed.get("name")
+        self._id = refreshed.get("id")
+        self._source_url = refreshed.get("webUrl")
+        self._is_folder = "folder" in refreshed
+        self._parent_id = refreshed.get("parentReference", {}).get("id")
         return self
+
+    def export(self, target_mime_type: str | None = None, output_path: str | None = None) -> bytes | str:
+        """Export this item if possible, otherwise download it."""
+        # Microsoft Graph API allows exporting via PDF. 
+        # Example format: pdf
+        # https://learn.microsoft.com/en-us/graph/api/driveitem-get-content-format?view=graph-rest-1.0&tabs=http
+        if target_mime_type == "application/pdf":
+            # Just add format=pdf to the download url basically.
+            # But the most robust way via graph is to hit /content?format=pdf
+            pass # fallthrough below for now to regular download if not supported
+            
+            if self.is_directory:
+                 raise NotImplementedError("Cannot export a directory")
+            
+            drive_id = self.raw.get("parentReference", {}).get("driveId")
+            if drive_id:
+                url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{self.id}/content?format=pdf"
+                
+                target = Path(output_path) if output_path else None
+                if target and target.is_dir():
+                    target = target / (str(Path(self.name).with_suffix(".pdf")))
+                elif target:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                
+                response = requests.get(url, headers=self.client.auth_header, stream=True)
+                if response.status_code == 302:
+                    redirect_url = response.headers.get("Location")
+                    if redirect_url:
+                        response = requests.get(redirect_url, stream=True)
+                response.raise_for_status()
+                
+                if target:
+                    with open(target, "wb") as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                    return ""
+                return response.content
+
+        return self.download(target_dir=output_path) if output_path else b""
 
     def download(self, target_dir: str | Path) -> None:
         """Download this item.
@@ -693,18 +769,3 @@ class SharepointItem(ServiceItem):
 # will continue to work because these names now point to ``SharepointItem``.
 SharepointFile = SharepointItem
 SharepointFolder = SharepointItem
-
-
-def _sharepoint_to_item(
-    client: "SharepointClient",
-    raw_metadata: dict[str, Any],
-    *,
-    current_rel_path: str = "",
-    scope_root: bool = False,
-) -> SharepointItem:
-    return SharepointItem(
-        raw_metadata=raw_metadata,
-        client=client,
-        current_rel_path=current_rel_path,
-        scope_root=scope_root,
-    )
