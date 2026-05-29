@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from functools import cached_property
 import json
 import re
 from enum import Enum
@@ -7,8 +7,9 @@ from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar, Dict, Literal, Optional, Union
 
 import requests
+from pydantic import BaseModel
 from google.auth.credentials import Credentials
-from sharedrive.item import DriveItem
+from sharedrive.item import  ServiceItem
 
 from sharedrive.auth.google import GoogleAuth
 from sharedrive.clients.base import AdapterCapabilities, BaseClient
@@ -27,6 +28,7 @@ class GoogleBaseClient(BaseClient):
     Design note: this class intentionally separates low-level HTTP transport
     from drive-specific business logic so that non-Drive Google APIs (Sheets,
     etc.) could extend it without carrying Drive-specific state.
+
     """
 
     api_error_cls = GoogleApiError
@@ -187,6 +189,23 @@ ALT_EXPORTS = {
     "pdf": "application/pdf",
 }
 
+class GDriveApiFile(BaseModel):
+    id: Optional[str] = None
+    name: Optional[str] = None
+    mimeType: Optional[str] = None
+    parents: Optional[list[str]] = None
+    driveId: Optional[str] = None
+    webViewLink: Optional[str] = None
+    webContentLink: Optional[str] = None
+    exportLinks: Optional[dict[str, str]] = None
+    modifiedTime: Optional[str] = None
+    createdTime: Optional[str] = None
+    size: Optional[int] = None
+    md5Checksum: Optional[str] = None
+    trashed: Optional[bool] = None
+
+class GDriveApiFolderFiles(BaseModel):
+    files: list[GDriveApiFile] = []
 
 @provider("googledrive")
 class GoogleDriveClient(GoogleBaseClient):
@@ -213,6 +232,21 @@ class GoogleDriveClient(GoogleBaseClient):
     """
 
     api_error_cls = GoogleDriveError
+    file_fields = [
+        "id",
+        "name",
+        "mimeType",
+        "parents",
+        "driveId",
+        "webViewLink",
+        "webContentLink",
+        "exportLinks",
+        "modifiedTime",
+        "createdTime",
+        "size",
+        "md5Checksum",
+        "trashed"
+    ]
 
     def __init__(
         self,
@@ -221,6 +255,7 @@ class GoogleDriveClient(GoogleBaseClient):
         credentials: Credentials | None = None,
         session: requests.Session | None = None,
         timeout: int = 120,
+
     ):
         super().__init__(
             auth=auth,
@@ -235,11 +270,9 @@ class GoogleDriveClient(GoogleBaseClient):
 
     def list_files(
         self,
-        *,
-        query: str | None = None,
-        fields: str = "id, name, mimeType, parents",
+        folder_file_id: str,
         page_size: int = 100,
-    ):
+    ) -> list[GDriveApiFile]:
         """List all files the authenticated user has access to."""
         files = []
         page_token = None
@@ -247,12 +280,11 @@ class GoogleDriveClient(GoogleBaseClient):
         while True:
             params = {
                 "pageSize": page_size,
-                "fields": f"nextPageToken, files({fields})",
+                "fields": f"nextPageToken, files({', '.join(self.file_fields)})",
                 "supportsAllDrives": "true",
                 "includeItemsFromAllDrives": "true",
+                "query":f"'{folder_file_id}' in parents and trashed = false",
             }
-            if query:
-                params["q"] = query
             if page_token:
                 params["pageToken"] = page_token
 
@@ -262,75 +294,18 @@ class GoogleDriveClient(GoogleBaseClient):
             if not page_token:
                 break
 
-        return files
+        return [GDriveApiFile(**f) for f in files]
 
-
-    def list_folder_contents(
-        self,
-        folder_id: str,
-        *,
-        recursive: bool = False,
-    ) -> list[Dict[str, Any]]:
-        """List folder descendants and annotate each entry with a relative_path."""
-        folder_metadata = self.get_file(folder_id, fields="id, name, mimeType")
-        if folder_metadata.get("mimeType") != FOLDER_MIME:
-            raise ValueError(f"Google Drive source is not a folder: {folder_id}")
-
-        results: list[Dict[str, Any]] = []
-
-        def walk(parent_folder_id: str, relative_root: PurePosixPath) -> None:
-            children = self.list_files(
-                query=f"'{parent_folder_id}' in parents and trashed = false",
-                fields="id, name, mimeType, parents",
-            )
-            for child in children:
-                child_name = str(child.get("name", child.get("id", ""))).strip()
-                if not child_name:
-                    child_name = str(child.get("id", "item"))
-                relative_path = relative_root / child_name
-                child_with_path = dict(child)
-                child_with_path["relative_path"] = relative_path.as_posix()
-                results.append(child_with_path)
-
-                if recursive and child.get("mimeType") == FOLDER_MIME:
-                    walk(str(child.get("id", "")), relative_path)
-
-        walk(folder_id, PurePosixPath())
-        return results
-
-    def list_folder_files(
-        self,
-        folder_id: str,
-        *,
-        recursive: bool = True,
-    ) -> list[Dict[str, Any]]:
-        """List files contained in a folder, optionally descending into child folders."""
-        return [
-            entry
-            for entry in self.list_folder_contents(folder_id, recursive=recursive)
-            if entry.get("mimeType") != FOLDER_MIME
-        ]
-
-    def list_folder_files_from_weburl(
-        self,
-        web_url: str,
-        *,
-        recursive: bool = True,
-    ) -> list[Dict[str, Any]]:
-        """Resolve a folder URL and list files contained within it."""
-        folder_id = self._extract_id_from_url(web_url)
-        return self.list_folder_files(folder_id, recursive=recursive)
-
-    def get_file(self, file_id: str, **kwargs) -> Dict[str, Any]:
+    def get_file(self, file_id: str, **kwargs) -> GDriveApiFile:
         endpoint = f"{DRIVE_URL}/files/{file_id}"
         response = self._request(
             "GET", endpoint, params={"supportsAllDrives": "true", **kwargs}
         )
-        return response.json()
+        return GDriveApiFile(**response.json())
 
     def infer_export_mime_type(self, file_id: str) -> Optional[str]:
         file_metadata = self.get_file(file_id, fields="mimeType")
-        source_mime = file_metadata.get("mimeType", "")
+        source_mime = file_metadata.mimeType or ""
         return DEFAULT_EXPORTS.get(source_mime)
 
     def download_file(
@@ -359,7 +334,7 @@ class GoogleDriveClient(GoogleBaseClient):
             return headers
 
         file_metadata = self.get_file(file_id, fields="mimeType")
-        file_mime_type = file_metadata.get("mimeType", "")
+        file_mime_type = file_metadata.mimeType or ""
 
         if self._is_google_workspace_file(file_mime_type):
             return self.export_file(
@@ -559,40 +534,27 @@ class GoogleDriveClient(GoogleBaseClient):
         )
         return response.json()
 
-    def get_from_weburl(self, web_url: str, fields: str = "*") -> DriveItem:
+    def get_from_weburl(self, url: str) -> GDriveItem:
         """Return metadata for a Google Drive file or folder given a web URL,
         mapped to the unified :class:`GDriveItem` model.
         """
-        file_id = self._extract_id_from_url(str(web_url))
-        metadata = self.get_file(file_id, fields=fields + ",mimeType,webViewLink")
-        return self._to_item(metadata, scope_root=True)
+        file_id = self._extract_id_from_url(str(url))
+        metadata = self.get_file(file_id)
+        return GDriveItem.from_api_response(api_metadata=metadata,client=self)
 
-    def _to_item(
-        self,
-        raw_metadata: dict[str, Any],
-        *,
-        current_rel_path: str = "",
-        scope_root: bool = False,
-    ) -> "GDriveItem":
-        return GDriveItem(
-            raw_metadata=raw_metadata,
-            client=self,
-            current_rel_path=current_rel_path,
-            scope_root=scope_root,
-        )
-
-    def download_from_weburl(self, web_url: str, **kwargs) -> Union[bytes, str]:
-        file_id = self._extract_id_from_url(web_url)
+    def download_from_weburl(self, url: str, **kwargs) -> Union[bytes, str]:
+        #TODO: deprecate given ServiceItem now handles?
+        file_id = self._extract_id_from_url(url)
         return self.download_file(file_id, **kwargs)
 
     def export_from_weburl(
-        self, web_url: str, mime_type: Optional[str] = None, **kwargs
+        self, url: str, mime_type: Optional[str] = None, **kwargs
     ) -> Union[bytes, str]:
-        file_id = self._extract_id_from_url(web_url)
+        file_id = self._extract_id_from_url(url)
         return self.export_file(file_id, mime_type, **kwargs)
 
-    def update_from_weburl(self, web_url: str, **kwargs) -> Dict[str, Any]:
-        file_id = self._extract_id_from_url(web_url)
+    def update_from_weburl(self, url: str, **kwargs) -> Dict[str, Any]:
+        file_id = self._extract_id_from_url(url)
         return self.update_file(file_id, **kwargs)
 
     @staticmethod
@@ -624,94 +586,172 @@ __all__ = [
 ]
 
 
-class GDriveItem(DriveItem):
+class GDriveItem(ServiceItem):
     """A Google Drive file or folder item backed by the Drive REST API.
 
     Whether an instance represents a file or a directory is determined at
-    runtime by :attr:`is_directory` (based on ``mimeType``), so a single
-    class handles both cases.  The previous ``GDriveFile`` / ``GDriveFolder``
-    split has been consolidated here; backward-compatible aliases are kept at
-    module level.
+    runtime by :attr:`is_directory` (based on ``mimeType``). 
+    
+    
+    TODO: split to GDriveFile and GDriveFolder and then make GDriveItem a union type?
+    TODO: have capability of event driven workflows: https://developers.google.com/workspace/events/guides/events-drive
+    
+    
+    API Resource References
+    -------
+    https://developers.google.com/workspace/drive/api/reference/rest/v3/files#File
     """
-
+    serviceType = "GoogleDrive"
     def __init__(
         self,
-        raw_metadata: dict[str, Any],
         client: "GoogleDriveClient",
-        current_rel_path: str = "",
-        scope_root: bool = False,
+        metadata: dict[str, Any] | None = None,
+        basepath: str | None = None,
+        path: str | None = None,
+        id: str | None = None,
+        name: str | None = None,
+        source_url: str | None = None,
+        parent_id: str | None = None,
+        service_id: str | None = None,
+        mime_type: str | None = None,
     ):
-        self.raw = raw_metadata
-        self.client = client
-        self._current_rel_path = current_rel_path
-        self._scope_root = scope_root
+        self._client = client
+        self._metadata = metadata
+        self._basepath = basepath
+        self._path = path
+        self._id = id
+        self._name = name
+        self._source_url = source_url
+        self._parent_id = parent_id
+        self._service_id = service_id
+        self._mime_type = mime_type
+
+    _resolved_path: Optional[str] = None
+    _resolved_path_depth: Optional[int] = None
+    _resolved_path_root_id: Optional[str] = None
+
+    @classmethod
+    def from_weburl(cls, url: str, client: "GoogleDriveClient") -> "GDriveItem":
+        return client.get_from_weburl(url)
+
+    @classmethod
+    def from_api_response(cls, api_metadata: Union[GDriveApiFile, GDriveApiFolderFiles], client: "GoogleDriveClient", basepath: Optional[str] = None) -> "GDriveItem":
+        
+        parents = api_metadata.parents or [None]
+        if len(parents) > 1:
+            raise ValueError(f"Item {api_metadata.name} has multiple parents, which is not supported by GDriveItem model")
+        else:
+            _parent_id = parents[0]
+            
+        if isinstance(api_metadata, GDriveApiFile):
+            paths = dict(basepath = basepath,path = api_metadata.name)
+        elif isinstance(api_metadata, GDriveApiFolderFiles):
+            paths = dict(basepath = f"{basepath}/{api_metadata.name}" if basepath else api_metadata.name,path = api_metadata.name)
+        else:
+            raise ValueError(f"Unexpected child metadata type: {type(api_metadata)}. Expected GDriveApiFile or GDriveApiFolderFiles.")
+        
+        return cls(
+            client=client,  
+            path=api_metadata.name,
+            service_id=api_metadata.id,
+            parent_id=_parent_id,
+            mime_type=api_metadata.mimeType,
+            source_url=api_metadata.webViewLink,
+            **paths
+        )
 
     @property
-    def id(self) -> str:
-        return self.raw.get("id", "")
+    def parent(self) -> Optional["GDriveItem"]:
+        if self._parent_id:
+            parent_metadata = self._client.get_file(self._parent_id)
+            return GDriveItem.from_api_response(api_metadata=parent_metadata, client=self._client)
+        return None
 
     @property
-    def name(self) -> str:
-        return self.raw.get("name", "")
+    def resolved_path(self) -> Optional[str]:
+        return self._resolved_path
 
     @property
-    def path(self) -> str:
-        relative_path = str(self.raw.get("relative_path", "")).strip()
-        if relative_path:
-            if self._current_rel_path:
-                return f"{self._current_rel_path}/{relative_path}".strip("/")
-            return relative_path
-        if self._current_rel_path:
-            return f"{self._current_rel_path}/{self.name}"
-        return self.name
+    def resolved_path_depth(self) -> Optional[int]:
+        return self._resolved_path_depth
 
-    @property
-    def service_type(self) -> str:
-        return "GoogleDrive"
+    def resolve_path(self, depth: Optional[int] = None) -> str:
+        current_node: GDriveItem = self
+        path_parts = [self.name]
+        current_depth = 0
+        
+        while current_node._parent_id:
+            if depth is not None and current_depth >= depth:
+                break
+            # the parent is a GDriveItem, we can fetch it via `.parent` property
+            parent_node = current_node.parent
+            if parent_node is None:
+                break
+            
+            path_parts.insert(0, parent_node.name)
+            current_node = parent_node
+            current_depth += 1
+            
+        self._resolved_path = "/".join([p for p in path_parts if p is not None])
+        self._resolved_path_depth = current_depth
+        self._resolved_path_root_id = current_node._service_id
+        return self._resolved_path
 
-    @property
-    def source_url(self) -> str:
-        return self.raw.get("webViewLink") or f"https://drive.google.com/open?id={self.id}"
-
-    @property
-    def is_directory(self) -> bool:
-        return self.raw.get("mimeType") == FOLDER_MIME
-
-    @property
+    @cached_property
     def children(self) -> list["GDriveItem"]:
         """Direct children of this directory; empty list for files."""
         if not self.is_directory:
             return []
-        contents = self.raw.get("contents")
-        if contents is None:
-            contents = self.client.list_folder_contents(self.id, recursive=False)
-            self.raw["contents"] = contents
+        
+        children = self._client.list_files(folder_file_id=self._service_id) 
+        return [GDriveItem.from_api_response(api_metadata=child, client=self._client) for child in children]
 
-        next_rel_path = "" if self._scope_root else self.path
-        return [
-            self.client._to_item(
-                child_raw,
-                current_rel_path=next_rel_path,
-                scope_root=False,
-            )
-            for child_raw in contents
-        ]
+    @property
+    def id(self) -> str:
+        return self._id
 
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def path(self) -> str:
+        return self._path
+    
+    @path.setter
+    def path(self, new_path: str) -> None:
+        self._path = new_path
+
+    @property
+    def source_url(self) -> str:
+        return self._source_url
+
+    @property
+    def is_directory(self) -> bool:
+        return self._mime_type == FOLDER_MIME
+
+
+
+        
     def refresh(self, *, include_children: bool = True) -> "GDriveItem":
         """Re-fetch raw metadata (and optionally children) from the API."""
         refreshed = self.client.get_file(
             self.id,
             fields="id,name,mimeType,parents,webViewLink",
         )
-        if self.is_directory:
-            if include_children:
-                refreshed["contents"] = self.client.list_folder_contents(
-                    self.id,
-                    recursive=False,
-                )
-            elif "contents" in self.raw:
-                refreshed["contents"] = self.raw["contents"]
-        self.raw = refreshed
+        # Update attributes directly
+        self._name = refreshed.name
+        self._path = refreshed.name # usually path corresponds to name if not fully resolved
+        self._mime_type = refreshed.mimeType
+        self._source_url = refreshed.webViewLink
+        if refreshed.parents and len(refreshed.parents) > 0:
+            self._parent_id = refreshed.parents[0]
+
+        if self.is_directory and include_children:
+            # simply trigger a cache flush if cached_property supports it
+            if 'children' in self.__dict__:
+                del self.__dict__['children']
+                
         return self
     
     def export(self, target_mime_type: Optional[str] = None, output_path: Optional[str] = None) -> Union[bytes, str]:

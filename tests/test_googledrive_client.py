@@ -85,7 +85,7 @@ def test_request_refreshes_credentials_before_call() -> None:
 
     result = client.get_file("123")
 
-    assert result == {"id": "123"}
+    assert result.id == "123"
     assert creds.refresh_calls == 1
     method, url, kwargs = session.calls[0]
     assert method == "GET"
