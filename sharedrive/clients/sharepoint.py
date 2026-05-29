@@ -507,8 +507,8 @@ class SharepointItem(ServiceItem):
     """A SharePoint file or folder item backed by the Graph API.
 
     Whether an instance represents a file or a directory is determined at
-    runtime by :attr:`is_directory` (``"folder"`` key present in raw
-    metadata), so a single class handles both cases.  The previous
+    runtime by :attr:`is_directory` (``"folder"`` key present in the API
+    payload), so a single class handles both cases.  The previous
     ``SharepointFile`` / ``SharepointFolder`` split has been consolidated
     here; backward-compatible aliases are kept at module level.
     """
@@ -516,7 +516,7 @@ class SharepointItem(ServiceItem):
     def __init__(
         self,
         client: "SharepointClient",
-        raw_metadata: dict[str, Any] | None = None,
+        api_payload: dict[str, Any] | None = None,
         basepath: str | None = None,
         path: str | None = None,
         id: str | None = None,
@@ -525,11 +525,9 @@ class SharepointItem(ServiceItem):
         parent_id: str | None = None,
         service_id: str | None = None,
         is_folder: bool = False,
-        current_rel_path: str = "",
-        scope_root: bool = False,
     ):
         self.client = client
-        self.raw = raw_metadata or {}
+        self._api_payload = api_payload or {}
         self._basepath = basepath
         self._path = path
         self._id = id
@@ -538,9 +536,6 @@ class SharepointItem(ServiceItem):
         self._parent_id = parent_id
         self._service_id = service_id
         self._is_folder = is_folder
-        
-        self._current_rel_path = current_rel_path
-        self._scope_root = scope_root
         
     _resolved_path: str | None = None
     _resolved_path_depth: int | None = None
@@ -552,45 +547,52 @@ class SharepointItem(ServiceItem):
         metadata = client.get_item_metadata(
             resolved["drive_id"], item_path=resolved["item_path"]
         )
-        return cls.from_api_response(api_metadata=metadata, client=client, scope_root=True)
+        return cls(
+            client=client,
+            api_payload=metadata,
+            id=metadata.get("id"),
+            name=metadata.get("name"),
+            path="",
+            source_url=metadata.get("webUrl"),
+            parent_id=metadata.get("parentReference", {}).get("id"),
+            service_id=metadata.get("id"),
+            is_folder="folder" in metadata,
+        )
 
     @classmethod
     def from_api_response(
         cls,
-        api_metadata: dict[str, Any],
+        api_payload: dict[str, Any],
         client: "SharepointClient",
         current_rel_path: str = "",
-        scope_root: bool = False,
     ) -> "SharepointItem":
-        is_folder = "folder" in api_metadata
-        parent_id = api_metadata.get("parentReference", {}).get("id")
+        is_folder = "folder" in api_payload
+        parent_id = api_payload.get("parentReference", {}).get("id")
         
-        relative_path = str(api_metadata.get("relative_path", "")).strip()
-        path = relative_path if relative_path else api_metadata.get("name", "")
+        relative_path = str(api_payload.get("relative_path", "")).strip()
+        path = relative_path if relative_path else api_payload.get("name", "")
         if current_rel_path:
              path = f"{current_rel_path}/{path}".strip("/")
 
         return cls(
             client=client,
-            raw_metadata=api_metadata,
-            id=api_metadata.get("id"),
-            name=api_metadata.get("name"),
+            api_payload=api_payload,
+            id=api_payload.get("id"),
+            name=api_payload.get("name"),
             path=path,
-            source_url=api_metadata.get("webUrl"),
+            source_url=api_payload.get("webUrl"),
             parent_id=parent_id,
-            service_id=api_metadata.get("id"),
+            service_id=api_payload.get("id"),
             is_folder=is_folder,
-            current_rel_path=current_rel_path,
-            scope_root=scope_root,
         )
 
     @property
     def parent(self) -> SharepointItem | None:
         if self._parent_id:
-            drive_id = self.raw.get("parentReference", {}).get("driveId")
+            drive_id = self._api_payload.get("parentReference", {}).get("driveId")
             if drive_id:
                 parent_metadata = self.client.get_item_metadata(drive_id, item_id=self._parent_id)
-                return SharepointItem.from_api_response(api_metadata=parent_metadata, client=self.client)
+                return SharepointItem.from_api_response(api_payload=parent_metadata, client=self.client)
         return None
 
     @property
@@ -655,35 +657,34 @@ class SharepointItem(ServiceItem):
         """Direct children of this directory; empty list for files."""
         if not self.is_directory:
             return []
-        contents = self.raw.get("children")
+        contents = self._api_payload.get("children")
         if contents is None:
-            drive_id = self.raw.get("parentReference", {}).get("driveId")
+            drive_id = self._api_payload.get("parentReference", {}).get("driveId")
             if not drive_id:
                 raise ValueError("Missing driveId in SharePoint folder metadata")
             refreshed = self.client.get_item_metadata(drive_id, item_id=self.id)
             contents = refreshed.get("children", [])
-            self.raw.update(refreshed)
+            self._api_payload.update(refreshed)
 
-        next_rel_path = "" if self._scope_root else self.path
         return [
             SharepointItem.from_api_response(
-                child_raw, client=self.client, current_rel_path=next_rel_path, scope_root=False
+                child_payload, client=self.client, current_rel_path=self.path
             )
-            for child_raw in contents
+            for child_payload in contents
         ]
 
     def refresh(self, *, include_children: bool = True) -> "SharepointItem":
-        """Re-fetch raw metadata (and optionally children) from the Graph API."""
-        drive_id = self.raw.get("parentReference", {}).get("driveId")
+        """Re-fetch the API payload (and optionally children) from Graph."""
+        drive_id = self._api_payload.get("parentReference", {}).get("driveId")
         if not drive_id:
             raise ValueError(
                 f"Missing driveId in SharePoint "
                 f"{'folder' if self.is_directory else 'item'} metadata"
             )
         refreshed = self.client.get_item_metadata(drive_id, item_id=self.id)
-        if self.is_directory and not include_children and "children" in self.raw:
-            refreshed["children"] = self.raw["children"]
-        self.raw = refreshed
+        if self.is_directory and not include_children and "children" in self._api_payload:
+            refreshed["children"] = self._api_payload["children"]
+        self._api_payload = refreshed
         self._name = refreshed.get("name")
         self._id = refreshed.get("id")
         self._source_url = refreshed.get("webUrl")
@@ -704,7 +705,7 @@ class SharepointItem(ServiceItem):
             if self.is_directory:
                  raise NotImplementedError("Cannot export a directory")
             
-            drive_id = self.raw.get("parentReference", {}).get("driveId")
+            drive_id = self._api_payload.get("parentReference", {}).get("driveId")
             if drive_id:
                 url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{self.id}/content?format=pdf"
                 
@@ -745,11 +746,11 @@ class SharepointItem(ServiceItem):
             target = target / self.name
 
         target.parent.mkdir(parents=True, exist_ok=True)
-        drive_id = self.raw.get("parentReference", {}).get("driveId")
+        drive_id = self._api_payload.get("parentReference", {}).get("driveId")
         if not drive_id:
             raise ValueError("Missing driveId in Sharepoint item metadata")
 
-        url = self.raw.get(
+        url = self._api_payload.get(
             "@microsoft.graph.downloadUrl",
             f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{self.id}/content",
         )

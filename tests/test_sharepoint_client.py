@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from sharedrive.auth.microsoft import MicrosoftAuth
-from sharedrive.clients.sharepoint import SharepointClient
+from sharedrive.clients.sharepoint import SharepointClient, SharepointItem
 from sharedrive.exceptions import GraphApiDriveError
 
 
@@ -132,3 +132,56 @@ def test_update_content_treats_graph_404_as_missing_file(
         "https://graph.microsoft.com/v1.0/drives/drive-1/root:/Shared Documents/report.csv:/content"
     )
     assert captured["body"] == b"report"
+
+
+def test_sharepoint_item_iter_files_paths_are_relative_to_weburl_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = SharepointClient(access_token="token")
+    root_metadata = {
+        "id": "root",
+        "name": "Approvals",
+        "folder": {},
+        "webUrl": "https://contoso.sharepoint.com/sites/Test/Shared Documents/Approvals",
+        "parentReference": {"id": "parent", "driveId": "drive-1"},
+        "children": [
+            {
+                "id": "folder-1",
+                "name": "01-proposal-process",
+                "folder": {},
+                "parentReference": {"id": "root", "driveId": "drive-1"},
+                "children": [
+                    {
+                        "id": "file-1",
+                        "name": "approval.docx",
+                        "file": {},
+                        "webUrl": (
+                            "https://contoso.sharepoint.com/sites/Test/"
+                            "Shared Documents/Approvals/01-proposal-process/"
+                            "approval.docx"
+                        ),
+                        "parentReference": {
+                            "id": "folder-1",
+                            "driveId": "drive-1",
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+    monkeypatch.setattr(client, "get_site_id", lambda _site_name: "site-1")
+    monkeypatch.setattr(client, "get_drive_id", lambda *_args, **_kwargs: "drive-1")
+    monkeypatch.setattr(
+        client, "get_item_metadata", lambda *_args, **_kwargs: root_metadata
+    )
+
+    root = SharepointItem.from_weburl(
+        "https://contoso.sharepoint.com/sites/Test/Shared Documents/Approvals",
+        client,
+    )
+    files = list(root.iter_files())
+
+    assert root.path == ""
+    assert len(files) == 1
+    assert files[0].path == "01-proposal-process/approval.docx"
