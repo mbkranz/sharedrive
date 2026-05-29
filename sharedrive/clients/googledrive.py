@@ -790,12 +790,3 @@ class GDriveItem(ServiceItem):
         else:
             with open(target, "w", encoding="utf-8") as f:
                 f.write(content)
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatible aliases
-# ---------------------------------------------------------------------------
-# Old code that imports or subclasses ``GDriveFile`` / ``GDriveFolder`` will
-# continue to work because these names now point to the unified ``GDriveItem``.
-GDriveFile = GDriveItem
-GDriveFolder = GDriveItem

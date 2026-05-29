@@ -283,38 +283,6 @@ Auto-generated from source signatures and docstrings.
   - `def download(self, target_dir: str | Path) -> None`
     - Download this item.
 
-#### `GDriveFile`
-- A Google Drive file or folder item backed by the Drive REST API.
-- Methods:
-  - `def id(self) -> str`
-  - `def name(self) -> str`
-  - `def path(self) -> str`
-  - `def service_type(self) -> str`
-  - `def source_url(self) -> str`
-  - `def is_directory(self) -> bool`
-  - `def children(self) -> list['GDriveItem']`
-    - Direct children of this directory; empty list for files.
-  - `def refresh(self, *, include_children: bool = True) -> 'GDriveItem'`
-    - Re-fetch raw metadata (and optionally children) from the API.
-  - `def download(self, target_dir: str | Path) -> None`
-    - Download this item.
-
-#### `GDriveFolder`
-- A Google Drive file or folder item backed by the Drive REST API.
-- Methods:
-  - `def id(self) -> str`
-  - `def name(self) -> str`
-  - `def path(self) -> str`
-  - `def service_type(self) -> str`
-  - `def source_url(self) -> str`
-  - `def is_directory(self) -> bool`
-  - `def children(self) -> list['GDriveItem']`
-    - Direct children of this directory; empty list for files.
-  - `def refresh(self, *, include_children: bool = True) -> 'GDriveItem'`
-    - Re-fetch raw metadata (and optionally children) from the API.
-  - `def download(self, target_dir: str | Path) -> None`
-    - Download this item.
-
 
 ## `sharedrive.auth.google`
 
