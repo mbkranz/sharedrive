@@ -8,10 +8,8 @@ from typing import Any, Optional
 import typer
 from dotenv import load_dotenv
 
-from sharedrive.helpers import get_checked_out_entity
 from sharedrive.helpers import resolve_descriptor_path as resolve_descriptor_path_helper
 from sharedrive.models import (
-    DriveCatalog,
     normalize_entity_type,
     normalize_service_type,
 )
@@ -144,32 +142,7 @@ def parse_set_args(args: list[str]) -> dict[str, Any]:
     return parsed
 
 
-def normalize_update_property(property_name: str, *, resource_target: bool) -> str:
-    normalized = property_name.strip()
-    if not normalized:
-        raise typer.BadParameter("Property name must be a non-empty string.")
 
-    normalized = {
-        "service-type": "serviceType",
-        "entity-type": "entityType",
-        "drive-service": "driveService",
-        "cache": "_cache",
-        "access-url": "accessURL",
-    }.get(normalized, normalized)
-
-    if not resource_target:
-        return normalized
-
-    aliases = {"source": "path", "driveService": "serviceType"}
-    return aliases.get(normalized, normalized)
-
-
-def normalize_update_value(property_path: str, value: Any) -> Any:
-    if property_path == "serviceType" and isinstance(value, str):
-        return normalize_service_type(value)
-    if property_path == "entityType" and isinstance(value, str):
-        return normalize_entity_type(value)
-    return value
 
 
 def exit_if_descriptor_missing(descriptor_path: Path) -> None:
@@ -188,8 +161,6 @@ __all__ = [
     "examples_epilog",
     "exit_if_descriptor_missing",
     "load_env_file",
-    "normalize_update_property",
-    "normalize_update_value",
     "parse_set_args",
     "prepare_descriptor_path",
     "run_microsoft_login",

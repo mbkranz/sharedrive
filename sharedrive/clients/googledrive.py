@@ -1,9 +1,9 @@
 from __future__ import annotations
 from functools import cached_property
 import json
+from pathlib import Path
 import re
 from enum import Enum
-from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar, Dict, Literal, Optional, Union
 
 import requests
