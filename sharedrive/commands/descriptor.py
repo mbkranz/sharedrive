@@ -12,8 +12,6 @@ from sharedrive.commands.toolkit import (
     OutputFormat,
     echo_json,
     examples_epilog,
-    normalize_update_property,
-    normalize_update_value,
     parse_set_args,
     prepare_descriptor_path,
 )
@@ -28,31 +26,21 @@ from sharedrive.models import (
 )
 
 
+
 def _add_resource_to_descriptor(
     descriptor: Path | str,
     *,
     name: str,
-    path: str | None = None,
-    cache: str | None = None,
-    source: str | None = None,
-    access_url: str | None = None,
-    title: str | None = None,
-    description: str | None = None,
-    service_type: str | None = None,
-    entity_type: str | None = None,
+    create_if_missing: bool = False,
     catalog: bool = False,
     package: bool = False,
-    profile: str | None = None,
-    create_if_missing: bool = False,
+    **kwargs: Any,
 ) -> dict[str, Any]:
-    def non_empty(value: str, field_name: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError(f"{field_name} must be a non-empty string")
-        return normalized
-
     descriptor_path = Path(descriptor)
-    entity_name = non_empty(name, "name")
+    entity_name = name.strip()
+    if not entity_name:
+        raise ValueError("name must be a non-empty string")
+
     if descriptor_path.exists():
         document = DriveCatalog.from_path(str(descriptor_path))
     elif create_if_missing:
@@ -68,89 +56,55 @@ def _add_resource_to_descriptor(
     ):
         raise ValueError(f"Entity '{entity_name}' already exists in the descriptor")
 
-    if source is not None and path is not None and cache is None and not catalog:
-        cache = path
-        path = source
-    if source is not None and access_url is None and catalog:
-        access_url = source
-    if package:
-        raise ValueError(
-            "Remote folders are now catalogs. Use catalog=True/--catalog instead of package=True/--package."
-        )
+    # Map legacy aliases
+    if "source" in kwargs:
+        url = kwargs.pop("source")
+        if catalog:
+            kwargs.setdefault("accessURL", url)
+        else:
+            kwargs.setdefault("path", url)
+            kwargs.setdefault("cache", url)
+    if "access_url" in kwargs:
+        kwargs.setdefault("accessURL", kwargs.pop("access_url"))
+        
+    url = kwargs.get("accessURL") if catalog else kwargs.get("path")
+    if not url:
+        raise ValueError("A source URL must be provided via --path, --accessURL, or --source")
+
+    resolved_service_type = resolve_service_type(url, service_type=kwargs.get("serviceType"))
+    
+    kwargs["entityType"] = resolve_entity_type(
+        url,
+        service_type=resolved_service_type,
+        entity_type=kwargs.get("entityType"),
+    )
+
+    kwargs["serviceType"] = resolved_service_type
+    kwargs["name"] = entity_name
 
     if catalog:
-        folder_url = non_empty(access_url or path or "", "accessURL")
-        resolved_service_type = resolve_service_type(
-            folder_url, service_type=service_type
-        )
-        resolved_entity_type = resolve_entity_type(
-            folder_url,
-            service_type=resolved_service_type,
-            entity_type=entity_type or "Directory",
-        )
-        if resolved_entity_type not in {"Directory", "Container"}:
-            raise ValueError(
-                "Catalog entries must use entityType Directory or Container."
-            )
-
-        payload: dict[str, Any] = {
-            "name": entity_name,
-            "accessURL": folder_url,
-            "serviceType": resolved_service_type,
-            "entityType": resolved_entity_type,
-            "resources": [],
-            "catalogs": [],
-        }
-        if title:
-            payload["title"] = title.strip()
-        if description:
-            payload["description"] = description.strip()
-        if profile:
-            payload["profile"] = profile.strip()
-
-        entry = DriveCatalog.model_validate(payload)
+        if kwargs["entityType"] not in {"Directory", "Container"}:
+            raise ValueError("Catalog entries must use entityType Directory or Container.")
+        entry = DriveCatalog.model_validate(kwargs)
         document.catalogs.append(entry)
-        descriptor_path.parent.mkdir(parents=True, exist_ok=True)
-        document.to_path(str(descriptor_path))
-        return entry.to_dict()
+    else:
+        if kwargs["entityType"] != "File":
+            raise ValueError("Non-file drive entries should be added as catalogs with accessURL.")
+        
+        # Backward compatibility translation of cache mapped correctly in BaseModel
+        if "_cache" not in kwargs and "cache" in kwargs:
+            kwargs["_cache"] = kwargs.pop("cache")
+            
+        entry = DriveRemoteResource.model_validate(kwargs)
+        document.resources.append(entry)
 
-    resource_path = non_empty(path or "", "path")
-    resource_cache = non_empty(cache or "", "cache")
-    resolved_service_type = resolve_service_type(
-        resource_path, service_type=service_type
-    )
-    resolved_entity_type = resolve_entity_type(
-        resource_path,
-        service_type=resolved_service_type,
-        entity_type=entity_type or "File",
-    )
-    if resolved_entity_type != "File":
-        raise ValueError(
-            "Non-file drive entries should be added as catalogs with accessURL."
-        )
-
-    payload: dict[str, Any] = {
-        "name": entity_name,
-        "path": resource_path,
-        "_cache": resource_cache,
-        "serviceType": resolved_service_type,
-        "entityType": resolved_entity_type,
-    }
-    if title:
-        payload["title"] = title.strip()
-    if description:
-        payload["description"] = description.strip()
-    if profile:
-        payload["profile"] = profile.strip()
-
-    entry = DriveRemoteResource.model_validate(payload)
-    document.resources.append(entry)
     descriptor_path.parent.mkdir(parents=True, exist_ok=True)
     document.to_path(str(descriptor_path))
     return entry.to_dict()
 
 
 def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> None:
+
     @clone_app.command(
         "descriptor",
         epilog=examples_epilog(
@@ -240,10 +194,8 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
 
         changed_properties: list[str] = []
         for property_name, raw_value in parsed.items():
-            property_path = normalize_update_property(
-                property_name, resource_target=name is not None
-            )
-            value = normalize_update_value(property_path, raw_value)
+            property_path = property_name # exact match
+            value = raw_value
             try:
                 changed = DriveCatalog.set_property_value(target, property_path, value)
             except ValueError as exc:
@@ -374,57 +326,22 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
 
         Console().print(root)
 
+    
     @app.command(
         "add",
+        context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
         epilog=examples_epilog(
             "sharedrive add my-resource --path https://drive.google.com/file/d/123... --cache downloads/file.csv",
-            "sharedrive add my-folder --catalog --access-url https://drive.google.com/drive/folders/abc...",
+            "sharedrive add my-folder --catalog --accessURL https://drive.google.com/drive/folders/abc...",
         ),
     )
     def add(
+        ctx: typer.Context,
         name: str = typer.Argument(
             ..., help="Resource name to store in the descriptor."
         ),
-        path: Optional[str] = typer.Option(
-            None, "--path", help="Canonical resource path, usually a remote file URL."
-        ),
-        cache: Optional[str] = typer.Option(
-            None, "--cache", help="Local materialized path stored as _cache."
-        ),
-        access_url: Optional[str] = typer.Option(
-            None, "--access-url", help="Remote folder/container accessURL for catalogs."
-        ),
-        source: Optional[str] = typer.Option(
-            None,
-            "--source",
-            help="Deprecated alias for --path on file resources or --access-url on catalogs.",
-        ),
-        title: Optional[str] = typer.Option(
-            None, "--title", help="Optional resource title."
-        ),
-        description: Optional[str] = typer.Option(
-            None, "--description", help="Optional resource description."
-        ),
-        service_type: Optional[str] = typer.Option(
-            None,
-            "--service-type",
-            help="Source serviceType. If omitted, infer from source.",
-        ),
-        entity_type: Optional[str] = typer.Option(
-            None,
-            "--entity-type",
-            help="Source entityType such as File, Directory, or Container.",
-        ),
-        package: bool = typer.Option(
-            False,
-            "--package",
-            help="Deprecated; remote folders are catalogs. Use --catalog.",
-        ),
         catalog: bool = typer.Option(
             False, "--catalog", help="Treat as a catalog with accessURL."
-        ),
-        profile: Optional[str] = typer.Option(
-            None, "--profile", help="Optional metadata profile for the resource."
         ),
         descriptor: Optional[Path] = typer.Option(
             None, "--descriptor", help=DESCRIPTOR_DEFAULT_HELP
@@ -437,22 +354,15 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
         )
         explicit_descriptor = descriptor is not None or has_saved_global_descriptor()
 
+        parsed = parse_set_args(list(ctx.args))
+        
         try:
             resource = _add_resource_to_descriptor(
                 descriptor=descriptor_path,
                 name=name,
-                path=path,
-                cache=cache,
-                source=source,
-                access_url=access_url or (source if catalog else None),
-                title=title,
-                description=description,
-                service_type=service_type,
-                entity_type=entity_type,
-                package=package,
                 catalog=catalog,
-                profile=profile,
                 create_if_missing=not explicit_descriptor,
+                **parsed
             )
         except (
             FileNotFoundError,
@@ -463,13 +373,5 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
         ) as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1) from exc
-
-        location = resource.get("accessURL") or resource.get("path")
-        typer.echo(
-            f"Added {'catalog' if catalog else 'resource'} '{resource['name']}' to {descriptor_path} "
-            f"at {location} with serviceType '{resource.get('serviceType')}', "
-            f"entityType '{resource.get('entityType')}'."
-        )
-
 
 __all__ = ["register_descriptor_commands"]
