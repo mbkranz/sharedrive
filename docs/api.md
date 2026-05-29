@@ -194,7 +194,7 @@ Auto-generated from source signatures and docstrings.
   - `def adapter_names(self, selector: str | Iterable[str] | None = None) -> list[str]`
   - `def check_auth(self, selector: str | Iterable[str] | None = None, *, adapters: Iterable[str] | None = None) -> list[AuthCheckResult]`
   - `def fetch(self, selector: str | None = None, *, dry_run: bool = False, depth: int = -1, log: LogFn | None = print, persist: bool | Path | str = False) -> list[FetchSummary]`
-  - `def download(self, selector: str | Iterable[str] | None = None, *, output_dir: Path | str = Path('resources'), dry_run: bool = False, check_auth: bool = False, log: LogFn | None = print, use_cloudpathlib: bool = True) -> DownloadSummary`
+  - `def download(self, selector: str | Iterable[str] | None = None, *, output_dir: Path | str = Path('resources'), dry_run: bool = False, check_auth: bool = False, log: LogFn | None = print) -> DownloadSummary`
 
 
 ## `sharedrive.clients.aws`
@@ -203,10 +203,7 @@ Auto-generated from source signatures and docstrings.
 
 - `def check_s3_credentials() -> None`
   - Validate that AWS credentials are available for S3 operations.
-- `def download_s3_url(source_url: str, output_path: Path, *, dry_run: bool = False, use_cloudpathlib: bool = True) -> Path | None`
-  - Backward-compatible helper for downloading an S3 object URL to a local path.
-- `def parse_s3_source_url(source_url: str, *, allow_empty_key: bool = False) -> tuple[str, str]`
-  - Parse an S3 URL into bucket/key.
+- S3 URL parsing is internal to `S3Client.get_from_weburl(...)`.
 
 ### Classes
 
@@ -215,7 +212,6 @@ Auto-generated from source signatures and docstrings.
   - `def build_default(cls) -> 'S3Client'`
   - `def check_auth(cls) -> None`
   - `def get_from_weburl(self, url: str) -> 'S3Item'`
-  - `def download_from_weburl(self, source_url: str, output_path: Path, *, dry_run: bool = False, use_cloudpathlib: bool = True) -> Path | None`
 
 #### `S3Item`
 - Methods:

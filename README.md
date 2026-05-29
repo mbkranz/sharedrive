@@ -16,7 +16,7 @@ Experimental connectors and workflows for moving files across SharePoint, Google
 - `sharedrive/models.py`: descriptor and metadata models for persisted catalog/package/resource state (`DriveCatalog`)
 - `sharedrive/auth/microsoft.py`: SharePoint access-token strategies
 - `sharedrive/auth/settings.py`: Google and SharePoint auth settings/factories
-- `sharedrive/clients/aws.py`: S3 URL parsing/download helpers (cloudpathlib + boto3 fallback)
+- `sharedrive/clients/aws.py`: boto3-backed S3 client and runtime item adapter
 - `sharedrive/cli.py`: Typer CLI (`sharedrive`)
 - `sharedrive/commands/`: Core command implementations (`auth`, `config`, `descriptor`, `toolkit`)
 

@@ -7,11 +7,6 @@ from urllib.parse import urlparse
 import boto3
 from botocore.exceptions import ClientError
 
-try:
-    from cloudpathlib import S3Path
-except ImportError:  # pragma: no cover
-    S3Path = None
-
 from sharedrive.clients.base import AdapterCapabilities, BaseClient
 from sharedrive.item import ServiceItem
 from sharedrive.registry import provider
@@ -31,7 +26,7 @@ def check_s3_credentials() -> None:
         raise RuntimeError("AWS credentials are incomplete for S3 operations.")
 
 
-def parse_s3_source_url(
+def _parse_s3_source_url(
     source_url: str, *, allow_empty_key: bool = False
 ) -> tuple[str, str]:
     """Parse an S3 URL into bucket/key.
@@ -68,22 +63,6 @@ def parse_s3_source_url(
     return bucket, key
 
 
-def download_s3_url(
-    source_url: str,
-    output_path: Path,
-    *,
-    dry_run: bool = False,
-    use_cloudpathlib: bool = True,
-) -> Path | None:
-    """Backward-compatible helper for downloading an S3 object URL to a local path."""
-    return S3Client().download_from_weburl(
-        source_url,
-        output_path,
-        dry_run=dry_run,
-        use_cloudpathlib=use_cloudpathlib,
-    )
-
-
 @provider("s3")
 class S3Client(BaseClient):
     auth_methods = ["aws_credentials"]
@@ -107,9 +86,9 @@ class S3Client(BaseClient):
         check_s3_credentials()
 
     def get_from_weburl(self, url: str) -> "S3Item":
-        bucket, key = parse_s3_source_url(url, allow_empty_key=True)
-        if not key:
-            return S3Item(client=self, bucket=bucket, key="", is_directory=True)
+        bucket, key = _parse_s3_source_url(url, allow_empty_key=True)
+        if not key or key.endswith("/"):
+            return S3Item(client=self, bucket=bucket, key=key, is_directory=True)
 
         try:
             self.client.head_object(Bucket=bucket, Key=key)
@@ -124,29 +103,10 @@ class S3Client(BaseClient):
                     MaxKeys=1,
                 )
                 if response.get("KeyCount", 0) > 0:
-                    return S3Item(client=self, bucket=bucket, key=prefix, is_directory=True)
+                    return S3Item(
+                        client=self, bucket=bucket, key=prefix, is_directory=True
+                    )
             raise
-
-    def download_from_weburl(
-        self,
-        source_url: str,
-        output_path: Path,
-        *,
-        dry_run: bool = False,
-        use_cloudpathlib: bool = True,
-    ) -> Path | None:
-        if dry_run:
-            print(f"Would download {source_url} to {output_path}")
-            return None
-
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        if use_cloudpathlib and S3Path is not None:
-            S3Path(source_url).download_to(str(output_path))
-            return output_path
-
-        bucket, key = parse_s3_source_url(source_url)
-        self.client.download_file(bucket, key, str(output_path))
-        return output_path
 
 
 class S3Item(ServiceItem):
@@ -257,6 +217,4 @@ __all__ = [
     "S3Client",
     "S3Item",
     "check_s3_credentials",
-    "download_s3_url",
-    "parse_s3_source_url",
 ]
