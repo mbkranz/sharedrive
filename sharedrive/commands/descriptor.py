@@ -21,7 +21,7 @@ from sharedrive.exceptions import GoogleApiError, GraphApiError
 from sharedrive.helpers import has_saved_global_descriptor, set_active_descriptor
 from sharedrive.models import (
     DriveCatalog,
-    DriveResource,
+    DriveRemoteResource,
     adapter_from_service_type,
     resolve_entity_type,
     resolve_service_type,
@@ -56,7 +56,7 @@ def _add_resource_to_descriptor(
     if descriptor_path.exists():
         document = DriveCatalog.from_path(str(descriptor_path))
     elif create_if_missing:
-        document = DriveCatalog.init()
+        document = DriveCatalog()
     else:
         raise FileNotFoundError(f"Descriptor '{descriptor_path}' does not exist.")
 
@@ -143,7 +143,7 @@ def _add_resource_to_descriptor(
     if profile:
         payload["profile"] = profile.strip()
 
-    entry = DriveResource.model_validate(payload)
+    entry = DriveRemoteResource.model_validate(payload)
     document.resources.append(entry)
     descriptor_path.parent.mkdir(parents=True, exist_ok=True)
     document.to_path(str(descriptor_path))

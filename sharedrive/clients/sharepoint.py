@@ -306,6 +306,10 @@ class SharepointClient(BaseClient):
 
         return metadata
 
+    def get_from_weburl(self, url: str) -> "SharepointItem":
+        from sharedrive.clients.sharepoint import SharepointItem
+        return SharepointItem.from_weburl(url, self)
+
     def resolve_weburl(self, url: str) -> dict[str, str]:
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
