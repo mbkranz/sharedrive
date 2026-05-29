@@ -20,7 +20,6 @@ from sharedrive.helpers import has_saved_global_descriptor, set_active_descripto
 from sharedrive.models import (
     DriveCatalog,
     DriveRemoteResource,
-    adapter_from_service_type,
     resolve_entity_type,
     resolve_service_type,
 )
@@ -272,26 +271,10 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1) from exc
 
-        def entity_dict(reference) -> dict[str, Any]:
-            item = reference.model
-            service_type = getattr(item, "serviceType", None)
-            return {
-                "name": reference.name_path.split(".")[-1],
-                "path": reference.name_path,
-                "jsonPointer": reference.json_pointer,
-                "type": reference.entity_type,
-                "resourcePath": getattr(item, "path", None),
-                "_cache": getattr(item, "cache", None),
-                "accessURL": getattr(item, "accessURL", None),
-                "adapter": adapter_from_service_type(service_type),
-                "serviceType": service_type,
-                "entityType": getattr(item, "entityType", None),
-            }
-
         if output_format == OutputFormat.JSON:
             echo_json({
                 "descriptor": descriptor_path.as_posix(),
-                "entities": [entity_dict(reference) for reference in references],
+                "entities": [reference.model.__dict__ for reference in references],
             })
             return
 
@@ -301,26 +284,32 @@ def register_descriptor_commands(app: typer.Typer, clone_app: typer.Typer) -> No
         root = Tree(descriptor_path.name)
         nodes: dict[str, Any] = {}
         for reference in references:
-            entity = entity_dict(reference)
-            parent_path = entity["path"].rpartition(".")[0]
+            item = reference.model
+            name = getattr(item, "name", None) or reference.name_path.split(".")[-1]
+            parent_path = reference.name_path.rpartition(".")[0]
             parent_node = nodes.get(parent_path, root) if parent_path else root
             label = (
-                f"{entity['name']} ({entity['type']}) "
-                f"[dim]{entity['path']} {entity['jsonPointer']}[/dim]"
+                f"{name} ({reference.entity_type}) "
+                f"[dim]{reference.name_path} {reference.json_pointer}[/dim]"
             )
             node = parent_node.add(label)
-            nodes[entity["path"]] = node
+            nodes[reference.name_path] = node
             details = []
-            if entity["resourcePath"]:
-                details.append(f"path={entity['resourcePath']}")
-            if entity["_cache"]:
-                details.append(f"_cache={entity['_cache']}")
-            if entity["accessURL"]:
-                details.append(f"accessURL={entity['accessURL']}")
-            if entity["serviceType"]:
-                details.append(f"serviceType={entity['serviceType']}")
-            if entity["entityType"]:
-                details.append(f"entityType={entity['entityType']}")
+            resource_path = getattr(item, "path", None)
+            cache = getattr(item, "cache", None)
+            access_url = getattr(item, "accessURL", None)
+            service_type = getattr(item, "serviceType", None)
+            entity_type = getattr(item, "entityType", None)
+            if resource_path:
+                details.append(f"path={resource_path}")
+            if cache:
+                details.append(f"_cache={cache}")
+            if access_url:
+                details.append(f"accessURL={access_url}")
+            if service_type:
+                details.append(f"serviceType={service_type}")
+            if entity_type:
+                details.append(f"entityType={entity_type}")
             if details:
                 node.add("[dim]" + ", ".join(details) + "[/dim]")
 
