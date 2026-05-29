@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from typing import TYPE_CHECKING, Callable, TypeVar
 
 if TYPE_CHECKING:
@@ -92,9 +93,10 @@ def ensure_builtin_providers() -> None:
     global _builtins_loaded
     if _builtins_loaded:
         return
-    import sharedrive.clients.aws  # noqa: F401
-    import sharedrive.clients.googledrive  # noqa: F401
-    import sharedrive.clients.sharepoint  # noqa: F401
+    else:
+        importlib.import_module("sharedrive.clients.aws")  # noqa: F401
+        importlib.import_module("sharedrive.clients.googledrive")  # noqa: F401
+        importlib.import_module("sharedrive.clients.sharepoint")  # noqa: F401
 
     _builtins_loaded = True
 

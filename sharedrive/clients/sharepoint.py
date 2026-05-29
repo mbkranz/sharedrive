@@ -11,7 +11,7 @@ import requests
 
 from sharedrive.clients.base import AdapterCapabilities, BaseClient
 from sharedrive.exceptions import GraphApiDriveError, GraphApiSiteError
-from sharedrive.item import DriveItem
+from sharedrive.item import ServiceItem
 from sharedrive.registry import provider
 
 if TYPE_CHECKING:
@@ -371,7 +371,7 @@ class SharepointClient(BaseClient):
             )
         return response.content
 
-    def get_from_weburl(self, url: str) -> DriveItem:
+    def get_from_weburl(self, url: str) -> ServiceItem:
         resolved = self.resolve_weburl(url)
         metadata = self.get_item_metadata(
             resolved["drive_id"], item_path=resolved["item_path"]
@@ -561,7 +561,7 @@ class SharepointClient(BaseClient):
 __all__ = ["SharepointClient", "SharepointItem", "SharepointFile", "SharepointFolder"]
 
 
-class SharepointItem(DriveItem):
+class SharepointItem(ServiceItem):
     """A SharePoint file or folder item backed by the Graph API.
 
     Whether an instance represents a file or a directory is determined at

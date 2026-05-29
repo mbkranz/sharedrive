@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
-    from sharedrive.item import DriveItem
+    from sharedrive.item import ServiceItem
 
 
 @dataclass(frozen=True)
@@ -28,7 +28,7 @@ class BaseClient(ABC):
 
     - ``build_default`` to construct a client from environment/settings.
     - ``check_auth`` to validate credentials without performing a transfer.
-    - ``get_from_weburl`` to resolve a remote locator into a runtime DriveItem.
+    - ``get_from_weburl`` to resolve a remote locator into a runtime ServiceItem.
     """
 
     auth_methods: ClassVar[list[str]] = []
@@ -45,7 +45,7 @@ class BaseClient(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_from_weburl(self, url: str) -> DriveItem:
+    def get_from_weburl(self, url: str) -> ServiceItem:
         raise NotImplementedError
 
 

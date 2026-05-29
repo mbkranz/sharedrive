@@ -114,7 +114,7 @@ Auto-generated from source signatures and docstrings.
 - Methods:
   - `def is_directory(self) -> bool`
 
-#### `DriveItem`
+#### `ServiceItem`
 - Abstract base for a single item (file or directory) on a remote drive.
 - Methods:
   - `def id(self) -> str`
@@ -123,13 +123,13 @@ Auto-generated from source signatures and docstrings.
   - `def service_type(self) -> str`
   - `def source_url(self) -> str`
   - `def is_directory(self) -> bool`
-  - `def refresh(self, *, include_children: bool = True) -> 'DriveItem'`
+  - `def refresh(self, *, include_children: bool = True) -> 'ServiceItem'`
     - Refresh this runtime item from its backing service.
-  - `def children(self) -> list['DriveItem']`
+  - `def children(self) -> list['ServiceItem']`
     - Direct child items for directories; always empty for files.
-  - `def iter_files(self) -> Iterable['DriveItem']`
+  - `def iter_files(self) -> Iterable['ServiceItem']`
     - Recursively yield all leaf (non-directory) items.
-  - `def refresh_tree(self) -> 'DriveItem'`
+  - `def refresh_tree(self) -> 'ServiceItem'`
     - Recursively refresh this item and all of its descendants.
   - `def download(self, target: Path | str) -> None`
     - Download this item to *target*.
@@ -265,7 +265,7 @@ Auto-generated from source signatures and docstrings.
   - `def create_file(self, parent_folder_id: str, file_in_bytes: Optional[bytes] = None, mime_type: Optional[str] = None, name: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None, supports_all_drives: bool = True, **kwargs) -> Dict[str, Any]`
   - `def update_file(self, file_id: str, file_in_bytes_or_path: Optional[Union[str, bytes]] = None, mime_type: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]`
   - `def create_folder(self, parent_folder_id: str, name: str) -> Dict[str, Any]`
-  - `def get_from_weburl(self, web_url: str, fields: str = '*') -> DriveItem`
+  - `def get_from_weburl(self, web_url: str, fields: str = '*') -> ServiceItem`
     - Return metadata for a Google Drive file or folder given a web URL,
   - `def download_from_weburl(self, web_url: str, **kwargs) -> Union[bytes, str]`
   - `def export_from_weburl(self, web_url: str, mime_type: Optional[str] = None, **kwargs) -> Union[bytes, str]`
@@ -433,7 +433,7 @@ Auto-generated from source signatures and docstrings.
   - `def resolve_weburl(self, url: str) -> dict[str, str]`
   - `def download_content(self, drive_id = None, item_id = None, download_url = None)`
     - takes in the components needed to download content --
-  - `def get_from_weburl(self, url: str) -> DriveItem`
+  - `def get_from_weburl(self, url: str) -> ServiceItem`
   - `def download(self, metadata, path)`
   - `def get_file(self, site_name, file_path, metadata_only = False)`
     - gets file item metadata and file

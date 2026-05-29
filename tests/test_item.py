@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from sharedrive.item import DriveItem
-from sharedrive.models import DriveCatalog, DriveResource
+from sharedrive.item import ServiceItem
+from sharedrive.models import DriveRemoteCatalog, DriveRemoteResource
 
 
-class _Item(DriveItem):
+class _Item(ServiceItem):
     def __init__(
         self,
         *,
@@ -18,7 +18,7 @@ class _Item(DriveItem):
         source_url: str,
         service_type: str = "GoogleDrive",
         is_directory: bool = False,
-        children: list[DriveItem] | None = None,
+        children: list[ServiceItem] | None = None,
     ) -> None:
         self._id = id
         self._name = name
@@ -55,10 +55,10 @@ class _Item(DriveItem):
         return self._is_directory
 
     @property
-    def children(self) -> list[DriveItem]:
+    def children(self) -> list[ServiceItem]:
         return self._children
 
-    def refresh(self, *, include_children: bool = True) -> DriveItem:
+    def refresh(self, *, include_children: bool = True) -> ServiceItem:
         self.refresh_calls.append(include_children)
         return self
 
@@ -79,9 +79,9 @@ def test_file_to_catalog_uses_remote_path_and_local_cache() -> None:
 
     resource = item.to_catalog()
 
-    assert isinstance(resource, DriveResource)
+    assert isinstance(resource, DriveRemoteResource)
     assert resource.name == "reports/Report.CSV"
-    assert resource.path == "https://drive.google.com/file/d/file-1"
+    assert str(resource.path) == "https://drive.google.com/file/d/file-1"
     assert resource.cache == "reports/Report.CSV"
     assert resource.serviceId == "file-1"
     assert resource.serviceType == "GoogleDrive"
@@ -100,7 +100,7 @@ def test_file_to_catalog_leaves_format_empty_without_extension() -> None:
 
     resource = item.to_catalog()
 
-    assert isinstance(resource, DriveResource)
+    assert isinstance(resource, DriveRemoteResource)
     assert resource.format is None
 
 
@@ -140,9 +140,9 @@ def test_directory_to_catalog_preserves_child_resources_and_catalogs() -> None:
 
     catalog = root.to_catalog()
 
-    assert isinstance(catalog, DriveCatalog)
+    assert isinstance(catalog, DriveRemoteCatalog)
     assert catalog.name == ""
-    assert catalog.accessURL == "s3://example-bucket"
+    assert str(catalog.accessUrl) == "s3://example-bucket"
     assert catalog.serviceId == "root-folder"
     assert catalog.serviceType == "S3"
     assert catalog.entityType == "Directory"
@@ -179,7 +179,7 @@ def test_directory_download_writes_leaf_files_relative_to_target(
 def test_file_download_default_requires_subclass_override(tmp_path: Path) -> None:
     class _UndownloadableFile(_Item):
         def download(self, target: Path | str) -> None:
-            DriveItem.download(self, target)
+            ServiceItem.download(self, target)
 
     item = _UndownloadableFile(
         id="file-1",

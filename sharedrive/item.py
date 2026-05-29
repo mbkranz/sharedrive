@@ -7,7 +7,7 @@ from typing import Iterable
 from sharedrive.models import DriveRemoteCatalog,DriveRemoteResource
 
 
-class DriveItem(ABC):
+class ServiceItem(ABC):
     """Abstract base for a single item (file or directory) on a remote drive.
 
     All file-vs-directory behaviour is dispatched on :attr:`is_directory`.
@@ -15,12 +15,12 @@ class DriveItem(ABC):
     (``refresh``, ``download``) while shared traversal logic lives here.
 
     Design note: this single ABC replaces the previous three-level hierarchy
-    ``DriveItem → DriveFile/DriveFolder → G/SharepointFile/Folder``.  The
+    ``ServiceItem → DriveFile/DriveFolder → G/SharepointFile/Folder``.  The
     old ``DriveFile`` and ``DriveFolder`` sub-ABCs are retained below as thin
     backward-compatible shells so that existing subclasses continue to work
     without modification.
 
-    TODO: decide how to use DriveItem vs just using DriveSource <--> client methods
+    TODO: decide how to use ServiceItem vs just using DriveSource <--> client methods
     """
 
     @property
@@ -54,7 +54,7 @@ class DriveItem(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def refresh(self, *, include_children: bool = True) -> "DriveItem":
+    def refresh(self, *, include_children: bool = True) -> "ServiceItem":
         """Refresh this runtime item from its backing service."""
         raise NotImplementedError
 
@@ -63,7 +63,7 @@ class DriveItem(ABC):
     # ------------------------------------------------------------------
 
     @property
-    def children(self) -> list["DriveItem"]:
+    def children(self) -> list["ServiceItem"]:
         """Direct child items for directories; always empty for files.
 
         Concrete directory subclasses override this to return populated
@@ -72,7 +72,7 @@ class DriveItem(ABC):
         """
         return []
 
-    def iter_files(self) -> Iterable["DriveItem"]:
+    def iter_files(self) -> Iterable["ServiceItem"]:
         """Recursively yield all leaf (non-directory) items.
 
         For a file item, yields ``self``.  For a directory, recurses into
@@ -84,7 +84,7 @@ class DriveItem(ABC):
         for child in self.children:
             yield from child.iter_files()
 
-    def refresh_tree(self) -> "DriveItem":
+    def refresh_tree(self) -> "ServiceItem":
         """Recursively refresh this item and all of its descendants."""
         self.refresh(include_children=True)
         if self.is_directory:
@@ -151,7 +151,7 @@ class DriveItem(ABC):
             catalogs=catalogs,
         )
 
-class DriveFile(DriveItem):
+class DriveFile(ServiceItem):
     """Backward-compatible file item base class."""
 
     @property
@@ -159,7 +159,7 @@ class DriveFile(DriveItem):
         return False
 
 
-class DriveFolder(DriveItem):
+class DriveFolder(ServiceItem):
     """Backward-compatible folder item base class."""
 
     @property
@@ -167,4 +167,4 @@ class DriveFolder(DriveItem):
         return True
 
 
-__all__ = ["DriveFile", "DriveFolder", "DriveItem"]
+__all__ = ["DriveFile", "DriveFolder", "ServiceItem"]

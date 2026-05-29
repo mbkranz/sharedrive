@@ -13,7 +13,7 @@ except ImportError:  # pragma: no cover
     S3Path = None
 
 from sharedrive.clients.base import AdapterCapabilities, BaseClient
-from sharedrive.item import DriveItem
+from sharedrive.item import ServiceItem
 from sharedrive.registry import provider
 
 
@@ -149,7 +149,7 @@ class S3Client(BaseClient):
         return output_path
 
 
-class S3Item(DriveItem):
+class S3Item(ServiceItem):
     def __init__(
         self,
         *,
