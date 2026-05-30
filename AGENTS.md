@@ -46,6 +46,10 @@ Goal is to create a quick and efficient system like git and uv both for quick de
 - Adhere to the [Zen of python](https://peps.python.org/pep-0020/) even if refactoring and reorganization is needed but ensure breaking changes in the cli function commands are noted.
 - Always check and analyze the current codebase and the associated API documentation (for example, see Sharepoint and Google URLs in "Fast Context") for services when thinking about answers in terms of better solution 
 - Don't be afraid to highlight any concerns with assumptions made in prompts.
+- **Type Strictness**: Prefer explicit strict typings (e.g., precise property definitions and `typing.cast`) over deep nested Pydantic validation when simple internal structural typing suffices and performance/clarity is prioritized.
+- **Enforcing Interfaces**: Strictly uphold `abstractmethod` signatures across all foundational components (e.g., `BaseClient` and `ServiceItem`). Constantly ensure any mock or dummy classes within the test suite (like `_Item`) are fully updated with stub implementations to prevent abstract instantation failures.
+- **Safe Patching (For Agents and Scripts)**: When automatically refactoring Python files—especially Pydantic models—avoid destructive `sed` or naive line-counting patches. Rely on precise string replacements and validate immediately via `uv run pytest` to catch collection or `ImportError` regressions early.
+
 ## When updating adapters
 
 - Give warnings and ask for approval before breaking backward compatibility.
