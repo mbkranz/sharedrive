@@ -169,6 +169,7 @@ def adapter_from_locator(locator: str) -> str:
     return adapter_from_service_type(infer_service_type(locator)) or ""
 
 
+ServiceId = str
 ServiceTypeValue = Annotated[str, BeforeValidator(normalize_service_type)]
 EntityTypeValue = Annotated[str, BeforeValidator(normalize_entity_type)]
 LocalCachePath = Annotated[str,Field(alias="_cache",validation_alias=AliasChoices("_cache", "cache"))]
@@ -183,6 +184,12 @@ def resolve_cache_path(cache: str|None, basepath: str|None):
     
     return resolved_cache
 # ---------------------------------------------------------------------
+class GDriveApiFile(pydantic.BaseModel):
+    id: Optional[str] = None
+    name: Optional[str] = None
+    mimeType: Optional[str] = None
+    parents: Optional[list[str]] = None
+    webViewLink: Optional[str] = None
 # Resource / package models
 # ---------------------------------------------------------------------
 

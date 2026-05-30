@@ -54,6 +54,13 @@ class SharepointClient(BaseClient):
         supports_write=False,
     )
 
+    
+    def update_file(self, id: str, metadata: dict, **kwargs):
+        raise NotImplementedError()
+
+    def create_file(self, folder_id: str, name: str, mime_type: str, **kwargs):
+        raise NotImplementedError()
+        
     def __init__(
         self,
         auth: "MicrosoftAuth | None" = None,
@@ -513,6 +520,10 @@ class SharepointItem(ServiceItem):
     here; backward-compatible aliases are kept at module level.
     """
 
+    
+    def move(self, new_parent_id: str):
+        raise NotImplementedError()
+        
     def __init__(
         self,
         client: "SharepointClient",

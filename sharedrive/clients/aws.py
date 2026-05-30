@@ -73,6 +73,13 @@ class S3Client(BaseClient):
         supports_write=False,
     )
 
+    
+    def update_file(self, id: str, metadata: dict, **kwargs):
+        raise NotImplementedError()
+
+    def create_file(self, folder_id: str, name: str, mime_type: str, **kwargs):
+        raise NotImplementedError()
+        
     def __init__(self, *, client: Any = None) -> None:
         self.client = client or boto3.client("s3")
 
@@ -110,6 +117,10 @@ class S3Client(BaseClient):
 
 
 class S3Item(ServiceItem):
+    
+    def move(self, new_parent_id: str):
+        raise NotImplementedError()
+        
     def __init__(
         self,
         *,

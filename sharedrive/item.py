@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Iterable
 
-from sharedrive.models import DriveRemoteCatalog,DriveRemoteResource
+from sharedrive.models import DriveRemoteCatalog,DriveRemoteResource,ServiceId,ServiceTypeValue
 
 
 class ServiceItem(ABC):
@@ -22,10 +22,10 @@ class ServiceItem(ABC):
 
     TODO: decide how to use ServiceItem vs just using DriveSource <--> client methods
     """
-
+    
     @property
     @abstractmethod
-    def id(self) -> str:
+    def id(self) -> ServiceId:
         raise NotImplementedError
 
     @property
@@ -40,7 +40,7 @@ class ServiceItem(ABC):
 
     @property
     @abstractmethod
-    def service_type(self) -> str:
+    def service_type(self) -> ServiceTypeValue:
         raise NotImplementedError
 
     @property
@@ -63,6 +63,7 @@ class ServiceItem(ABC):
     # ------------------------------------------------------------------
 
     @property
+    @abstractmethod
     def children(self) -> list["ServiceItem"]:
         """Direct child items for directories; always empty for files.
 
@@ -70,7 +71,14 @@ class ServiceItem(ABC):
         children.  The default returns an empty list so that file items
         never need to override it.
         """
-        return []
+        raise NotImplementedError
+
+
+    @abstractmethod
+    def move(self, new_parent_id: str) -> "ServiceItem":
+        """Move this item to a new parent folder, returning the updated item."""
+        raise NotImplementedError
+
 
     def iter_files(self) -> Iterable["ServiceItem"]:
         """Recursively yield all leaf (non-directory) items.
