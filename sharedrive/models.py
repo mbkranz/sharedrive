@@ -374,6 +374,7 @@ class DriveCatalogReference(DriveReference):
 
        
 class DriveCatalog(Model):
+
     """A registry, library, or folder containing independent data entities."""
 
     profile: str = pydantic.Field(default=CATALOG_PROFILE, alias="$schema")
@@ -427,7 +428,8 @@ class DriveCatalog(Model):
     # ------------------------------------------------------------------
     # Loading / traversal
     # ------------------------------------------------------------------
-
+    def assert_valid_entity_paths(self):
+        pass
 
     def _walk(
         self,
