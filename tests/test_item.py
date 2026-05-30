@@ -9,6 +9,8 @@ from sharedrive.models import DriveRemoteCatalog, DriveRemoteResource
 
 
 class _Item(ServiceItem):
+    def move(self, weburl: str):
+        return
     def __init__(
         self,
         *,
@@ -178,6 +180,8 @@ def test_directory_download_writes_leaf_files_relative_to_target(
 
 def test_file_download_default_requires_subclass_override(tmp_path: Path) -> None:
     class _UndownloadableFile(_Item):
+        def move(self, weburl: str):
+            return
         def download(self, target: Path | str) -> None:
             ServiceItem.download(self, target)
 

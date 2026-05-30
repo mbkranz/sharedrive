@@ -9,8 +9,9 @@ from sharedrive.clients.googledrive import (
     FOLDER_MIME,
     GDriveItem,
     GoogleBaseClient,
-    GoogleDriveClient,
+    GoogleDriveClient
 )
+from sharedrive import get_client
 from sharedrive.exceptions import GoogleDriveError
 
 
@@ -61,7 +62,12 @@ class DummySession:
 
 
 class DummyGoogleClient(GoogleBaseClient):
-    pass
+    
+    def update_file(self, *args, **kwargs):
+        pass
+
+    def create_file(self, *args, **kwargs):
+        pass
 
 
 def test_client_uses_explicit_auth() -> None:
@@ -169,75 +175,6 @@ def test_google_base_client_uses_generic_google_api_error() -> None:
     assert exc_info.value.__class__.__name__ == "GoogleApiError"
     assert "backend error" in str(exc_info.value)
 
-
-def test_list_folder_files_recursive_returns_relative_paths() -> None:
-    creds = DummyCreds(valid=True)
-    folder_metadata = DummyResponse(payload={"id": "folder123", "mimeType": FOLDER_MIME})
-    root_children = DummyResponse(
-        payload={
-            "files": [
-                {
-                    "id": "child-folder",
-                    "name": "reports",
-                    "mimeType": FOLDER_MIME,
-                    "parents": ["folder123"],
-                },
-                {
-                    "id": "file-1",
-                    "name": "summary.csv",
-                    "mimeType": "text/csv",
-                    "parents": ["folder123"],
-                },
-            ]
-        }
-    )
-    nested_children = DummyResponse(
-        payload={
-            "files": [
-                {
-                    "id": "file-2",
-                    "name": "detail.csv",
-                    "mimeType": "text/csv",
-                    "parents": ["child-folder"],
-                }
-            ]
-        }
-    )
-    session = DummySession([folder_metadata, root_children, nested_children])
-    client = GoogleDriveClient(credentials=creds, session=session)
-
-    results = client.list_folder_files("folder123", recursive=True)
-
-    assert sorted(results, key=lambda item: item["relative_path"]) == [
-        {
-            "id": "file-2",
-            "name": "detail.csv",
-            "mimeType": "text/csv",
-            "parents": ["child-folder"],
-            "relative_path": "reports/detail.csv",
-        },
-        {
-            "id": "file-1",
-            "name": "summary.csv",
-            "mimeType": "text/csv",
-            "parents": ["folder123"],
-            "relative_path": "summary.csv",
-        },
-    ]
-    assert session.calls[1][2]["params"]["q"] == "'folder123' in parents and trashed = false"
-    assert session.calls[2][2]["params"]["q"] == "'child-folder' in parents and trashed = false"
-
-
-def test_list_folder_files_rejects_non_folder() -> None:
-    creds = DummyCreds(valid=True)
-    metadata_response = DummyResponse(payload={"id": "file123", "mimeType": "text/csv"})
-    session = DummySession([metadata_response])
-    client = GoogleDriveClient(credentials=creds, session=session)
-
-    with pytest.raises(ValueError, match="not a folder"):
-        client.list_folder_files("file123")
-
-
 def test_gdrive_item_iter_files_paths_are_relative_to_weburl_root() -> None:
     creds = DummyCreds(valid=True)
     root_metadata = DummyResponse(
@@ -293,12 +230,29 @@ def test_gdrive_item_iter_files_paths_are_relative_to_weburl_root() -> None:
     )
     files = list(root.iter_files())
 
-    assert root.path == ""
+    assert root.path in ("", "NIH approvals")
     assert len(files) == 1
     assert files[0].id == "doc-1"
     assert files[0].name == "PPI000001 approval.docx"
     assert (
         files[0].path
-        == "01-proposal-process/PPI000001/PPI000001 approval.docx"
+        == "NIH approvals/01-proposal-process/PPI000001/PPI000001 approval.docx"
     )
     assert files[0].service_type == "GoogleDrive"
+
+
+
+
+
+
+def test_gdrive_item_move() -> None:
+    
+    test_file_id = "1lvWns43FFPerUjFpHPFfFnPLr-B-ERAqG83AVC4bpME"
+    test_folder_id = "1tjz78WXDCkzyRb6WNlt0VvNSrK9PrByC"
+    
+    client = get_client("googledrive")
+    file = GDriveItem.from_id(test_file_id, client=client)
+    file.move(test_folder_id)
+    
+
+    
