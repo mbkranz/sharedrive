@@ -120,6 +120,14 @@ class S3Client(BaseClient):
 
 
 class S3Item(ServiceItem):
+    @classmethod
+    def _resolve_client(cls, client: S3Client | None) -> S3Client:
+        if client is not None:
+            return client
+        from sharedrive.registry import get_client
+
+        return cast(S3Client, get_client("s3"))
+
     
     def move(self, new_parent_id: str):
         raise NotImplementedError()
@@ -134,12 +142,10 @@ class S3Item(ServiceItem):
         key: str = "",
         client: S3Client | None = None,
     ) -> "S3Item":
-        if client is None:
-            from sharedrive.registry import get_client
-
-            client = cast(S3Client, get_client("s3"))
+        client = cls._resolve_client(client)
+        trailing_slash = key.endswith("/")
         normalized_key = key.strip("/")
-        if key.endswith("/") and normalized_key:
+        if trailing_slash and normalized_key:
             normalized_key = f"{normalized_key}/"
         return client.get_from_path(bucket=bucket, key=normalized_key)
         

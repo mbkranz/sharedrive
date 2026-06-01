@@ -535,6 +535,16 @@ class SharepointItem(ServiceItem):
     """
 
     
+    @classmethod
+    def _resolve_client(
+        cls, client: "SharepointClient | None" = None
+    ) -> "SharepointClient":
+        if client is not None:
+            return client
+        from sharedrive.registry import get_client
+
+        return cast(SharepointClient, get_client("sharepoint"))
+
     def move(self, new_parent_id: str):
         raise NotImplementedError()
 
@@ -573,10 +583,7 @@ class SharepointItem(ServiceItem):
     def from_weburl(
         cls, url: str, client: "SharepointClient | None" = None
     ) -> "SharepointItem":
-        if client is None:
-            from sharedrive.registry import get_client
-
-            client = cast(SharepointClient, get_client("sharepoint"))
+        client = cls._resolve_client(client)
         resolved = client.resolve_weburl(url)
         metadata = client.get_item_metadata(
             resolved["drive_id"], item_path=resolved["item_path"]
@@ -602,15 +609,10 @@ class SharepointItem(ServiceItem):
         *,
         library_name: str | None = None,
     ) -> "SharepointItem":
-        if client is None:
-            from sharedrive.registry import get_client
+        client = cls._resolve_client(client)
 
-            client = cast(SharepointClient, get_client("sharepoint"))
-
-        normalized_library = (
-            str(library_name).strip().strip("/") if library_name is not None else None
-        )
-        normalized_path = str(item_path).strip()
+        normalized_library = library_name.strip().strip("/") if library_name else None
+        normalized_path = item_path.strip()
         if normalized_path in {"", "/"}:
             relative_item_path = "/"
         else:

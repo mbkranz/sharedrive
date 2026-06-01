@@ -546,8 +546,15 @@ class GoogleDriveClient(GoogleBaseClient):
         return value.replace("\\", "\\\\").replace("'", "\\'")
 
     @staticmethod
+    def _normalize_drive_name(drive_name: str) -> str:
+        normalized = drive_name.strip()
+        if not normalized:
+            raise ValueError("Google Drive name must not be empty.")
+        return normalized
+
+    @staticmethod
     def _normalize_relative_path(relative_path: str) -> tuple[list[str], bool]:
-        normalized = str(relative_path).strip()
+        normalized = relative_path.strip()
         expects_directory = normalized.endswith("/")
         stripped = normalized.strip("/")
         if not stripped:
@@ -555,6 +562,7 @@ class GoogleDriveClient(GoogleBaseClient):
         return [segment for segment in stripped.split("/") if segment], expects_directory
 
     def _get_root_metadata(self, *, drive_name: str) -> GDriveApiFile:
+        drive_name = self._normalize_drive_name(drive_name)
         if drive_name == "My Drive":
             return self.get_file("root")
 
@@ -724,23 +732,25 @@ class GDriveItem(ServiceItem):
         self._children = []
 
     @classmethod
+    def _resolve_client(cls, client: GoogleDriveClient | None) -> GoogleDriveClient:
+        if client is not None:
+            return client
+        from sharedrive.registry import get_client
+
+        return cast(GoogleDriveClient, get_client("googledrive"))
+
+    @classmethod
     def from_weburl(
         cls, url: str, client: GoogleDriveClient | None = None
     ) -> "GDriveItem":
-        if client is None:
-            from sharedrive.registry import get_client
-
-            client = cast(GoogleDriveClient, get_client("googledrive"))
+        client = cls._resolve_client(client)
         return client.get_from_weburl(url)
 
     @classmethod
     def from_id(
         cls, file_id: str, client: GoogleDriveClient | None = None
     ) -> "GDriveItem":
-        if client is None:
-            from sharedrive.registry import get_client
-
-            client = cast(GoogleDriveClient, get_client("googledrive"))
+        client = cls._resolve_client(client)
         metadata = client.get_file(file_id)
         return cls.from_api_response(api_metadata=metadata, client=client)
 
@@ -751,10 +761,7 @@ class GDriveItem(ServiceItem):
         relative_path: str = "",
         client: GoogleDriveClient | None = None,
     ) -> "GDriveItem":
-        if client is None:
-            from sharedrive.registry import get_client
-
-            client = cast(GoogleDriveClient, get_client("googledrive"))
+        client = cls._resolve_client(client)
         return client.get_from_path(drive_name=drive_name, relative_path=relative_path)
     
     @classmethod
