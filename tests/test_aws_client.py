@@ -113,6 +113,45 @@ def test_get_from_weburl_resolves_prefix_after_missing_object() -> None:
     ]
 
 
+def test_s3_item_from_path_resolves_object_key() -> None:
+    fake_s3 = FakeS3Client(
+        head_objects={("example-bucket", "path/file.csv"): {"ContentLength": 3}}
+    )
+    client = S3Client(client=fake_s3)
+
+    item = S3Item.from_path("example-bucket", "path/file.csv", client=client)
+
+    assert item.bucket == "example-bucket"
+    assert item.path == "path/file.csv"
+    assert not item.is_directory
+
+
+def test_s3_item_from_path_resolves_bucket_root() -> None:
+    fake_s3 = FakeS3Client()
+    client = S3Client(client=fake_s3)
+
+    item = S3Item.from_path("example-bucket", client=client)
+
+    assert item.bucket == "example-bucket"
+    assert item.path == ""
+    assert item.is_directory
+
+
+def test_s3_item_from_path_uses_registry_client_when_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_s3 = FakeS3Client(
+        head_objects={("example-bucket", "path/file.csv"): {"ContentLength": 3}}
+    )
+    client = S3Client(client=fake_s3)
+
+    monkeypatch.setattr("sharedrive.registry.get_client", lambda _name: client)
+
+    item = S3Item.from_path("example-bucket", "path/file.csv")
+
+    assert item.path == "path/file.csv"
+
+
 def test_get_from_weburl_propagates_missing_object_and_prefix() -> None:
     missing = client_error()
     fake_s3 = FakeS3Client(

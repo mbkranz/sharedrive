@@ -9,8 +9,23 @@ from sharedrive.models import DriveRemoteCatalog, DriveRemoteResource
 
 
 class _Item(ServiceItem):
+    @classmethod
+    def from_path(cls, path: str, **kwargs) -> ServiceItem:
+        return cls(
+            id=kwargs.get("id", path or "root"),
+            name=kwargs.get("name", Path(path).name or "root"),
+            path=path,
+            source_url=kwargs.get("source_url", f"mock://{path}"),
+            service_type=kwargs.get("service_type", "Mock"),
+            is_directory=kwargs.get("is_directory", False),
+            children=kwargs.get("children"),
+        )
+
     def move(self, weburl: str):
         return
+
+    def add_comment(self, body: str) -> "_Item":
+        return self
     def __init__(
         self,
         *,
@@ -89,6 +104,14 @@ def test_file_to_catalog_uses_remote_path_and_local_cache() -> None:
     assert resource.serviceType == "GoogleDrive"
     assert resource.entityType == "File"
     assert resource.format == "csv"
+
+
+def test_service_item_from_path_contract_returns_runtime_item() -> None:
+    item = _Item.from_path("reports/Report.CSV", source_url="mock://reports/Report.CSV")
+
+    assert isinstance(item, ServiceItem)
+    assert item.path == "reports/Report.CSV"
+    assert item.name == "Report.CSV"
 
 
 def test_file_to_catalog_leaves_format_empty_without_extension() -> None:

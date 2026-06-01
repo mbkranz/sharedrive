@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import mimetypes
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 from urllib.parse import unquote, urlparse
 
 
@@ -317,6 +317,20 @@ class SharepointClient(BaseClient):
         from sharedrive.clients.sharepoint import SharepointItem
         return SharepointItem.from_weburl(url, self)
 
+    def get_from_path(
+        self,
+        *,
+        site_name: str,
+        item_path: str = "/",
+        library_name: str | None = None,
+    ) -> "SharepointItem":
+        return SharepointItem.from_path(
+            site_name=site_name,
+            item_path=item_path,
+            client=self,
+            library_name=library_name,
+        )
+
     def resolve_weburl(self, url: str) -> dict[str, str]:
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
@@ -521,6 +535,16 @@ class SharepointItem(ServiceItem):
     """
 
     
+    @classmethod
+    def _resolve_client(
+        cls, client: "SharepointClient | None" = None
+    ) -> "SharepointClient":
+        if client is not None:
+            return client
+        from sharedrive.registry import get_client
+
+        return cast(SharepointClient, get_client("sharepoint"))
+
     def move(self, new_parent_id: str):
         raise NotImplementedError()
 
@@ -556,7 +580,10 @@ class SharepointItem(ServiceItem):
     _resolved_path_root_id: str | None = None
 
     @classmethod
-    def from_weburl(cls, url: str, client: "SharepointClient") -> "SharepointItem":
+    def from_weburl(
+        cls, url: str, client: "SharepointClient | None" = None
+    ) -> "SharepointItem":
+        client = cls._resolve_client(client)
         resolved = client.resolve_weburl(url)
         metadata = client.get_item_metadata(
             resolved["drive_id"], item_path=resolved["item_path"]
@@ -567,6 +594,51 @@ class SharepointItem(ServiceItem):
             id=metadata.get("id"),
             name=metadata.get("name"),
             path="",
+            source_url=metadata.get("webUrl"),
+            parent_id=metadata.get("parentReference", {}).get("id"),
+            service_id=metadata.get("id"),
+            is_folder="folder" in metadata,
+        )
+
+    @classmethod
+    def from_path(
+        cls,
+        site_name: str,
+        item_path: str = "/",
+        client: "SharepointClient | None" = None,
+        *,
+        library_name: str | None = None,
+    ) -> "SharepointItem":
+        client = cls._resolve_client(client)
+
+        normalized_library = None
+        if library_name is not None:
+            normalized_library = library_name.strip(" /") or None
+        normalized_path = item_path.strip()
+        if normalized_path in {"", "/"}:
+            relative_item_path = "/"
+        else:
+            parts = [part for part in normalized_path.strip("/").split("/") if part]
+            if normalized_library is None:
+                if not parts:
+                    relative_item_path = "/"
+                else:
+                    normalized_library = parts[0]
+                    parts = parts[1:]
+                    relative_item_path = f"/{'/'.join(parts)}" if parts else "/"
+            else:
+                relative_item_path = f"/{'/'.join(parts)}" if parts else "/"
+
+        site_id = client.get_site_id(site_name)
+        drive_id = client.get_drive_id(site_id, drive_name=normalized_library)
+        metadata = client.get_item_metadata(drive_id, item_path=relative_item_path)
+        resolved_path = "" if relative_item_path == "/" else relative_item_path.strip("/")
+        return cls(
+            client=client,
+            api_payload=metadata,
+            id=metadata.get("id"),
+            name=metadata.get("name"),
+            path=resolved_path,
             source_url=metadata.get("webUrl"),
             parent_id=metadata.get("parentReference", {}).get("id"),
             service_id=metadata.get("id"),

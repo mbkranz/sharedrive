@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import boto3
@@ -94,6 +94,9 @@ class S3Client(BaseClient):
 
     def get_from_weburl(self, url: str) -> "S3Item":
         bucket, key = _parse_s3_source_url(url, allow_empty_key=True)
+        return self.get_from_path(bucket=bucket, key=key)
+
+    def get_from_path(self, *, bucket: str, key: str = "") -> "S3Item":
         if not key or key.endswith("/"):
             return S3Item(client=self, bucket=bucket, key=key, is_directory=True)
 
@@ -117,12 +120,34 @@ class S3Client(BaseClient):
 
 
 class S3Item(ServiceItem):
+    @classmethod
+    def _resolve_client(cls, client: S3Client | None) -> S3Client:
+        if client is not None:
+            return client
+        from sharedrive.registry import get_client
+
+        return cast(S3Client, get_client("s3"))
+
     
     def move(self, new_parent_id: str):
         raise NotImplementedError()
 
     def add_comment(self, body: str) -> "ServiceItem":
         raise NotImplementedError()
+
+    @classmethod
+    def from_path(
+        cls,
+        bucket: str,
+        key: str = "",
+        client: S3Client | None = None,
+    ) -> "S3Item":
+        client = cls._resolve_client(client)
+        trailing_slash = key.endswith("/")
+        normalized_key = key.strip("/")
+        if trailing_slash and normalized_key:
+            normalized_key = f"{normalized_key}/"
+        return client.get_from_path(bucket=bucket, key=normalized_key)
         
     def __init__(
         self,
