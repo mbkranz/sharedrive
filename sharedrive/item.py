@@ -6,8 +6,7 @@ from typing import Any, Iterable, TypeVar, overload
 
 from sharedrive.models import DriveRemoteCatalog,DriveRemoteResource,ServiceId,ServiceTypeValue
 
-_PATH_MISSING = object()
-_TDefault = TypeVar("_TDefault")
+DefaultT = TypeVar("DefaultT")
 
 
 class ServiceItem(ABC):
@@ -111,16 +110,16 @@ class ServiceItem(ABC):
         raise NotImplementedError
 
     @overload
-    def get_path(self, relative_path: str | Path) -> "ServiceItem": ...
+    def get_path(self, relative_path: str | Path) -> "ServiceItem | None": ...
 
     @overload
     def get_path(
-        self, relative_path: str | Path, default: _TDefault
-    ) -> "ServiceItem | _TDefault": ...
+        self, relative_path: str | Path, default: DefaultT
+    ) -> "ServiceItem | DefaultT": ...
 
     def get_path(
-        self, relative_path: str | Path, default: _TDefault | object = _PATH_MISSING
-    ) -> "ServiceItem | _TDefault":
+        self, relative_path: str | Path, default: DefaultT | None = None
+    ) -> "ServiceItem | DefaultT | None":
         """Resolve a descendant item by traversing child names in *relative_path*.
 
         The input path is normalized to POSIX-style segments (``\\`` → ``/``) and
@@ -136,10 +135,6 @@ class ServiceItem(ABC):
         for part in parts:
             next_item = next((child for child in current.children if child.name == part), None)
             if next_item is None:
-                if default is _PATH_MISSING:
-                    raise FileNotFoundError(
-                        f'Path segment "{part}" not found while resolving "{relative_path}"'
-                    )
                 return default
             current = next_item
         return current
