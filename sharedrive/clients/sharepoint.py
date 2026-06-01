@@ -611,9 +611,9 @@ class SharepointItem(ServiceItem):
     ) -> "SharepointItem":
         client = cls._resolve_client(client)
 
-        normalized_library = (
-            library_name.strip(" /") if library_name is not None else None
-        )
+        normalized_library = None
+        if library_name is not None:
+            normalized_library = library_name.strip(" /") or None
         normalized_path = item_path.strip()
         if normalized_path in {"", "/"}:
             relative_item_path = "/"
