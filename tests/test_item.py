@@ -24,7 +24,7 @@ class _Item(ServiceItem):
     def move(self, weburl: str):
         return
 
-    def add_comment(self, body: str) -> ServiceItem:
+    def add_comment(self, body: str) -> "_Item":
         return self
     def __init__(
         self,

@@ -624,14 +624,13 @@ class GoogleDriveClient(GoogleBaseClient):
                 f"Google Drive path '{relative_path}' did not resolve to a directory."
             )
 
-        basepath = None if not segments else "/".join(segments[:-1])
+        basepath = "" if not segments else "/".join(segments[:-1])
         item = GDriveItem.from_api_response(
             api_metadata=current,
             client=self,
             basepath=basepath,
         )
         if not segments:
-            item._basepath = ""
             item._path = ""
         return item
 
