@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from pathlib import Path, PurePosixPath
-from typing import Any, Iterable, TypeVar, overload
+from pathlib import Path
+from typing import Any, Iterator, TypeVar, overload
 
 from sharedrive.models import DriveRemoteCatalog,DriveRemoteResource,ServiceId,ServiceTypeValue
 
@@ -139,69 +139,33 @@ class ServiceItem(ABC):
             current = next_item
         return current
 
-    def glob(self, pattern: str | Path) -> Iterable["ServiceItem"]:
-        """Yield descendant items matching a pathlib-style glob *pattern*."""
-        normalized_pattern = str(pattern).replace("\\", "/")
-        if normalized_pattern == ".":
-            yield self
-            return
-        normalized_pattern = "/".join(
-            part for part in normalized_pattern.split("/") if part and part != "."
-        )
-        if not normalized_pattern:
-            return
-        flat_pattern = "/" not in normalized_pattern and "**" not in normalized_pattern
-        pattern_parts = normalized_pattern.split("/")
+    def iter_files(
+        self,
+        prefix: str | Path | None = None,
+        recursive: bool = True,
+    ) -> Iterator["ServiceItem"]:
+        """Yield file descendants under *prefix* or all files if *prefix* is empty."""
 
-        def _expand_glob_parts(parts: list[str]) -> set[str]:
-            if not parts:
-                # Empty sentinel allows parent calls to join without introducing
-                # extra separators while expanding optional `**` segments.
-                return {""}
-            head, *tail = parts
-            suffixes = _expand_glob_parts(tail)
-            if head != "**":
-                return {
-                    "/".join(part for part in [head, suffix] if part) for suffix in suffixes
-                }
-            expanded = {suffix for suffix in suffixes}
-            expanded.update(
-                "/".join(part for part in [head, suffix] if part) for suffix in suffixes
-            )
-            return expanded
-
-        match_patterns = {pattern for pattern in _expand_glob_parts(pattern_parts) if pattern}
-
-        def _walk(item: ServiceItem, prefix: str = "") -> Iterable[tuple[ServiceItem, str]]:
-            for child in item.children:
-                relative_path = f"{prefix}/{child.name}" if prefix else child.name
-                yield child, relative_path
-                if child.is_directory:
-                    yield from _walk(child, relative_path)
-
-        walk_iterable: Iterable[tuple[ServiceItem, str]]
-        if flat_pattern:
-            walk_iterable = ((child, child.name) for child in self.children)
+        if prefix is None:
+            start = self
         else:
-            walk_iterable = _walk(self)
+            start = self.get_path(prefix)
+            if start is None:
+                raise ValueError(f"Prefix {prefix} not found under {self.path}.")
 
-        for item, relative_path in walk_iterable:
-            path_obj = PurePosixPath(relative_path)
-            if any(path_obj.match(pattern) for pattern in match_patterns):
-                yield item
+        if not start.is_directory:
+            
+            raise ValueError(f"{start.path} is not a directory, cannot iterate files under it.")
 
+        def walk(item: ServiceItem) -> Iterator["ServiceItem"]:
+            for child in item.children:
+                if child.is_directory:
+                    if recursive:
+                        yield from walk(child)
+                else:
+                    yield child
 
-    def iter_files(self) -> Iterable["ServiceItem"]:
-        """Recursively yield all leaf (non-directory) items.
-
-        For a file item, yields ``self``.  For a directory, recurses into
-        :attr:`children`.
-        """
-        if not self.is_directory:
-            yield self
-            return
-        for child in self.children:
-            yield from child.iter_files()
+        yield from walk(start)
 
     def refresh_tree(self) -> "ServiceItem":
         """Recursively refresh this item and all of its descendants."""
