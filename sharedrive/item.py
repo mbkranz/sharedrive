@@ -79,6 +79,11 @@ class ServiceItem(ABC):
         """Move this item to a new parent folder, returning the updated item."""
         raise NotImplementedError
 
+    @abstractmethod
+    def add_comment(self, body: str) -> "ServiceItem":
+        """Post a comment on this item."""
+        raise NotImplementedError
+
 
     def iter_files(self) -> Iterable["ServiceItem"]:
         """Recursively yield all leaf (non-directory) items.

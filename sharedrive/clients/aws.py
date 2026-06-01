@@ -120,6 +120,9 @@ class S3Item(ServiceItem):
     
     def move(self, new_parent_id: str):
         raise NotImplementedError()
+
+    def add_comment(self, body: str) -> "ServiceItem":
+        raise NotImplementedError()
         
     def __init__(
         self,

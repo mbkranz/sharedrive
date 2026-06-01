@@ -423,6 +423,7 @@ class GoogleDriveClient(GoogleBaseClient):
     def update_file(
         self,
         id: str,
+        params: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         file_in_bytes_or_path: Optional[Union[str, bytes]] = None,
         mime_type: Optional[str] = None,
@@ -469,6 +470,10 @@ class GoogleDriveClient(GoogleBaseClient):
                 "data": media,
                 "params": {"supportsAllDrives": True, "uploadType": "media"},
             }
+        
+        def params_default():
+            headers = {**self._hdrs}
+            return {"headers": headers, "params": {"supportsAllDrives": True}}
 
         file_in_bytes: bytes | None = None
         if isinstance(file_in_bytes_or_path, str):
@@ -486,11 +491,13 @@ class GoogleDriveClient(GoogleBaseClient):
         elif file_in_bytes is None and metadata:
             request_params = params_metadata_only(metadata)
         else:
-            raise ValueError("Must provide either file_in_bytes or metadata (or both)")
+            request_params = params_default()
 
         if request_params.get("params",{}).get("fields") is None:
             request_params["params"]["fields"] = ",".join(self.file_fields)
-            
+        
+        if params:
+            request_params["params"].update(params)
         response = self._request(
             "PATCH", f"{UPLOAD_URL}/{id}", **request_params
         )
@@ -796,11 +803,29 @@ class GDriveItem(ServiceItem):
         """Move this item to a new parent directory."""
         
         # Update the parent reference in the API
+        params = {"addParents": new_parent_id}
+        
+        if self._parent_id:
+            params["removeParents"] = self._parent_id
+
         self.client.update_file(
             id=self.id,
-            metadata={"addParents": [new_parent_id],"removeParents": [self._parent_id] if self._parent_id else []},
+            params=params,
         )
         # Update local state
         self._parent = None
         self._parent_id = new_parent_id
+        return self
+
+    def add_comment(self, body: str) -> "ServiceItem":
+        """Post a comment on this file via the Drive v3 comments API."""
+        url = f"{DRIVE_URL}/files/{self.id}/comments"
+        headers = {**self.client._hdrs, "Content-Type": "application/json"}
+        self.client._request(
+            "POST",
+            url,
+            headers=headers,
+            params={"fields": "id"},
+            json={"content": body},
+        )
         return self
