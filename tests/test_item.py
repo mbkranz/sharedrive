@@ -217,3 +217,57 @@ def test_file_download_default_requires_subclass_override(tmp_path: Path) -> Non
 
     with pytest.raises(NotImplementedError, match="File download is not implemented"):
         item.download(tmp_path)
+
+
+def test_get_path_returns_descendant_item() -> None:
+    target = _Item(
+        id="file-1",
+        name="report.csv",
+        path="reports/report.csv",
+        source_url="mock://reports/report.csv",
+    )
+    reports = _Item(
+        id="folder-1",
+        name="reports",
+        path="reports",
+        source_url="mock://reports",
+        is_directory=True,
+        children=[target],
+    )
+    root = _Item(
+        id="root",
+        name="root",
+        path="",
+        source_url="mock://",
+        is_directory=True,
+        children=[reports],
+    )
+
+    assert root.get_path("reports/report.csv") is target
+
+
+def test_get_path_raises_when_segment_missing() -> None:
+    root = _Item(
+        id="root",
+        name="root",
+        path="",
+        source_url="mock://",
+        is_directory=True,
+        children=[],
+    )
+
+    with pytest.raises(FileNotFoundError, match="missing"):
+        root.get_path("missing")
+
+
+def test_get_path_returns_default_when_missing() -> None:
+    root = _Item(
+        id="root",
+        name="root",
+        path="",
+        source_url="mock://",
+        is_directory=True,
+        children=[],
+    )
+
+    assert root.get_path("missing", default=None) is None

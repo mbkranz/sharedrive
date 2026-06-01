@@ -6,6 +6,8 @@ from typing import Any, Iterable
 
 from sharedrive.models import DriveRemoteCatalog,DriveRemoteResource,ServiceId,ServiceTypeValue
 
+_PATH_MISSING = object()
+
 
 class ServiceItem(ABC):
     """Abstract base for a single item (file or directory) on a remote drive.
@@ -106,6 +108,25 @@ class ServiceItem(ABC):
     def add_comment(self, body: str) -> "ServiceItem":
         """Post a comment on this item."""
         raise NotImplementedError
+
+    def get_path(self, relative_path: str | Path, default: Any = _PATH_MISSING) -> Any:
+        """Resolve a descendant item by traversing child names in *relative_path*."""
+        parts = [
+            part
+            for part in str(relative_path).replace("\\", "/").split("/")
+            if part and part != "."
+        ]
+        current: ServiceItem = self
+        for part in parts:
+            next_item = next((child for child in current.children if child.name == part), None)
+            if next_item is None:
+                if default is _PATH_MISSING:
+                    raise FileNotFoundError(
+                        f'Path segment "{part}" not found while resolving "{relative_path}"'
+                    )
+                return default
+            current = next_item
+        return current
 
 
     def iter_files(self) -> Iterable["ServiceItem"]:
