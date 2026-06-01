@@ -241,6 +241,138 @@ def test_gdrive_item_iter_files_paths_are_relative_to_weburl_root() -> None:
     assert files[0].service_type == "GoogleDrive"
 
 
+def test_gdrive_item_from_path_resolves_my_drive_path_hierarchically() -> None:
+    creds = DummyCreds(valid=True)
+    session = DummySession(
+        [
+            DummyResponse(payload={"id": "root", "name": "My Drive", "mimeType": FOLDER_MIME}),
+            DummyResponse(
+                payload={
+                    "files": [
+                        {
+                            "id": "folder-1",
+                            "name": "reports",
+                            "mimeType": FOLDER_MIME,
+                            "parents": ["root"],
+                        }
+                    ]
+                }
+            ),
+            DummyResponse(
+                payload={
+                    "files": [
+                        {
+                            "id": "file-1",
+                            "name": "summary.csv",
+                            "mimeType": "text/csv",
+                            "parents": ["folder-1"],
+                            "webViewLink": "https://drive.google.com/file/d/file-1/view",
+                        }
+                    ]
+                }
+            ),
+        ]
+    )
+    client = GoogleDriveClient(credentials=creds, session=session)
+
+    item = GDriveItem.from_path("My Drive", "reports/summary.csv", client=client)
+
+    assert item.id == "file-1"
+    assert item.path == "reports/summary.csv"
+    assert not item.is_directory
+    assert session.calls[1][2]["params"]["supportsAllDrives"] == "true"
+    assert session.calls[1][2]["params"]["includeItemsFromAllDrives"] == "true"
+    assert session.calls[2][2]["params"]["supportsAllDrives"] == "true"
+    assert session.calls[2][2]["params"]["includeItemsFromAllDrives"] == "true"
+
+
+def test_gdrive_item_from_path_resolves_shared_drive_root() -> None:
+    creds = DummyCreds(valid=True)
+    session = DummySession(
+        [
+            DummyResponse(payload={"drives": [{"id": "drive-1", "name": "Research Drive"}]}),
+            DummyResponse(payload={"id": "drive-1", "name": "Research Drive", "mimeType": FOLDER_MIME}),
+        ]
+    )
+    client = GoogleDriveClient(credentials=creds, session=session)
+
+    item = GDriveItem.from_path("Research Drive", "", client=client)
+
+    assert item.id == "drive-1"
+    assert item.path == ""
+    assert item.is_directory
+
+
+def test_gdrive_item_from_path_rejects_missing_segment() -> None:
+    creds = DummyCreds(valid=True)
+    session = DummySession(
+        [
+            DummyResponse(payload={"id": "root", "name": "My Drive", "mimeType": FOLDER_MIME}),
+            DummyResponse(payload={"files": []}),
+        ]
+    )
+    client = GoogleDriveClient(credentials=creds, session=session)
+
+    with pytest.raises(FileNotFoundError, match="missing"):
+        GDriveItem.from_path("My Drive", "missing", client=client)
+
+
+def test_gdrive_item_from_path_rejects_ambiguous_segment() -> None:
+    creds = DummyCreds(valid=True)
+    session = DummySession(
+        [
+            DummyResponse(payload={"id": "root", "name": "My Drive", "mimeType": FOLDER_MIME}),
+            DummyResponse(
+                payload={
+                    "files": [
+                        {
+                            "id": "folder-1",
+                            "name": "reports",
+                            "mimeType": FOLDER_MIME,
+                            "parents": ["root"],
+                        },
+                        {
+                            "id": "folder-2",
+                            "name": "reports",
+                            "mimeType": FOLDER_MIME,
+                            "parents": ["root"],
+                        },
+                    ]
+                }
+            ),
+        ]
+    )
+    client = GoogleDriveClient(credentials=creds, session=session)
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        GDriveItem.from_path("My Drive", "reports", client=client)
+
+
+def test_gdrive_item_from_path_trailing_slash_requires_directory() -> None:
+    creds = DummyCreds(valid=True)
+    session = DummySession(
+        [
+            DummyResponse(payload={"id": "root", "name": "My Drive", "mimeType": FOLDER_MIME}),
+            DummyResponse(
+                payload={
+                    "files": [
+                        {
+                            "id": "file-1",
+                            "name": "summary.csv",
+                            "mimeType": "text/csv",
+                            "parents": ["root"],
+                        }
+                    ]
+                }
+            ),
+        ]
+    )
+    client = GoogleDriveClient(credentials=creds, session=session)
+
+    with pytest.raises(NotADirectoryError, match="directory"):
+        GDriveItem.from_path("My Drive", "summary.csv/", client=client)
+
+
 
 
 

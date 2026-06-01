@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from sharedrive.models import DriveRemoteCatalog,DriveRemoteResource,ServiceId,ServiceTypeValue
 
@@ -73,6 +73,12 @@ class ServiceItem(ABC):
     @abstractmethod
     def refresh(self, *, include_children: bool = True) -> "ServiceItem":
         """Refresh this runtime item from its backing service."""
+        raise NotImplementedError
+
+    @classmethod
+    @abstractmethod
+    def from_path(cls, *args: Any, **kwargs: Any) -> "ServiceItem":
+        """Resolve a provider-specific path locator into a runtime item."""
         raise NotImplementedError
 
     # ------------------------------------------------------------------

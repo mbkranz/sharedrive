@@ -185,3 +185,87 @@ def test_sharepoint_item_iter_files_paths_are_relative_to_weburl_root(
     assert root.path == ""
     assert len(files) == 1
     assert files[0].path == "01-proposal-process/approval.docx"
+
+
+def test_sharepoint_item_from_path_resolves_library_relative_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = SharepointClient(access_token="token")
+    calls: dict[str, object] = {}
+    metadata = {
+        "id": "file-1",
+        "name": "approval.docx",
+        "file": {},
+        "webUrl": "https://contoso.sharepoint.com/sites/Test/Shared Documents/folder/approval.docx",
+        "parentReference": {"id": "folder-1", "driveId": "drive-1"},
+    }
+
+    monkeypatch.setattr(client, "get_site_id", lambda site_name: f"site:{site_name}")
+
+    def fake_get_drive_id(site_id: str, drive_name: str | None = None) -> str:
+        calls["site_id"] = site_id
+        calls["drive_name"] = drive_name
+        return "drive-1"
+
+    def fake_get_item_metadata(drive_id: str, *, item_path: str | None = None, **_kwargs):
+        calls["drive_id"] = drive_id
+        calls["item_path"] = item_path
+        return metadata
+
+    monkeypatch.setattr(client, "get_drive_id", fake_get_drive_id)
+    monkeypatch.setattr(client, "get_item_metadata", fake_get_item_metadata)
+
+    item = SharepointItem.from_path(
+        site_name="Test",
+        item_path="Shared Documents/folder/approval.docx",
+        client=client,
+    )
+
+    assert calls == {
+        "site_id": "site:Test",
+        "drive_name": "Shared Documents",
+        "drive_id": "drive-1",
+        "item_path": "/folder/approval.docx",
+    }
+    assert item.path == "folder/approval.docx"
+    assert not item.is_directory
+
+
+def test_sharepoint_item_from_path_resolves_library_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = SharepointClient(access_token="token")
+    calls: dict[str, object] = {}
+    metadata = {
+        "id": "root",
+        "name": "Shared Documents",
+        "folder": {},
+        "webUrl": "https://contoso.sharepoint.com/sites/Test/Shared Documents",
+        "parentReference": {"id": "site-root", "driveId": "drive-1"},
+    }
+
+    monkeypatch.setattr(client, "get_site_id", lambda _site_name: "site-1")
+
+    def fake_get_drive_id(_site_id: str, drive_name: str | None = None) -> str:
+        calls["drive_name"] = drive_name
+        return "drive-1"
+
+    def fake_get_item_metadata(drive_id: str, *, item_path: str | None = None, **_kwargs):
+        calls["drive_id"] = drive_id
+        calls["item_path"] = item_path
+        return metadata
+
+    monkeypatch.setattr(client, "get_drive_id", fake_get_drive_id)
+    monkeypatch.setattr(client, "get_item_metadata", fake_get_item_metadata)
+
+    item = SharepointItem.from_path(
+        site_name="Test",
+        item_path="Shared Documents/",
+        client=client,
+    )
+
+    assert calls["drive_name"] == "Shared Documents"
+    assert calls["drive_id"] == "drive-1"
+    assert calls["item_path"] == "/"
+    assert item.path == ""
+    assert item.is_directory
