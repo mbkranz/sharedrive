@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, TypeVar, overload
 
 from sharedrive.models import DriveRemoteCatalog,DriveRemoteResource,ServiceId,ServiceTypeValue
 
 _PATH_MISSING = object()
+_TDefault = TypeVar("_TDefault")
 
 
 class ServiceItem(ABC):
@@ -109,8 +110,23 @@ class ServiceItem(ABC):
         """Post a comment on this item."""
         raise NotImplementedError
 
-    def get_path(self, relative_path: str | Path, default: Any = _PATH_MISSING) -> Any:
-        """Resolve a descendant item by traversing child names in *relative_path*."""
+    @overload
+    def get_path(self, relative_path: str | Path) -> "ServiceItem": ...
+
+    @overload
+    def get_path(
+        self, relative_path: str | Path, default: _TDefault
+    ) -> "ServiceItem | _TDefault": ...
+
+    def get_path(
+        self, relative_path: str | Path, default: _TDefault | object = _PATH_MISSING
+    ) -> "ServiceItem | _TDefault":
+        """Resolve a descendant item by traversing child names in *relative_path*.
+
+        The input path is normalized to POSIX-style segments (``\\`` → ``/``) and
+        ignores empty segments and ``.`` markers. Lookup uses a linear scan over
+        each directory's direct children for each path part.
+        """
         parts = [
             part
             for part in str(relative_path).replace("\\", "/").split("/")
