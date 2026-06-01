@@ -624,14 +624,13 @@ class GoogleDriveClient(GoogleBaseClient):
                 f"Google Drive path '{relative_path}' did not resolve to a directory."
             )
 
-        basepath = "" if not segments else "/".join(segments[:-1])
+        parent_path = "" if not segments else "/".join(segments[:-1])
         item = GDriveItem.from_api_response(
             api_metadata=current,
             client=self,
-            basepath=basepath,
+            basepath=parent_path,
+            path_override="" if not segments else None,
         )
-        if not segments:
-            item._path = ""
         return item
 
     def get_from_weburl(self, url: str) -> GDriveItem:
@@ -769,6 +768,7 @@ class GDriveItem(ServiceItem):
         api_metadata: GDriveApiFile,
         client: "GoogleDriveClient",
         basepath: Optional[str] = None,
+        path_override: Optional[str] = None,
     ) -> "GDriveItem":
         parents = api_metadata.parents or [None]
         if len(parents) > 1:
@@ -780,7 +780,9 @@ class GDriveItem(ServiceItem):
             _parent_id = parents[0]
 
         name = api_metadata.name or ""
-        path = f"{basepath}/{name}".strip("/") if basepath else name
+        path = path_override
+        if path is None:
+            path = f"{basepath}/{name}".strip("/") if basepath else name
         item_basepath = path if api_metadata.mimeType == FOLDER_MIME else basepath
         
         # TODO: instantiate properties one at a time (see dplibpy plugins as example)
