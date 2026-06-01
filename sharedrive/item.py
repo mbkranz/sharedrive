@@ -156,6 +156,26 @@ class ServiceItem(ABC):
         if not normalized_pattern:
             return
         flat_pattern = "/" not in normalized_pattern and "**" not in normalized_pattern
+        pattern_parts = normalized_pattern.split("/")
+
+        def _expand_glob_parts(parts: list[str]) -> set[str]:
+            if not parts:
+                # Empty sentinel allows parent calls to join without introducing
+                # extra separators while expanding optional `**` segments.
+                return {""}
+            head, *tail = parts
+            suffixes = _expand_glob_parts(tail)
+            if head != "**":
+                return {
+                    "/".join(part for part in [head, suffix] if part) for suffix in suffixes
+                }
+            expanded = {suffix for suffix in suffixes}
+            expanded.update(
+                "/".join(part for part in [head, suffix] if part) for suffix in suffixes
+            )
+            return expanded
+
+        match_patterns = {pattern for pattern in _expand_glob_parts(pattern_parts) if pattern}
 
         def _walk(item: ServiceItem, prefix: str = "") -> Iterable[tuple[ServiceItem, str]]:
             for child in item.children:
@@ -164,10 +184,15 @@ class ServiceItem(ABC):
                 if child.is_directory:
                     yield from _walk(child, relative_path)
 
-        for item, relative_path in _walk(self):
-            if flat_pattern and "/" in relative_path:
-                continue
-            if PurePosixPath(relative_path).match(normalized_pattern):
+        walk_iterable: Iterable[tuple[ServiceItem, str]]
+        if flat_pattern:
+            walk_iterable = ((child, child.name) for child in self.children)
+        else:
+            walk_iterable = _walk(self)
+
+        for item, relative_path in walk_iterable:
+            path_obj = PurePosixPath(relative_path)
+            if any(path_obj.match(pattern) for pattern in match_patterns):
                 yield item
 
 
