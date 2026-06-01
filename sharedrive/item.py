@@ -19,10 +19,27 @@ class ServiceItem(ABC):
     old ``DriveFile`` and ``DriveFolder`` sub-ABCs are retained below as thin
     backward-compatible shells so that existing subclasses continue to work
     without modification.
-
-    TODO: decide how to use ServiceItem vs just using DriveSource <--> client methods
-    """
     
+    
+    # TODO: in a v2, consider making this a first class pydantic model under a remote namespace and removing current remote driven fields.
+
+    """
+    def __repr__(self) -> str:
+        
+        path = getattr(self, "path", None)
+        if path is not None:
+            name = getattr(self, "name", None)
+            source_url = getattr(self, "source_url", None)
+            return (
+                f"{type(self).__name__}("
+                f"service_type={getattr(self, 'service_type', None)!r}, "
+                f"path={path!r}, "
+                f"name={name!r}, "
+                f"source_url={source_url!r}), "
+                f"id={getattr(self, 'id', None)!r}, "
+            )
+        return f"{type(self).__name__}()"
+
     @property
     @abstractmethod
     def id(self) -> ServiceId:
