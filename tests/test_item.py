@@ -271,3 +271,68 @@ def test_get_path_returns_default_when_missing() -> None:
     )
 
     assert root.get_path("missing", default=None) is None
+
+
+def test_glob_returns_iterator_of_matching_descendants() -> None:
+    nested_csv = _Item(
+        id="file-1",
+        name="report.csv",
+        path="reports/report.csv",
+        source_url="mock://reports/report.csv",
+    )
+    nested_txt = _Item(
+        id="file-2",
+        name="report.txt",
+        path="reports/report.txt",
+        source_url="mock://reports/report.txt",
+    )
+    top_csv = _Item(
+        id="file-3",
+        name="summary.csv",
+        path="summary.csv",
+        source_url="mock://summary.csv",
+    )
+    reports = _Item(
+        id="folder-1",
+        name="reports",
+        path="reports",
+        source_url="mock://reports",
+        is_directory=True,
+        children=[nested_csv, nested_txt],
+    )
+    root = _Item(
+        id="root",
+        name="root",
+        path="",
+        source_url="mock://",
+        is_directory=True,
+        children=[reports, top_csv],
+    )
+
+    flat_matches = root.glob("*.csv")
+    assert iter(flat_matches) is flat_matches
+    assert list(flat_matches) == [top_csv]
+    assert list(root.glob("reports/*.csv")) == [nested_csv]
+    assert list(root.glob("**/*.csv")) == [nested_csv, top_csv]
+
+
+def test_glob_accepts_path_pattern_and_current_directory_pattern() -> None:
+    child = _Item(
+        id="folder-1",
+        name="reports",
+        path="reports",
+        source_url="mock://reports",
+        is_directory=True,
+        children=[],
+    )
+    root = _Item(
+        id="root",
+        name="root",
+        path="",
+        source_url="mock://",
+        is_directory=True,
+        children=[child],
+    )
+
+    assert list(root.glob(Path("reports"))) == [child]
+    assert list(root.glob(".")) == [root]

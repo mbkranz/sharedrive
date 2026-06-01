@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, TypeVar, overload
 
 from sharedrive.models import DriveRemoteCatalog,DriveRemoteResource,ServiceId,ServiceTypeValue
@@ -143,6 +143,32 @@ class ServiceItem(ABC):
                 return default
             current = next_item
         return current
+
+    def glob(self, pattern: str | Path) -> Iterable["ServiceItem"]:
+        """Yield descendant items matching a pathlib-style glob *pattern*."""
+        normalized_pattern = str(pattern).replace("\\", "/")
+        if normalized_pattern == ".":
+            yield self
+            return
+        normalized_pattern = "/".join(
+            part for part in normalized_pattern.split("/") if part and part != "."
+        )
+        if not normalized_pattern:
+            return
+        flat_pattern = "/" not in normalized_pattern and "**" not in normalized_pattern
+
+        def _walk(item: ServiceItem, prefix: str = "") -> Iterable[tuple[ServiceItem, str]]:
+            for child in item.children:
+                relative_path = f"{prefix}/{child.name}" if prefix else child.name
+                yield child, relative_path
+                if child.is_directory:
+                    yield from _walk(child, relative_path)
+
+        for item, relative_path in _walk(self):
+            if flat_pattern and "/" in relative_path:
+                continue
+            if PurePosixPath(relative_path).match(normalized_pattern):
+                yield item
 
 
     def iter_files(self) -> Iterable["ServiceItem"]:
