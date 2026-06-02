@@ -237,7 +237,7 @@ class GoogleDriveClient(GoogleBaseClient):
     @staticmethod
     def _is_google_workspace_file(file_mime_type: str) -> bool:
         return file_mime_type in {mime.value for mime in GoogleMimeTypes}
-
+    
     def list_files(
         self,
         folder_file_id: str,
@@ -429,7 +429,7 @@ class GoogleDriveClient(GoogleBaseClient):
         mime_type: Optional[str] = None,
         
         **kwargs,
-    ) -> GDriveItem:
+        ) -> GDriveItem:
         
     
         def params_metadata_and_media(
@@ -540,98 +540,6 @@ class GoogleDriveClient(GoogleBaseClient):
                 break
 
         return drives
-
-    @staticmethod
-    def _escape_drive_query_literal(value: str) -> str:
-        return value.replace("\\", "\\\\").replace("'", "\\'")
-
-    @staticmethod
-    def _normalize_drive_name(drive_name: str) -> str:
-        normalized = drive_name.strip()
-        if not normalized:
-            raise ValueError("Google Drive name must not be empty.")
-        return normalized
-
-    @staticmethod
-    def _normalize_relative_path(relative_path: str) -> tuple[list[str], bool]:
-        normalized = relative_path.strip()
-        expects_directory = normalized.endswith("/")
-        stripped = normalized.strip("/")
-        if not stripped:
-            return [], expects_directory
-        return [segment for segment in stripped.split("/") if segment], expects_directory
-
-    def _get_root_metadata(self, *, drive_name: str) -> GDriveApiFile:
-        drive_name = self._normalize_drive_name(drive_name)
-        if drive_name == "My Drive":
-            return self.get_file("root")
-
-        matches = [
-            drive
-            for drive in self.list_drives()
-            if str(drive.get("name", "")).strip() == drive_name
-        ]
-        if not matches:
-            raise FileNotFoundError(f"Google Drive '{drive_name}' was not found.")
-        if len(matches) > 1:
-            raise ValueError(
-                f"Google Drive '{drive_name}' is ambiguous; found {len(matches)} drives."
-            )
-
-        drive_id = matches[0].get("id")
-        if not drive_id:
-            raise ValueError(f"Google Drive '{drive_name}' did not return an ID.")
-        return self.get_file(str(drive_id))
-
-    def _resolve_child_by_name(self, *, parent_id: str, segment: str) -> GDriveApiFile:
-        escaped_segment = self._escape_drive_query_literal(segment)
-        response = self._request(
-            "GET",
-            f"{DRIVE_URL}/files",
-            params={
-                "fields": f"files({', '.join(self.file_fields)})",
-                "includeItemsFromAllDrives": "true",
-                "supportsAllDrives": "true",
-                "q": (
-                    f"'{parent_id}' in parents and name = '{escaped_segment}' "
-                    "and trashed = false"
-                ),
-            },
-        ).json()
-        files = [GDriveApiFile(**file_data) for file_data in response.get("files", [])]
-        if not files:
-            raise FileNotFoundError(
-                f"Google Drive path segment '{segment}' was not found under '{parent_id}'."
-            )
-        if len(files) > 1:
-            raise ValueError(
-                f"Google Drive path segment '{segment}' is ambiguous under '{parent_id}'."
-            )
-        return files[0]
-
-    def get_from_path(self, *, drive_name: str, relative_path: str = "") -> GDriveItem:
-        root_metadata = self._get_root_metadata(drive_name=drive_name)
-        segments, expects_directory = self._normalize_relative_path(relative_path)
-
-        current = root_metadata
-        for segment in segments:
-            if current.id is None:
-                raise ValueError("Cannot resolve Google Drive path without a parent ID.")
-            current = self._resolve_child_by_name(parent_id=current.id, segment=segment)
-
-        if expects_directory and current.mimeType != FOLDER_MIME:
-            raise NotADirectoryError(
-                f"Google Drive path '{relative_path}' did not resolve to a directory."
-            )
-
-        parent_path = "" if not segments else "/".join(segments[:-1])
-        item = GDriveItem.from_api_response(
-            api_metadata=current,
-            client=self,
-            basepath=parent_path,
-            path_override="" if not segments else None,
-        )
-        return item
 
     def get_from_weburl(self, url: str) -> GDriveItem:
         """Return metadata for a Google Drive file or folder given a web URL,
@@ -756,11 +664,25 @@ class GDriveItem(ServiceItem):
     def from_path(
         cls,
         drive_name: str,
-        relative_path: str = "",
+        path: str = "",
         client: GoogleDriveClient | None = None,
     ) -> "GDriveItem":
+        def walk(driveitem,path_parts):
+            if not path_parts:
+                return driveitem
+            next_part = path_parts[0]
+            for child in driveitem.children:
+                if child.name == next_part:
+                    return walk(child, path_parts[1:])
+            raise FileNotFoundError(f"Path '{path}' not found in drive '{drive_name}'")
         client = cls._resolve_client(client)
-        return client.get_from_path(drive_name=drive_name, relative_path=relative_path)
+        drivefile = client.get_drive(drive_name=drive_name)
+        #TODO: list drives --> find drive with matching name --> list_files with the id of the drive --> if match walk --> if walk was match, then return
+        
+        driveitem = cls.from_api_response(api_metadata=drivefile, client=client)
+        path_parts = path.split("/") if path else []
+        driveitem = walk(driveitem,path_parts)
+        return driveitem
     
     @classmethod
     def from_api_response(
@@ -768,7 +690,6 @@ class GDriveItem(ServiceItem):
         api_metadata: GDriveApiFile,
         client: "GoogleDriveClient",
         basepath: Optional[str] = None,
-        path_override: Optional[str] = None,
     ) -> "GDriveItem":
         parents = api_metadata.parents or [None]
         if len(parents) > 1:
@@ -778,17 +699,13 @@ class GDriveItem(ServiceItem):
             )
         else:
             _parent_id = parents[0]
-
-        name = api_metadata.name or ""
-        path = path_override
-        if path is None:
-            path = f"{basepath}/{name}".strip("/") if basepath else name
-        item_basepath = path if api_metadata.mimeType == FOLDER_MIME else basepath
+            
+        
         
         # TODO: instantiate properties one at a time (see dplibpy plugins as example)
         return cls(
             client=client,  
-            basepath=item_basepath,
+            basepath=basepath,
             path=path,
             id=api_metadata.id,
             name=api_metadata.name,

@@ -7,6 +7,7 @@ from typing import Any, Iterator, TypeVar, overload
 from sharedrive.models import DriveRemoteCatalog,DriveRemoteResource,ServiceId,ServiceTypeValue
 
 DefaultT = TypeVar("DefaultT")
+_NoDefault = object()
 
 
 class ServiceItem(ABC):
@@ -110,7 +111,7 @@ class ServiceItem(ABC):
         raise NotImplementedError
 
     @overload
-    def get_path(self, relative_path: str | Path) -> "ServiceItem | None": ...
+    def get_path(self, relative_path: str | Path) -> "ServiceItem": ...
 
     @overload
     def get_path(
@@ -118,8 +119,8 @@ class ServiceItem(ABC):
     ) -> "ServiceItem | DefaultT": ...
 
     def get_path(
-        self, relative_path: str | Path, default: DefaultT | None = None
-    ) -> "ServiceItem | DefaultT | None":
+        self, relative_path: str | Path, default: Any = _NoDefault
+    ) -> "ServiceItem | Any":
         """Resolve a descendant item by traversing child names in *relative_path*.
 
         The input path is normalized to POSIX-style segments (``\\`` → ``/``) and
@@ -135,6 +136,8 @@ class ServiceItem(ABC):
         for part in parts:
             next_item = next((child for child in current.children if child.name == part), None)
             if next_item is None:
+                if default is _NoDefault:
+                    raise FileNotFoundError(f"Path segment {part!r} missing in {current.path!r}")
                 return default
             current = next_item
         return current
@@ -150,8 +153,6 @@ class ServiceItem(ABC):
             start = self
         else:
             start = self.get_path(prefix)
-            if start is None:
-                raise ValueError(f"Prefix {prefix} not found under {self.path}.")
 
         if not start.is_directory:
             
@@ -186,8 +187,8 @@ class ServiceItem(ABC):
         if self.is_directory:
             target_root = Path(target)
             target_root.mkdir(parents=True, exist_ok=True)
-            for child in self.iter_files():
-                child.download(target_root / Path(child.path))
+            for child in self.children:
+                child.download(target_root / child.name)
             return
         raise NotImplementedError(
             f"File download is not implemented for {type(self).__name__}. "
