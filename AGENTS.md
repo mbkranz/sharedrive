@@ -50,12 +50,12 @@ Goal is to create a quick and efficient system like git and uv both for quick de
 - **Enforcing Interfaces**: Strictly uphold `abstractmethod` signatures across all foundational components (e.g., `BaseClient` and `ServiceItem`). Constantly ensure any mock or dummy classes within the test suite (like `_Item`) are fully updated with stub implementations to prevent abstract instantation failures.
 - **Safe Patching (For Agents and Scripts)**: When automatically refactoring Python files—especially Pydantic models—avoid destructive `sed` or naive line-counting patches. Rely on precise string replacements and validate immediately via `uv run pytest` to catch collection or `ImportError` regressions early.
 
-## When updating adapters
+## When updating code
 
 - Give warnings and ask for approval before breaking backward compatibility.
 - Raise explicit exceptions with actionable error messages.
 - Keep network calls and auth behavior obvious and testable.
-- Add or update tests when behavior changes (especially URL parsing and download/export logic).
+- Assume the code is what is desired and update tests to test the behavior (not the other way around).
 
 
 ## Documentation rule
