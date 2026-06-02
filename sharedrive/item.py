@@ -80,7 +80,7 @@ class ServiceItem(ABC):
 
     @classmethod
     @abstractmethod
-    def from_path(cls, *args: Any, **kwargs: Any) -> "ServiceItem":
+    def from_path(cls,  drive_name: str, path: str) -> "ServiceItem | None":
         """Resolve a provider-specific path locator into a runtime item."""
         raise NotImplementedError
 
@@ -126,6 +126,7 @@ class ServiceItem(ABC):
         The input path is normalized to POSIX-style segments (``\\`` → ``/``) and
         ignores empty segments and ``.`` markers. Lookup uses a linear scan over
         each directory's direct children for each path part.
+    
         """
         parts = [
             part

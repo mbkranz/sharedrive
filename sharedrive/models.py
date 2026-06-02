@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Annotated, Any, Optional, TypeAlias,  Union
+from typing import Annotated, Any, Optional, TypeAlias,  Union,Literal
 from urllib.parse import urlparse
 
 import pydantic
@@ -184,12 +184,30 @@ def resolve_cache_path(cache: str|None, basepath: str|None):
     
     return resolved_cache
 # ---------------------------------------------------------------------
-class GDriveApiFile(pydantic.BaseModel):
-    id: Optional[str] = None
-    name: Optional[str] = None
+GDriveKind = Annotated[Literal["drive","file"], BeforeValidator(lambda v: v.replace("drive#", ""))]
+GDriveParents = Annotated[list[str], Field(default_factory=list)]
+class GDriveApiFile(pydantic.BaseModel,validate_assignment=True):
+    
+    model_config = pydantic.ConfigDict()
+    
+    kind: Annotated[GDriveKind, Literal["file"]]
+    id: Optional[str]
+    name: Optional[str]
     mimeType: Optional[str] = None
-    parents: Optional[list[str]] = None
+    parents: GDriveParents
     webViewLink: Optional[str] = None
+    
+    
+class GDriveApiDrive(pydantic.BaseModel,validate_assignment=True):
+    
+    kind: Annotated[GDriveKind, Literal["drive"]]
+    id: Optional[str]
+    name: Optional[str]
+
+GDriveApiItem = Annotated[Union[GDriveApiFile, GDriveApiDrive],Field(discriminator="kind")]
+    
+    
+    
 # Resource / package models
 # ---------------------------------------------------------------------
 
