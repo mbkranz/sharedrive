@@ -223,29 +223,27 @@ class S3Item(ServiceItem):
         children: list[S3Item] = []
         for child_prefix in prefixes:
             if child_prefix and child_prefix != prefix:
-                children.append(
-                    S3Item(
-                        client=self.client,
-                        bucket=self.bucket,
-                        key=child_prefix,
-                        is_directory=True,
-                    )
+                child_item = S3Item(
+                    client=self.client,
+                    bucket=self.bucket,
+                    key=child_prefix,
+                    is_directory=True,
                 )
-                children[-1]._parent_id = str(self.id)
+                child_item._parent_id = str(self.id)
+                children.append(child_item)
 
         for item in contents:
             child_key = str(item.get("Key", ""))
             if not child_key or child_key == prefix or child_key.endswith("/"):
                 continue
-            children.append(
-                S3Item(
-                    client=self.client,
-                    bucket=self.bucket,
-                    key=child_key,
-                    is_directory=False,
-                )
+            child_item = S3Item(
+                client=self.client,
+                bucket=self.bucket,
+                key=child_key,
+                is_directory=False,
             )
-            children[-1]._parent_id = str(self.id)
+            child_item._parent_id = str(self.id)
+            children.append(child_item)
 
         self._cache_children(children)
         return self
