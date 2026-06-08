@@ -1,34 +1,58 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator, TypeVar, overload
+from typing import Iterator
 
-from sharedrive.models import DriveRemoteCatalog,DriveRemoteResource,ServiceId,ServiceTypeValue
+from sharedrive.exceptions import AmbiguousPathError
+from sharedrive.models import (
+    DriveRemoteCatalog,
+    DriveRemoteResource,
+    ServiceId,
+    ServiceTypeValue,
+)
 
-DefaultT = TypeVar("DefaultT")
-_NoDefault = object()
+
+def _index_path(path: str | Path) -> str:
+    return str(path).replace("\\", "/").strip("/")
+
+
+@dataclass
+class _TraversalIndex:
+    """In-memory hierarchy snapshot shared by related runtime items."""
+
+    items_by_id: dict[str, "ServiceItem"] = field(default_factory=dict)
+    children_by_id: dict[str, list["ServiceItem"]] = field(default_factory=dict)
+    scanned_roots: set[str] = field(default_factory=set)
+
+    def add(self, item: "ServiceItem") -> None:
+        item_id = str(item.id)
+        self.items_by_id[item_id] = item
+        item._traversal_index = self
+
+    def add_children(
+        self, parent: "ServiceItem", children: list["ServiceItem"]
+    ) -> list["ServiceItem"]:
+        ordered = sorted(
+            children, key=lambda item: (item.path, item.name, str(item.id))
+        )
+        self.add(parent)
+        for child in ordered:
+            self.add(child)
+        parent_id = str(parent.id)
+        self.children_by_id[parent_id] = ordered
+        return ordered
+
+    def children(self, item: "ServiceItem") -> list["ServiceItem"] | None:
+        return self.children_by_id.get(str(item.id))
 
 
 class ServiceItem(ABC):
-    """Abstract base for a single item (file or directory) on a remote drive.
+    """Base interface for files and directories in a remote service."""
 
-    All file-vs-directory behaviour is dispatched on :attr:`is_directory`.
-    Concrete subclasses implement the service-specific transport layer
-    (``refresh``, ``download``) while shared traversal logic lives here.
-
-    Design note: this single ABC replaces the previous three-level hierarchy
-    ``ServiceItem → DriveFile/DriveFolder → G/SharepointFile/Folder``.  The
-    old ``DriveFile`` and ``DriveFolder`` sub-ABCs are retained below as thin
-    backward-compatible shells so that existing subclasses continue to work
-    without modification.
-    
-    
-    # TODO: in a v2, consider making this a first class pydantic model under a remote namespace and removing current remote driven fields.
-
-    """
     def __repr__(self) -> str:
-        
+
         path = getattr(self, "path", None)
         if path is not None:
             name = getattr(self, "name", None)
@@ -38,8 +62,8 @@ class ServiceItem(ABC):
                 f"service_type={getattr(self, 'service_type', None)!r}, "
                 f"path={path!r}, "
                 f"name={name!r}, "
-                f"source_url={source_url!r}), "
-                f"id={getattr(self, 'id', None)!r}, "
+                f"source_url={source_url!r}, "
+                f"id={getattr(self, 'id', None)!r})"
             )
         return f"{type(self).__name__}()"
 
@@ -78,12 +102,6 @@ class ServiceItem(ABC):
         """Refresh this runtime item from its backing service."""
         raise NotImplementedError
 
-    @classmethod
-    @abstractmethod
-    def from_path(cls,  drive_name: str, path: str) -> "ServiceItem | None":
-        """Resolve a provider-specific path locator into a runtime item."""
-        raise NotImplementedError
-
     # ------------------------------------------------------------------
     # Concrete shared behaviour
     # ------------------------------------------------------------------
@@ -91,91 +109,140 @@ class ServiceItem(ABC):
     @property
     @abstractmethod
     def children(self) -> list["ServiceItem"]:
-        """Direct child items for directories; always empty for files.
-
-        Concrete directory subclasses override this to return populated
-        children.  The default returns an empty list so that file items
-        never need to override it.
-        """
+        """Direct child items for directories; always empty for files."""
         raise NotImplementedError
 
+    def _indexed_children(self) -> list["ServiceItem"] | None:
+        index = getattr(self, "_traversal_index", None)
+        return index.children(self) if index is not None else None
 
-    @abstractmethod
-    def move(self, new_parent_id: str) -> "ServiceItem":
-        """Move this item to a new parent folder, returning the updated item."""
-        raise NotImplementedError
+    def _cache_children(self, children: list["ServiceItem"]) -> list["ServiceItem"]:
+        index = getattr(self, "_traversal_index", None) or _TraversalIndex()
+        return index.add_children(self, children)
 
-    @abstractmethod
-    def add_comment(self, body: str) -> "ServiceItem":
-        """Post a comment on this item."""
-        raise NotImplementedError
+    def _resolve_children(self, name: str) -> list["ServiceItem"]:
+        return [child for child in self.children if child.name == name]
 
-    @overload
-    def get_path(self, relative_path: str | Path) -> "ServiceItem": ...
+    def _scan_descendants(self) -> list["ServiceItem"]:
+        """Return all descendants, using direct children as the fallback."""
+        descendants: list[ServiceItem] = []
+        for child in self.children:
+            child._traversal_parent_id = str(self.id)
+            descendants.append(child)
+            if child.is_directory:
+                descendants.extend(child._scan_descendants())
+        return descendants
 
-    @overload
-    def get_path(
-        self, relative_path: str | Path, default: DefaultT
-    ) -> "ServiceItem | DefaultT": ...
+    def _cache_descendants(self, descendants: list["ServiceItem"]) -> None:
+        index = getattr(self, "_traversal_index", None) or _TraversalIndex()
+        index.add(self)
+        by_parent_id: dict[str, list[ServiceItem]] = {}
 
-    def get_path(
-        self, relative_path: str | Path, default: Any = _NoDefault
-    ) -> "ServiceItem | Any":
+        for item in descendants:
+            index.add(item)
+            parent_id = getattr(item, "_parent_id", None) or getattr(
+                item, "_traversal_parent_id", None
+            )
+            if parent_id is not None:
+                by_parent_id.setdefault(str(parent_id), []).append(item)
+
+        for parent_id, children in by_parent_id.items():
+            index.children_by_id[parent_id] = sorted(
+                children, key=lambda item: (item.path, item.name, str(item.id))
+            )
+        for item in descendants:
+            if item.is_directory:
+                index.children_by_id.setdefault(str(item.id), [])
+        index.children_by_id.setdefault(str(self.id), [])
+        index.scanned_roots.add(str(self.id))
+
+    def _invalidate_traversal(self) -> None:
+        index = getattr(self, "_traversal_index", None)
+        if index is None:
+            return
+        for item in index.items_by_id.values():
+            item._traversal_index = None
+        self._traversal_index = None
+
+    def get_path(self, relative_path: str | Path) -> "ServiceItem":
         """Resolve a descendant item by traversing child names in *relative_path*.
 
         The input path is normalized to POSIX-style segments (``\\`` → ``/``) and
-        ignores empty segments and ``.`` markers. Lookup uses a linear scan over
-        each directory's direct children for each path part.
-    
+        ignores empty segments and ``.`` markers. Providers use their native
+        path or exact-child lookup where available.
+
         """
-        parts = [
-            part
-            for part in str(relative_path).replace("\\", "/").split("/")
-            if part and part != "."
-        ]
+        raw_path = str(relative_path).replace("\\", "/")
+        requires_directory = raw_path.endswith("/") and raw_path.strip("/") not in {
+            "",
+            ".",
+        }
+        parts = [part for part in raw_path.split("/") if part and part != "."]
+        if ".." in parts:
+            raise ValueError("Remote relative paths cannot contain '..'")
+        if not parts:
+            if requires_directory and not self.is_directory:
+                raise NotADirectoryError(f"{self.path!r} is not a directory")
+            return self
+
         current: ServiceItem = self
-        for part in parts:
-            next_item = next((child for child in current.children if child.name == part), None)
-            if next_item is None:
-                if default is _NoDefault:
-                    raise FileNotFoundError(f"Path segment {part!r} missing in {current.path!r}")
-                return default
-            current = next_item
+        for index, part in enumerate(parts):
+            if not current.is_directory:
+                raise NotADirectoryError(
+                    f"Cannot resolve {part!r} below file {current.path!r}"
+                )
+            matches = current._resolve_children(part)
+            if not matches:
+                raise FileNotFoundError(
+                    f"Path segment {part!r} was not found below {current.path!r}"
+                )
+            if len(matches) > 1:
+                raise AmbiguousPathError(
+                    f"Path segment {part!r} is ambiguous below {current.path!r}"
+                )
+            current = matches[0]
+            if index < len(parts) - 1 and not current.is_directory:
+                raise NotADirectoryError(
+                    f"Cannot resolve descendants below file {current.path!r}"
+                )
+
+        if requires_directory and not current.is_directory:
+            raise NotADirectoryError(f"{current.path!r} is not a directory")
         return current
 
-    def iter_files(
-        self,
-        prefix: str | Path | None = None,
-        recursive: bool = True,
-    ) -> Iterator["ServiceItem"]:
-        """Yield file descendants under *prefix* or all files if *prefix* is empty."""
+    def iter_items(self, *, recursive: bool = True) -> Iterator["ServiceItem"]:
+        """Yield child files and directories in deterministic path order."""
+        if not self.is_directory:
+            raise NotADirectoryError(
+                f"{self.path!r} is not a directory, cannot iterate descendants"
+            )
+        if not recursive:
+            yield from self.children
+            return
 
-        if prefix is None:
-            start = self
-        else:
-            start = self.get_path(prefix)
+        index = getattr(self, "_traversal_index", None)
+        if index is None or str(self.id) not in index.scanned_roots:
+            self._cache_descendants(self._scan_descendants())
+            index = self._traversal_index
 
-        if not start.is_directory:
-            
-            raise ValueError(f"{start.path} is not a directory, cannot iterate files under it.")
+        descendants: list[ServiceItem] = []
+        pending = list(index.children_by_id.get(str(self.id), []))
+        while pending:
+            item = pending.pop(0)
+            descendants.append(item)
+            if item.is_directory:
+                pending.extend(index.children_by_id.get(str(item.id), []))
+        yield from sorted(
+            descendants, key=lambda item: (item.path, item.name, str(item.id))
+        )
 
-        def walk(item: ServiceItem) -> Iterator["ServiceItem"]:
-            for child in item.children:
-                if child.is_directory:
-                    if recursive:
-                        yield from walk(child)
-                else:
-                    yield child
-
-        yield from walk(start)
-
-    def refresh_tree(self) -> "ServiceItem":
-        """Recursively refresh this item and all of its descendants."""
-        self.refresh(include_children=True)
-        if self.is_directory:
-            for child in self.children:
-                child.refresh_tree()
-        return self
+    def iter_files(self, *, recursive: bool = True) -> Iterator["ServiceItem"]:
+        """Yield file descendants, excluding directories and the starting item."""
+        yield from (
+            item
+            for item in self.iter_items(recursive=recursive)
+            if not item.is_directory
+        )
 
     def download(self, target: Path | str) -> None:
         """Download this item to *target*.
@@ -188,8 +255,14 @@ class ServiceItem(ABC):
         if self.is_directory:
             target_root = Path(target)
             target_root.mkdir(parents=True, exist_ok=True)
-            for child in self.children:
-                child.download(target_root / child.name)
+            root_path = Path(_index_path(self.path))
+            for child in self.iter_files():
+                child_path = Path(_index_path(child.path))
+                try:
+                    relative_path = child_path.relative_to(root_path)
+                except ValueError:
+                    relative_path = child_path
+                child.download(target_root / relative_path)
             return
         raise NotImplementedError(
             f"File download is not implemented for {type(self).__name__}. "
@@ -216,7 +289,6 @@ class ServiceItem(ABC):
                 serviceType=self.service_type,
                 entityType="File",
                 format=format_str,
-                
             )
         resources: list[DriveRemoteResource] = []
         catalogs: list[DriveRemoteCatalog] = []
@@ -236,20 +308,5 @@ class ServiceItem(ABC):
             catalogs=catalogs,
         )
 
-class DriveFile(ServiceItem):
-    """Backward-compatible file item base class."""
 
-    @property
-    def is_directory(self) -> bool:
-        return False
-
-
-class DriveFolder(ServiceItem):
-    """Backward-compatible folder item base class."""
-
-    @property
-    def is_directory(self) -> bool:
-        return True
-
-
-__all__ = ["DriveFile", "DriveFolder", "ServiceItem"]
+__all__ = ["ServiceItem"]

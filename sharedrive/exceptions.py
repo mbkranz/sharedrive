@@ -3,6 +3,11 @@ from __future__ import annotations
 from typing import Any
 from google.auth.exceptions import RefreshError
 
+
+class AmbiguousPathError(ValueError):
+    """Raised when a path segment matches more than one remote item."""
+
+
 class GoogleApiError(Exception):
     """Base exception for Google API failures."""
 
@@ -46,3 +51,15 @@ class GraphApiDriveError(GraphApiError):
 class GraphApiSiteError(GraphApiError):
     pass
 
+
+__all__ = [
+    "AmbiguousPathError",
+    "GoogleApiError",
+    "GoogleAuthError",
+    "GoogleDriveError",
+    "GoogleRefreshError",
+    "GraphApiDriveError",
+    "GraphApiError",
+    "GraphApiSiteError",
+    "GraphAuthError",
+]

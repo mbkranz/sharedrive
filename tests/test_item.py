@@ -4,28 +4,12 @@ from pathlib import Path
 
 import pytest
 
+from sharedrive import AmbiguousPathError
 from sharedrive.item import ServiceItem
 from sharedrive.models import DriveRemoteCatalog, DriveRemoteResource
 
 
 class _Item(ServiceItem):
-    @classmethod
-    def from_path(cls, path: str, **kwargs) -> ServiceItem:
-        return cls(
-            id=kwargs.get("id", path or "root"),
-            name=kwargs.get("name", Path(path).name or "root"),
-            path=path,
-            source_url=kwargs.get("source_url", f"mock://{path}"),
-            service_type=kwargs.get("service_type", "Mock"),
-            is_directory=kwargs.get("is_directory", False),
-            children=kwargs.get("children"),
-        )
-
-    def move(self, weburl: str):
-        return
-
-    def add_comment(self, body: str) -> "_Item":
-        return self
     def __init__(
         self,
         *,
@@ -106,14 +90,6 @@ def test_file_to_catalog_uses_remote_path_and_local_cache() -> None:
     assert resource.format == "csv"
 
 
-def test_service_item_from_path_contract_returns_runtime_item() -> None:
-    item = _Item.from_path("reports/Report.CSV", source_url="mock://reports/Report.CSV")
-
-    assert isinstance(item, ServiceItem)
-    assert item.path == "reports/Report.CSV"
-    assert item.name == "Report.CSV"
-
-
 def test_file_to_catalog_leaves_format_empty_without_extension() -> None:
     item = _Item(
         id="file-1",
@@ -190,7 +166,7 @@ def test_directory_download_writes_leaf_files_relative_to_target(
     root = _Item(
         id="folder-1",
         name="Research",
-        path="research",
+        path="",
         source_url="https://drive.google.com/drive/folders/folder-1",
         is_directory=True,
         children=[leaf],
@@ -203,8 +179,6 @@ def test_directory_download_writes_leaf_files_relative_to_target(
 
 def test_file_download_default_requires_subclass_override(tmp_path: Path) -> None:
     class _UndownloadableFile(_Item):
-        def move(self, weburl: str):
-            return
         def download(self, target: Path | str) -> None:
             ServiceItem.download(self, target)
 
@@ -260,7 +234,31 @@ def test_get_path_raises_when_segment_missing() -> None:
         root.get_path("missing")
 
 
-def test_get_path_returns_default_when_missing() -> None:
+def test_get_path_rejects_ambiguous_sibling_names() -> None:
+    children = [
+        _Item(
+            id=f"folder-{index}",
+            name="reports",
+            path="reports",
+            source_url=f"mock://reports/{index}",
+            is_directory=True,
+        )
+        for index in range(2)
+    ]
+    root = _Item(
+        id="root",
+        name="root",
+        path="",
+        source_url="mock://",
+        is_directory=True,
+        children=children,
+    )
+
+    with pytest.raises(AmbiguousPathError):
+        root.get_path("reports")
+
+
+def test_get_path_normalizes_current_directory_and_rejects_parent_segments() -> None:
     root = _Item(
         id="root",
         name="root",
@@ -270,10 +268,13 @@ def test_get_path_returns_default_when_missing() -> None:
         children=[],
     )
 
-    assert root.get_path("missing", default=None) is None
+    assert root.get_path("") is root
+    assert root.get_path(".") is root
+    with pytest.raises(ValueError, match=r"\.\."):
+        root.get_path("../outside")
 
 
-def test_glob_returns_iterator_of_matching_descendants() -> None:
+def test_iter_items_and_iter_files_have_distinct_contracts() -> None:
     nested_csv = _Item(
         id="file-1",
         name="report.csv",
@@ -309,21 +310,18 @@ def test_glob_returns_iterator_of_matching_descendants() -> None:
         children=[reports, top_csv],
     )
 
-    flat_matches = root.glob("*.csv")
-    assert iter(flat_matches) is flat_matches
-    assert list(flat_matches) == [top_csv]
-    assert list(root.glob("reports/*.csv")) == [nested_csv]
-    assert list(root.glob("**/*.csv")) == [nested_csv, top_csv]
+    assert list(root.iter_items(recursive=False)) == [reports, top_csv]
+    assert list(root.iter_files(recursive=False)) == [top_csv]
+    assert list(root.iter_items()) == [reports, nested_csv, nested_txt, top_csv]
+    assert list(root.iter_files()) == [nested_csv, nested_txt, top_csv]
 
 
-def test_glob_accepts_path_pattern_and_current_directory_pattern() -> None:
+def test_get_path_requires_directory_for_trailing_slash() -> None:
     child = _Item(
-        id="folder-1",
-        name="reports",
-        path="reports",
-        source_url="mock://reports",
-        is_directory=True,
-        children=[],
+        id="file-1",
+        name="report.csv",
+        path="report.csv",
+        source_url="mock://report.csv",
     )
     root = _Item(
         id="root",
@@ -334,5 +332,5 @@ def test_glob_accepts_path_pattern_and_current_directory_pattern() -> None:
         children=[child],
     )
 
-    assert list(root.glob(Path("reports"))) == [child]
-    assert list(root.glob(".")) == [root]
+    with pytest.raises(NotADirectoryError):
+        root.get_path("report.csv/")
