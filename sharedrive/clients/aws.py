@@ -231,6 +231,7 @@ class S3Item(ServiceItem):
                         is_directory=True,
                     )
                 )
+                children[-1]._parent_id = str(self.id)
 
         for item in contents:
             child_key = str(item.get("Key", ""))
@@ -244,6 +245,7 @@ class S3Item(ServiceItem):
                     is_directory=False,
                 )
             )
+            children[-1]._parent_id = str(self.id)
 
         self._cache_children(children)
         return self
@@ -271,12 +273,14 @@ class S3Item(ServiceItem):
                         key=current,
                         is_directory=True,
                     )
+                    directory._parent_id = str(parent.id)
                     directory._traversal_parent_id = str(parent.id)
                     items[current] = directory
                 parent = directory
             file_item = S3Item(
                 client=self.client, bucket=self.bucket, key=key, is_directory=False
             )
+            file_item._parent_id = str(parent.id)
             file_item._traversal_parent_id = str(parent.id)
             items[key] = file_item
         return sorted(items.values(), key=lambda item: (item.path, item.name))

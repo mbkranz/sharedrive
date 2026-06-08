@@ -112,6 +112,24 @@ class ServiceItem(ABC):
         """Direct child items for directories; always empty for files."""
         raise NotImplementedError
 
+    @property
+    def parent_id(self) -> ServiceId | None:
+        """Best-known parent identifier for this item, when available."""
+        return getattr(self, "_parent_id", None) or getattr(
+            self, "_traversal_parent_id", None
+        )
+
+    @property
+    def parent(self) -> "ServiceItem" | None:
+        """Best-known parent item from the active traversal snapshot."""
+        parent_id = self.parent_id
+        if parent_id is None:
+            return None
+        index = getattr(self, "_traversal_index", None)
+        if index is None:
+            return None
+        return index.items_by_id.get(str(parent_id))
+
     def _indexed_children(self) -> list["ServiceItem"] | None:
         index = getattr(self, "_traversal_index", None)
         return index.children(self) if index is not None else None

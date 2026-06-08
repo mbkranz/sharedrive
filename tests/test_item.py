@@ -314,6 +314,10 @@ def test_iter_items_and_iter_files_have_distinct_contracts() -> None:
     assert list(root.iter_files(recursive=False)) == [top_csv]
     assert list(root.iter_items()) == [reports, nested_csv, nested_txt, top_csv]
     assert list(root.iter_files()) == [nested_csv, nested_txt, top_csv]
+    assert reports.parent_id == "root"
+    assert reports.parent is root
+    assert nested_csv.parent_id == "folder-1"
+    assert nested_csv.parent is reports
 
 
 def test_get_path_requires_directory_for_trailing_slash() -> None:

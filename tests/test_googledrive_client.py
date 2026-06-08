@@ -230,11 +230,16 @@ def test_gdrive_item_iter_files_paths_are_relative_to_weburl_root() -> None:
         == "NIH approvals/01-proposal-process/PPI000001/PPI000001 approval.docx"
     )
     assert files[0].service_type == "GoogleDrive"
-    assert [item.name for item in root.iter_items()] == [
+    all_items = list(root.iter_items())
+    assert [item.name for item in all_items] == [
         "01-proposal-process",
         "PPI000001",
         "PPI000001 approval.docx",
     ]
+    by_name = {item.name: item for item in all_items}
+    assert by_name["01-proposal-process"].parent is root
+    assert by_name["PPI000001"].parent is by_name["01-proposal-process"]
+    assert by_name["PPI000001 approval.docx"].parent is by_name["PPI000001"]
     assert list(root.iter_files()) == files
     assert len(session.calls) == 2
 
