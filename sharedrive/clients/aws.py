@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 from urllib.parse import urlparse
 
 import boto3
@@ -73,13 +73,6 @@ class S3Client(BaseClient):
         supports_write=False,
     )
 
-    
-    def update_file(self, id: str, metadata: dict, **kwargs):
-        raise NotImplementedError()
-
-    def create_file(self, folder_id: str, name: str, mime_type: str, **kwargs):
-        raise NotImplementedError()
-        
     def __init__(self, *, client: Any = None) -> None:
         self.client = client or boto3.client("s3")
 
@@ -97,6 +90,10 @@ class S3Client(BaseClient):
         return self.get_from_path(bucket=bucket, key=key)
 
     def get_from_path(self, *, bucket: str, key: str = "") -> "S3Item":
+        trailing_slash = key.endswith("/")
+        key = key.strip("/")
+        if trailing_slash and key:
+            key = f"{key}/"
         if not key or key.endswith("/"):
             return S3Item(client=self, bucket=bucket, key=key, is_directory=True)
 
@@ -108,9 +105,7 @@ class S3Client(BaseClient):
             if code in {"404", "NotFound", "NoSuchKey"}:
                 prefix = key if key.endswith("/") else f"{key}/"
                 response = self.client.list_objects_v2(
-                    Bucket=bucket,
-                    Prefix=prefix,
-                    MaxKeys=1,
+                    Bucket=bucket, Prefix=prefix, MaxKeys=1
                 )
                 if response.get("KeyCount", 0) > 0:
                     return S3Item(
@@ -118,51 +113,63 @@ class S3Client(BaseClient):
                     )
             raise
 
+    def _list_objects(
+        self, *, bucket: str, prefix: str = "", delimiter: str | None = None
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        contents: list[dict[str, Any]] = []
+        prefixes: list[str] = []
+        continuation_token: str | None = None
+        while True:
+            params: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix}
+            if delimiter is not None:
+                params["Delimiter"] = delimiter
+            if continuation_token:
+                params["ContinuationToken"] = continuation_token
+            response = self.client.list_objects_v2(**params)
+            contents.extend(response.get("Contents", []))
+            prefixes.extend(
+                str(entry.get("Prefix", ""))
+                for entry in response.get("CommonPrefixes", [])
+                if entry.get("Prefix")
+            )
+            if not response.get("IsTruncated"):
+                break
+            continuation_token = response.get("NextContinuationToken")
+            if not continuation_token:
+                break
+        return contents, prefixes
+
+    def resolve_descendant(
+        self, *, bucket: str, parent_key: str, name: str
+    ) -> "S3Item":
+        prefix = (
+            parent_key
+            if parent_key.endswith("/") or not parent_key
+            else f"{parent_key}/"
+        )
+        return self.get_from_path(bucket=bucket, key=f"{prefix}{name}")
+
+    def list_children(
+        self, *, bucket: str, prefix: str
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        return self._list_objects(bucket=bucket, prefix=prefix, delimiter="/")
+
+    def scan_descendants(self, *, bucket: str, prefix: str) -> list[dict[str, Any]]:
+        contents, _ = self._list_objects(bucket=bucket, prefix=prefix)
+        return contents
+
 
 class S3Item(ServiceItem):
-    @classmethod
-    def _resolve_client(cls, client: S3Client | None) -> S3Client:
-        if client is not None:
-            return client
-        from sharedrive.registry import get_client
-
-        return cast(S3Client, get_client("s3"))
-
-    
-    def move(self, new_parent_id: str):
-        raise NotImplementedError()
-
-    def add_comment(self, body: str) -> "ServiceItem":
-        raise NotImplementedError()
-
-    @classmethod
-    def from_path(
-        cls,
-        bucket: str,
-        key: str = "",
-        client: S3Client | None = None,
-    ) -> "S3Item":
-        client = cls._resolve_client(client)
-        trailing_slash = key.endswith("/")
-        normalized_key = key.strip("/")
-        if trailing_slash and normalized_key:
-            normalized_key = f"{normalized_key}/"
-        return client.get_from_path(bucket=bucket, key=normalized_key)
-        
     def __init__(
-        self,
-        *,
-        client: S3Client,
-        bucket: str,
-        key: str,
-        is_directory: bool,
-        children: list["S3Item"] | None = None,
+        self, *, client: S3Client, bucket: str, key: str, is_directory: bool
     ) -> None:
         self.client = client
         self.bucket = bucket
         self.key = key
         self._is_directory = is_directory
-        self._children = children
+
+    def move(self, new_parent_id: str) -> "S3Item":
+        raise NotImplementedError("Moving S3 items is not implemented")
 
     @property
     def id(self) -> str:
@@ -195,26 +202,26 @@ class S3Item(ServiceItem):
     def children(self) -> list["S3Item"]:
         if not self.is_directory:
             return []
-        if self._children is None:
-            self.refresh(include_children=True)
-        return self._children or []
+        indexed = self._indexed_children()
+        if indexed is not None:
+            return indexed
+        self.refresh(include_children=True)
+        return self._indexed_children() or []
 
     def refresh(self, *, include_children: bool = True) -> "S3Item":
         if not self.is_directory:
             return self
         if not include_children:
             return self
+        self._invalidate_traversal()
 
         prefix = self.key if self.key.endswith("/") or not self.key else f"{self.key}/"
-        response = self.client.client.list_objects_v2(
-            Bucket=self.bucket,
-            Prefix=prefix,
-            Delimiter="/",
+        contents, prefixes = self.client.list_children(
+            bucket=self.bucket, prefix=prefix
         )
 
         children: list[S3Item] = []
-        for common in response.get("CommonPrefixes", []):
-            child_prefix = str(common.get("Prefix", ""))
+        for child_prefix in prefixes:
             if child_prefix and child_prefix != prefix:
                 children.append(
                     S3Item(
@@ -225,7 +232,7 @@ class S3Item(ServiceItem):
                     )
                 )
 
-        for item in response.get("Contents", []):
+        for item in contents:
             child_key = str(item.get("Key", ""))
             if not child_key or child_key == prefix or child_key.endswith("/"):
                 continue
@@ -238,8 +245,56 @@ class S3Item(ServiceItem):
                 )
             )
 
-        self._children = sorted(children, key=lambda child: (child.path, child.name))
+        self._cache_children(children)
         return self
+
+    def _scan_descendants(self) -> list["ServiceItem"]:
+        prefix = self.key if self.key.endswith("/") or not self.key else f"{self.key}/"
+        contents = self.client.scan_descendants(bucket=self.bucket, prefix=prefix)
+        items: dict[str, S3Item] = {}
+
+        for entry in contents:
+            key = str(entry.get("Key", ""))
+            if not key or key == prefix or key.endswith("/"):
+                continue
+            relative = key[len(prefix) :] if prefix else key
+            parts = [part for part in relative.split("/") if part]
+            current = prefix
+            parent: S3Item = self
+            for part in parts[:-1]:
+                current = f"{current}{part}/"
+                directory = items.get(current)
+                if directory is None:
+                    directory = S3Item(
+                        client=self.client,
+                        bucket=self.bucket,
+                        key=current,
+                        is_directory=True,
+                    )
+                    directory._traversal_parent_id = str(parent.id)
+                    items[current] = directory
+                parent = directory
+            file_item = S3Item(
+                client=self.client, bucket=self.bucket, key=key, is_directory=False
+            )
+            file_item._traversal_parent_id = str(parent.id)
+            items[key] = file_item
+        return sorted(items.values(), key=lambda item: (item.path, item.name))
+
+    def _resolve_children(self, name: str) -> list["ServiceItem"]:
+        indexed = self._indexed_children()
+        if indexed is not None:
+            return [child for child in indexed if child.name == name]
+        try:
+            item = self.client.resolve_descendant(
+                bucket=self.bucket, parent_key=self.key, name=name
+            )
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code in {"404", "NotFound", "NoSuchKey"}:
+                return []
+            raise
+        return [item]
 
     def download(self, target_dir: str | Path) -> None:
         if self.is_directory:
@@ -252,8 +307,4 @@ class S3Item(ServiceItem):
         self.client.client.download_file(self.bucket, self.key, str(target))
 
 
-__all__ = [
-    "S3Client",
-    "S3Item",
-    "check_s3_credentials",
-]
+__all__ = ["S3Client", "S3Item", "check_s3_credentials"]

@@ -7,9 +7,8 @@ import pytest
 from sharedrive.auth.google import GoogleAuth
 from sharedrive.clients.googledrive import (
     FOLDER_MIME,
-    GDriveItem,
     GoogleBaseClient,
-    GoogleDriveClient
+    GoogleDriveClient,
 )
 from sharedrive import get_client
 from sharedrive.exceptions import GoogleDriveError
@@ -62,12 +61,8 @@ class DummySession:
 
 
 class DummyGoogleClient(GoogleBaseClient):
-    
-    def update_file(self, *args, **kwargs):
-        pass
-
-    def create_file(self, *args, **kwargs):
-        pass
+    def get_from_weburl(self, url: str):
+        raise NotImplementedError
 
 
 def test_client_uses_explicit_auth() -> None:
@@ -78,6 +73,10 @@ def test_client_uses_explicit_auth() -> None:
 
     assert client._auth is auth
     assert client._auth.credentials is creds
+
+
+def test_google_drive_client_reports_write_capability() -> None:
+    assert GoogleDriveClient.capabilities.supports_write
 
 
 def test_client_uses_credentials_escape_hatch() -> None:
@@ -107,9 +106,7 @@ def test_request_refreshes_credentials_before_call() -> None:
 def test_request_wraps_drive_errors() -> None:
     creds = DummyCreds(valid=True)
     response = DummyResponse(
-        ok=False,
-        status_code=404,
-        payload={"error": {"message": "File not found"}},
+        ok=False, status_code=404, payload={"error": {"message": "File not found"}}
     )
     session = DummySession([response])
     client = GoogleDriveClient(credentials=creds, session=session)
@@ -121,20 +118,25 @@ def test_request_wraps_drive_errors() -> None:
     assert "File not found" in str(exc_info.value)
 
 
-def test_download_from_weburl_returns_output_path(tmp_path) -> None:
+def test_item_from_weburl_downloads_to_path(tmp_path) -> None:
     creds = DummyCreds(valid=True)
+    item_response = DummyResponse(
+        payload={
+            "id": "file123",
+            "name": "result.pdf",
+            "mimeType": "application/pdf",
+            "parents": ["root"],
+        }
+    )
     metadata_response = DummyResponse(payload={"mimeType": "application/pdf"})
     file_response = DummyResponse(chunks=[b"abc", b"123"])
-    session = DummySession([metadata_response, file_response])
+    session = DummySession([item_response, metadata_response, file_response])
     client = GoogleDriveClient(credentials=creds, session=session)
 
     output_path = tmp_path / "result.pdf"
-    result = client.download_from_weburl(
-        "https://drive.google.com/file/d/file123/view",
-        output_path=str(output_path),
-    )
+    item = client.get_from_weburl("https://drive.google.com/file/d/file123/view")
+    item.download(output_path)
 
-    assert result == str(output_path)
     assert output_path.read_bytes() == b"abc123"
 
 
@@ -162,9 +164,7 @@ def test_google_base_client_rejects_both_auth_and_credentials() -> None:
 def test_google_base_client_uses_generic_google_api_error() -> None:
     creds = DummyCreds(valid=True)
     response = DummyResponse(
-        ok=False,
-        status_code=500,
-        payload={"error": {"message": "backend error"}},
+        ok=False, status_code=500, payload={"error": {"message": "backend error"}}
     )
     session = DummySession([response])
     client = DummyGoogleClient(credentials=creds, session=session)
@@ -175,12 +175,13 @@ def test_google_base_client_uses_generic_google_api_error() -> None:
     assert exc_info.value.__class__.__name__ == "GoogleApiError"
     assert "backend error" in str(exc_info.value)
 
+
 def test_gdrive_item_iter_files_paths_are_relative_to_weburl_root() -> None:
     creds = DummyCreds(valid=True)
     root_metadata = DummyResponse(
         payload={"id": "root", "name": "NIH approvals", "mimeType": FOLDER_MIME}
     )
-    root_children = DummyResponse(
+    flat_inventory = DummyResponse(
         payload={
             "files": [
                 {
@@ -188,25 +189,13 @@ def test_gdrive_item_iter_files_paths_are_relative_to_weburl_root() -> None:
                     "name": "01-proposal-process",
                     "mimeType": FOLDER_MIME,
                     "parents": ["root"],
-                }
-            ]
-        }
-    )
-    proposal_children = DummyResponse(
-        payload={
-            "files": [
+                },
                 {
                     "id": "term-folder",
                     "name": "PPI000001",
                     "mimeType": FOLDER_MIME,
                     "parents": ["proposal-folder"],
-                }
-            ]
-        }
-    )
-    term_children = DummyResponse(
-        payload={
-            "files": [
+                },
                 {
                     "id": "doc-1",
                     "name": "PPI000001 approval.docx",
@@ -216,18 +205,20 @@ def test_gdrive_item_iter_files_paths_are_relative_to_weburl_root() -> None:
                     ),
                     "parents": ["term-folder"],
                     "webViewLink": "https://drive.google.com/file/d/doc-1/view",
-                }
+                },
+                {
+                    "id": "unrelated",
+                    "name": "outside.txt",
+                    "mimeType": "text/plain",
+                    "parents": ["another-root"],
+                },
             ]
         }
     )
-    session = DummySession(
-        [root_metadata, root_children, proposal_children, term_children]
-    )
+    session = DummySession([root_metadata, flat_inventory])
     client = GoogleDriveClient(credentials=creds, session=session)
 
-    root = GDriveItem.from_weburl(
-        "https://drive.google.com/drive/folders/root", client
-    )
+    root = client.get_from_weburl("https://drive.google.com/drive/folders/root")
     files = list(root.iter_files())
 
     assert root.path in ("", "NIH approvals")
@@ -239,43 +230,50 @@ def test_gdrive_item_iter_files_paths_are_relative_to_weburl_root() -> None:
         == "NIH approvals/01-proposal-process/PPI000001/PPI000001 approval.docx"
     )
     assert files[0].service_type == "GoogleDrive"
+    assert [item.name for item in root.iter_items()] == [
+        "01-proposal-process",
+        "PPI000001",
+        "PPI000001 approval.docx",
+    ]
+    assert list(root.iter_files()) == files
+    assert len(session.calls) == 2
 
 
 def test_gdrive_item_from_path_resolves_my_drive_path_hierarchically() -> None:
     creds = DummyCreds(valid=True)
-    session = DummySession(
-        [
-            DummyResponse(payload={"id": "root", "name": "My Drive", "mimeType": FOLDER_MIME}),
-            DummyResponse(
-                payload={
-                    "files": [
-                        {
-                            "id": "folder-1",
-                            "name": "reports",
-                            "mimeType": FOLDER_MIME,
-                            "parents": ["root"],
-                        }
-                    ]
-                }
-            ),
-            DummyResponse(
-                payload={
-                    "files": [
-                        {
-                            "id": "file-1",
-                            "name": "summary.csv",
-                            "mimeType": "text/csv",
-                            "parents": ["folder-1"],
-                            "webViewLink": "https://drive.google.com/file/d/file-1/view",
-                        }
-                    ]
-                }
-            ),
-        ]
-    )
+    session = DummySession([
+        DummyResponse(
+            payload={"id": "root", "name": "My Drive", "mimeType": FOLDER_MIME}
+        ),
+        DummyResponse(
+            payload={
+                "files": [
+                    {
+                        "id": "folder-1",
+                        "name": "reports",
+                        "mimeType": FOLDER_MIME,
+                        "parents": ["root"],
+                    }
+                ]
+            }
+        ),
+        DummyResponse(
+            payload={
+                "files": [
+                    {
+                        "id": "file-1",
+                        "name": "summary.csv",
+                        "mimeType": "text/csv",
+                        "parents": ["folder-1"],
+                        "webViewLink": "https://drive.google.com/file/d/file-1/view",
+                    }
+                ]
+            }
+        ),
+    ])
     client = GoogleDriveClient(credentials=creds, session=session)
 
-    item = GDriveItem.from_path("My Drive", "reports/summary.csv", client=client)
+    item = client.get_from_path("My Drive", "reports/summary.csv")
 
     assert item.id == "file-1"
     assert item.path == "reports/summary.csv"
@@ -288,15 +286,17 @@ def test_gdrive_item_from_path_resolves_my_drive_path_hierarchically() -> None:
 
 def test_gdrive_item_from_path_resolves_shared_drive_root() -> None:
     creds = DummyCreds(valid=True)
-    session = DummySession(
-        [
-            DummyResponse(payload={"drives": [{"id": "drive-1", "name": "Research Drive"}]}),
-            DummyResponse(payload={"id": "drive-1", "name": "Research Drive", "mimeType": FOLDER_MIME}),
-        ]
-    )
+    session = DummySession([
+        DummyResponse(
+            payload={"drives": [{"id": "drive-1", "name": "Research Drive"}]}
+        ),
+        DummyResponse(
+            payload={"id": "drive-1", "name": "Research Drive", "mimeType": FOLDER_MIME}
+        ),
+    ])
     client = GoogleDriveClient(credentials=creds, session=session)
 
-    item = GDriveItem.from_path("Research Drive", "", client=client)
+    item = client.get_from_path("Research Drive", "")
 
     assert item.id == "drive-1"
     assert item.path == ""
@@ -305,86 +305,80 @@ def test_gdrive_item_from_path_resolves_shared_drive_root() -> None:
 
 def test_gdrive_item_from_path_rejects_missing_segment() -> None:
     creds = DummyCreds(valid=True)
-    session = DummySession(
-        [
-            DummyResponse(payload={"id": "root", "name": "My Drive", "mimeType": FOLDER_MIME}),
-            DummyResponse(payload={"files": []}),
-        ]
-    )
+    session = DummySession([
+        DummyResponse(
+            payload={"id": "root", "name": "My Drive", "mimeType": FOLDER_MIME}
+        ),
+        DummyResponse(payload={"files": []}),
+    ])
     client = GoogleDriveClient(credentials=creds, session=session)
 
     with pytest.raises(FileNotFoundError, match="missing"):
-        GDriveItem.from_path("My Drive", "missing", client=client)
+        client.get_from_path("My Drive", "missing")
 
 
 def test_gdrive_item_from_path_rejects_ambiguous_segment() -> None:
     creds = DummyCreds(valid=True)
-    session = DummySession(
-        [
-            DummyResponse(payload={"id": "root", "name": "My Drive", "mimeType": FOLDER_MIME}),
-            DummyResponse(
-                payload={
-                    "files": [
-                        {
-                            "id": "folder-1",
-                            "name": "reports",
-                            "mimeType": FOLDER_MIME,
-                            "parents": ["root"],
-                        },
-                        {
-                            "id": "folder-2",
-                            "name": "reports",
-                            "mimeType": FOLDER_MIME,
-                            "parents": ["root"],
-                        },
-                    ]
-                }
-            ),
-        ]
-    )
+    session = DummySession([
+        DummyResponse(
+            payload={"id": "root", "name": "My Drive", "mimeType": FOLDER_MIME}
+        ),
+        DummyResponse(
+            payload={
+                "files": [
+                    {
+                        "id": "folder-1",
+                        "name": "reports",
+                        "mimeType": FOLDER_MIME,
+                        "parents": ["root"],
+                    },
+                    {
+                        "id": "folder-2",
+                        "name": "reports",
+                        "mimeType": FOLDER_MIME,
+                        "parents": ["root"],
+                    },
+                ]
+            }
+        ),
+    ])
     client = GoogleDriveClient(credentials=creds, session=session)
 
     with pytest.raises(ValueError, match="ambiguous"):
-        GDriveItem.from_path("My Drive", "reports", client=client)
+        client.get_from_path("My Drive", "reports")
 
 
 def test_gdrive_item_from_path_trailing_slash_requires_directory() -> None:
     creds = DummyCreds(valid=True)
-    session = DummySession(
-        [
-            DummyResponse(payload={"id": "root", "name": "My Drive", "mimeType": FOLDER_MIME}),
-            DummyResponse(
-                payload={
-                    "files": [
-                        {
-                            "id": "file-1",
-                            "name": "summary.csv",
-                            "mimeType": "text/csv",
-                            "parents": ["root"],
-                        }
-                    ]
-                }
-            ),
-        ]
-    )
+    session = DummySession([
+        DummyResponse(
+            payload={"id": "root", "name": "My Drive", "mimeType": FOLDER_MIME}
+        ),
+        DummyResponse(
+            payload={
+                "files": [
+                    {
+                        "id": "file-1",
+                        "name": "summary.csv",
+                        "mimeType": "text/csv",
+                        "parents": ["root"],
+                    }
+                ]
+            }
+        ),
+    ])
     client = GoogleDriveClient(credentials=creds, session=session)
 
     with pytest.raises(NotADirectoryError, match="directory"):
-        GDriveItem.from_path("My Drive", "summary.csv/", client=client)
+        client.get_from_path("My Drive", "summary.csv/")
 
 
-
-
-
-
+@pytest.mark.skip(reason="requires configured Google Drive credentials")
 def test_gdrive_item_move() -> None:
-    
+
     test_file_id = "1lvWns43FFPerUjFpHPFfFnPLr-B-ERAqG83AVC4bpME"
     test_folder_id = "1tjz78WXDCkzyRb6WNlt0VvNSrK9PrByC"
-    
-    client = get_client("googledrive")
-    file = GDriveItem.from_id(test_file_id, client=client)
-    file.move(test_folder_id)
-    
 
-    
+    client = get_client("googledrive")
+    file = client.get_from_id(test_file_id)
+    file.move(test_folder_id)

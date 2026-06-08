@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Any
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from sharedrive.item import ServiceItem
@@ -46,16 +46,6 @@ class BaseClient(ABC):
 
     @abstractmethod
     def get_from_weburl(self, url: str) -> ServiceItem:
-        raise NotImplementedError
-    
-    @abstractmethod
-    def update_file(self, id: str, metadata: dict[str, Any], **kwargs) -> ServiceItem:
-        """Update file metadata."""
-        raise NotImplementedError
-    
-    @abstractmethod
-    def create_file(self, name: str, parent_id: str, content: bytes, **kwargs) -> ServiceItem:
-        """Create a new file with the given name, parent folder, and content."""
         raise NotImplementedError
 
 

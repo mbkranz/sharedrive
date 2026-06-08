@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import mimetypes
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.parse import unquote, urlparse
 
 
@@ -51,16 +51,9 @@ class SharepointClient(BaseClient):
         supports_fetch=True,
         supports_download=True,
         supports_auth_check=True,
-        supports_write=False,
+        supports_write=True,
     )
 
-    
-    def update_file(self, id: str, metadata: dict, **kwargs):
-        raise NotImplementedError()
-
-    def create_file(self, folder_id: str, name: str, mime_type: str, **kwargs):
-        raise NotImplementedError()
-        
     def __init__(
         self,
         auth: "MicrosoftAuth | None" = None,
@@ -78,9 +71,7 @@ class SharepointClient(BaseClient):
         elif auth is not None:
             self.access_token = auth.access_token
         else:
-            raise ValueError(
-                "SharepointClient requires either auth or access_token."
-            )
+            raise ValueError("SharepointClient requires either auth or access_token.")
 
         self.auth_header = {"Authorization": f"Bearer {self.access_token}"}
 
@@ -286,52 +277,93 @@ class SharepointClient(BaseClient):
 
         if item_id:
             endpoint = f"https://graph.microsoft.com/v1.0/drives/{drive}/items/{item_id}?$select={select_query}"
-            children_endpoint = f"https://graph.microsoft.com/v1.0/drives/{drive}/items/{item_id}/children?$select={select_query}"
         else:
             normalized_itempath = str(item_path).strip() if item_path else "/"
             if not normalized_itempath:
                 normalized_itempath = "/"
             if normalized_itempath == "/":
                 endpoint = f"https://graph.microsoft.com/v1.0/drives/{drive}/root?$select={select_query}"
-                children_endpoint = f"https://graph.microsoft.com/v1.0/drives/{drive}/root/children?$select={select_query}"
             else:
                 if not normalized_itempath.startswith("/"):
                     normalized_itempath = f"/{normalized_itempath}"
                 endpoint = f"https://graph.microsoft.com/v1.0/drives/{drive}/root:{normalized_itempath}?$select={select_query}"
-                children_endpoint = f"https://graph.microsoft.com/v1.0/drives/{drive}/root:{normalized_itempath}:/children?$select={select_query}"
 
-        metadata = self._request_json(endpoint)
-        has_children = metadata.get("folder", {}).get("childCount", 0) > 0
-        if has_children:
-            list_of_children = self._request_json(children_endpoint).get("value", [])
-            metadata["children"] = [
-                self.get_item_metadata(drive, item_id=child["id"], fields=fields)
-                for child in list_of_children
+        return self._request_json(endpoint)
+
+    def list_children(
+        self, drive_id: str, item_id: str, *, fields: list[str] | None = None
+    ) -> list[dict[str, Any]]:
+        if fields is None:
+            fields = [
+                "id",
+                "name",
+                "folder",
+                "file",
+                "parentReference",
+                "webUrl",
+                "lastModifiedDateTime",
             ]
+        select_query = ",".join(fields)
+        data = self._request_json(
+            f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/"
+            f"{item_id}/children",
+            params={"$select": select_query},
+        )
+        value = data.get("value", [])
+        if not isinstance(value, list):
+            raise GraphApiDriveError(
+                f"Unexpected children response for item '{item_id}'"
+            )
+        return value
 
-        # TODO: return other container types (bundles,lists, etc)
+    def scan_descendants(self, *, drive_id: str) -> list[dict[str, Any]]:
+        data = self._request_json(
+            f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root/delta"
+        )
+        value = data.get("value", [])
+        if not isinstance(value, list):
+            raise GraphApiDriveError(
+                f"Unexpected delta response for drive '{drive_id}'"
+            )
+        deduplicated: dict[str, dict[str, Any]] = {}
+        for item in value:
+            item_id = item.get("id")
+            if item_id and "deleted" not in item:
+                deduplicated[str(item_id)] = item
+        return list(deduplicated.values())
 
-        return metadata
+    def resolve_descendant(
+        self, *, drive_id: str, parent_path: str, name: str
+    ) -> dict[str, Any]:
+        item_path = f"/{parent_path.strip('/')}/{name}".replace("//", "/")
+        return self.get_item_metadata(drive_id, item_path=item_path)
 
     def get_from_weburl(self, url: str) -> "SharepointItem":
-        from sharedrive.clients.sharepoint import SharepointItem
-        return SharepointItem.from_weburl(url, self)
+        resolved = self._resolve_weburl(url)
+        metadata = self.get_item_metadata(
+            resolved["drive_id"], item_path=resolved["item_path"]
+        )
+        path = "" if resolved["item_path"] == "/" else resolved["item_path"].strip("/")
+        return SharepointItem._from_api_response(metadata, self, path=path)
 
     def get_from_path(
-        self,
-        *,
-        site_name: str,
-        item_path: str = "/",
-        library_name: str | None = None,
+        self, *, site_name: str, item_path: str = "/", library_name: str | None = None
     ) -> "SharepointItem":
-        return SharepointItem.from_path(
-            site_name=site_name,
-            item_path=item_path,
-            client=self,
-            library_name=library_name,
-        )
+        normalized_library = library_name.strip(" /") if library_name else None
+        normalized_library = normalized_library or None
+        normalized_path = item_path.strip()
+        parts = [part for part in normalized_path.strip("/").split("/") if part]
+        if normalized_library is None and parts:
+            normalized_library = parts.pop(0)
+        relative_path = f"/{'/'.join(parts)}" if parts else "/"
 
-    def resolve_weburl(self, url: str) -> dict[str, str]:
+        site_id = self.get_site_id(site_name)
+        drive_id = self.get_drive_id(site_id, drive_name=normalized_library)
+        metadata = self.get_item_metadata(drive_id, item_path=relative_path)
+        path = "" if relative_path == "/" else relative_path.strip("/")
+        return SharepointItem._from_api_response(metadata, self, path=path)
+
+    def _resolve_weburl(self, url: str) -> dict[str, str]:
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
             raise ValueError(f"Invalid SharePoint URL: {url}")
@@ -396,269 +428,147 @@ class SharepointClient(BaseClient):
             )
         return response.content
 
-    def get_file(self, site_name, file_path, metadata_only=False):
-        """
+    def _put_file(self, url: str, local_file_path: str | Path) -> dict[str, Any]:
+        local_path = Path(local_file_path)
+        content_type = mimetypes.guess_type(local_path)[0] or "application/octet-stream"
+        headers = {**self.auth_header, "Content-Type": content_type}
+        try:
+            with local_path.open("rb") as file_stream:
+                response = requests.put(url, headers=headers, data=file_stream)
+        except requests.exceptions.RequestException as exc:
+            raise GraphApiDriveError(
+                f"Request error while uploading {local_path}: {exc}"
+            ) from exc
 
-        gets file item metadata and file
+        if response.status_code not in {200, 201}:
+            raise GraphApiDriveError(
+                f"Failed to upload file. Status code: "
+                f"{response.status_code} - {response.reason}",
+                status_code=response.status_code,
+                response_text=response.text,
+            )
+        return response.json()
 
-        """
-
+    def create_file(
+        self, *, site_name: str, folder_path: str, local_file_path: str | Path
+    ) -> "SharepointItem":
+        """Create or replace a file at a drive-relative folder path."""
         site_id = self.get_site_id(site_name)
         drive_id = self.get_drive_id(site_id)
-        item_metadata = self.get_item_metadata(drive_id, item_path=file_path)
-
-        if not item_metadata or "id" not in item_metadata:
-            raise FileNotFoundError(
-                f"File not found at path: {file_path} in site: {site_name}"
-            )
-
-        item = {"metadata": item_metadata}
-
-        if metadata_only:
-            return item
-        else:
-            item_content = SharepointItem(item_metadata, client=self).download(Path(file_path))
-
-            item["content"] = item_content
-
-            return item
-
-    def get_folder(self, site_name: str, path: str):
-        """
-        Retrieve the contents of a folder, with optional recursion depth.
-
-        Args:
-            site_name (str): The name of the SharePoint site.
-            path (str): The path to the folder.
-
-        Returns:
-            dict: A dictionary containing the folder's contents.
-        """
-        raise NotImplementedError(
-            "get_folder has been deprecated in favor of `get_from_weburl` or `get_item_metadata` with options for recursion"
+        local_path = Path(local_file_path)
+        remote_path = f"{folder_path.rstrip('/')}/{local_path.name}"
+        payload = self._put_file(
+            f"https://graph.microsoft.com/v1.0/drives/{drive_id}"
+            f"/root:/{remote_path.lstrip('/')}:/content",
+            local_path,
+        )
+        return SharepointItem._from_api_response(
+            payload, self, path=remote_path.strip("/")
         )
 
-    def upload_new_content(self, site_name, folder_path, local_file_path):
-        """
-        [IN DEVELOPMENT] Uploads a file to a specified SharePoint folder with proper Content-Type.
-        """
+    def update_file(
+        self, *, site_name: str, folder_path: str, local_file_path: str | Path
+    ) -> "SharepointItem":
+        """Replace the content of an existing file."""
         site_id = self.get_site_id(site_name)
         drive_id = self.get_drive_id(site_id)
-
-        file_name = Path(local_file_path).name
-
-        upload_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:{folder_path}/{file_name}:/content"
-
-        # Determine the content type based on the file extension
-        content_type, _ = mimetypes.guess_type(local_file_path)
-        headers = self.auth_header.copy()
-        if content_type:
-            headers["Content-Type"] = content_type
-        else:
-            headers["Content-Type"] = (
-                "application/octet-stream"  # Fallback binary stream
-            )
-
-        with open(local_file_path, "rb") as file_stream:
-            response = requests.put(upload_url, headers=headers, data=file_stream)
-
-        if response.status_code in (200, 201):
-            print(
-                f"File '{file_name}' uploaded successfully to '{folder_path}' with Content-Type '{headers['Content-Type']}'."
-            )
-            return response.json()
-        else:
-            print(f"Failed to upload file: {response.status_code}")
-            print(response.text)
-            response.raise_for_status()
-
-    def update_content(
-        self, site_name, folder_path, local_file_path, create_if_missing=False
-    ):
-        """
-        [IN DEVELOPMENT] Updates an existing file in SharePoint, or creates it if not found (optional).
-        """
-        site_id = self.get_site_id(site_name)
-        drive_id = self.get_drive_id(site_id)
-        file_name = Path(local_file_path).name
-        file_path = f"{folder_path}/{file_name}"
-
-        content_type, _ = mimetypes.guess_type(local_file_path)
-        headers = self.auth_header.copy()
-        headers["Content-Type"] = content_type or "application/octet-stream"
-
-        # Attempt to get file metadata
-        try:
-            file_metadata = self.get_item_metadata(drive_id, item_path=file_path)
-            file_id = file_metadata.get("id")
-        except GraphApiDriveError as e:
-            if e.status_code == 404:
-                file_id = None
-            else:
-                raise
-
-        # Choose upload target based on existence
-        if file_id:
-            upload_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{file_id}/content"
-            action = "updated"
-        elif create_if_missing:
-            upload_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:{folder_path}/{file_name}:/content"
-            action = "created"
-        else:
+        local_path = Path(local_file_path)
+        remote_path = f"{folder_path.rstrip('/')}/{local_path.name}"
+        metadata = self.get_item_metadata(drive_id, item_path=remote_path)
+        item_id = metadata.get("id")
+        if not item_id:
             raise FileNotFoundError(
-                f"File '{file_name}' not found and `create_if_missing` is False."
+                f"File {remote_path!r} was not found in site {site_name!r}"
             )
+        payload = self._put_file(
+            f"https://graph.microsoft.com/v1.0/drives/{drive_id}"
+            f"/items/{item_id}/content",
+            local_path,
+        )
+        return SharepointItem._from_api_response(
+            payload, self, path=remote_path.strip("/")
+        )
 
-        with open(local_file_path, "rb") as file_stream:
-            response = requests.put(upload_url, headers=headers, data=file_stream)
+    def upload_file(
+        self,
+        *,
+        site_name: str,
+        folder_path: str,
+        local_file_path: str | Path,
+        create_if_missing: bool = True,
+    ) -> "SharepointItem":
+        """Update a file, optionally creating it when it does not exist."""
+        try:
+            return self.update_file(
+                site_name=site_name,
+                folder_path=folder_path,
+                local_file_path=local_file_path,
+            )
+        except GraphApiDriveError as exc:
+            if exc.status_code != 404:
+                raise
+        except FileNotFoundError:
+            pass
 
-        if response.status_code in (200, 201):
-            print(f"File '{file_name}' {action} successfully in '{folder_path}'.")
-            return response.json()
-        else:
-            print(f"Failed to {action} file: {response.status_code}")
-            print(response.text)
-            response.raise_for_status()
+        if not create_if_missing:
+            remote_path = f"{folder_path.rstrip('/')}/{Path(local_file_path).name}"
+            raise FileNotFoundError(
+                f"File {remote_path!r} was not found in site {site_name!r}"
+            )
+        return self.create_file(
+            site_name=site_name,
+            folder_path=folder_path,
+            local_file_path=local_file_path,
+        )
 
 
-__all__ = ["SharepointClient", "SharepointItem", "SharepointFile", "SharepointFolder"]
+__all__ = ["SharepointClient", "SharepointItem"]
 
 
 class SharepointItem(ServiceItem):
-    """A SharePoint file or folder item backed by the Graph API.
+    """A SharePoint file or folder item backed by Microsoft Graph."""
 
-    Whether an instance represents a file or a directory is determined at
-    runtime by :attr:`is_directory` (``"folder"`` key present in the API
-    payload), so a single class handles both cases.  The previous
-    ``SharepointFile`` / ``SharepointFolder`` split has been consolidated
-    here; backward-compatible aliases are kept at module level.
-    """
-
-    
-    @classmethod
-    def _resolve_client(
-        cls, client: "SharepointClient | None" = None
-    ) -> "SharepointClient":
-        if client is not None:
-            return client
-        from sharedrive.registry import get_client
-
-        return cast(SharepointClient, get_client("sharepoint"))
-
-    def move(self, new_parent_id: str):
-        raise NotImplementedError()
-
-    def add_comment(self, body: str) -> "ServiceItem":
-        raise NotImplementedError()
-        
     def __init__(
         self,
         client: "SharepointClient",
         api_payload: dict[str, Any] | None = None,
-        basepath: str | None = None,
         path: str | None = None,
         id: str | None = None,
         name: str | None = None,
         source_url: str | None = None,
         parent_id: str | None = None,
-        service_id: str | None = None,
         is_folder: bool = False,
     ):
         self.client = client
         self._api_payload = api_payload or {}
-        self._basepath = basepath
         self._path = path
         self._id = id
         self._name = name
         self._source_url = source_url
         self._parent_id = parent_id
-        self._service_id = service_id
         self._is_folder = is_folder
-        
-    _resolved_path: str | None = None
-    _resolved_path_depth: int | None = None
-    _resolved_path_root_id: str | None = None
+        self._drive_id = self._api_payload.get("parentReference", {}).get("driveId")
+
+    def move(self, new_parent_id: str) -> "SharepointItem":
+        raise NotImplementedError("Moving SharePoint items is not implemented")
 
     @classmethod
-    def from_weburl(
-        cls, url: str, client: "SharepointClient | None" = None
-    ) -> "SharepointItem":
-        client = cls._resolve_client(client)
-        resolved = client.resolve_weburl(url)
-        metadata = client.get_item_metadata(
-            resolved["drive_id"], item_path=resolved["item_path"]
-        )
-        return cls(
-            client=client,
-            api_payload=metadata,
-            id=metadata.get("id"),
-            name=metadata.get("name"),
-            path="",
-            source_url=metadata.get("webUrl"),
-            parent_id=metadata.get("parentReference", {}).get("id"),
-            service_id=metadata.get("id"),
-            is_folder="folder" in metadata,
-        )
-
-    @classmethod
-    def from_path(
-        cls,
-        site_name: str,
-        item_path: str = "/",
-        client: "SharepointClient | None" = None,
-        *,
-        library_name: str | None = None,
-    ) -> "SharepointItem":
-        client = cls._resolve_client(client)
-
-        normalized_library = None
-        if library_name is not None:
-            normalized_library = library_name.strip(" /") or None
-        normalized_path = item_path.strip()
-        if normalized_path in {"", "/"}:
-            relative_item_path = "/"
-        else:
-            parts = [part for part in normalized_path.strip("/").split("/") if part]
-            if normalized_library is None:
-                if not parts:
-                    relative_item_path = "/"
-                else:
-                    normalized_library = parts[0]
-                    parts = parts[1:]
-                    relative_item_path = f"/{'/'.join(parts)}" if parts else "/"
-            else:
-                relative_item_path = f"/{'/'.join(parts)}" if parts else "/"
-
-        site_id = client.get_site_id(site_name)
-        drive_id = client.get_drive_id(site_id, drive_name=normalized_library)
-        metadata = client.get_item_metadata(drive_id, item_path=relative_item_path)
-        resolved_path = "" if relative_item_path == "/" else relative_item_path.strip("/")
-        return cls(
-            client=client,
-            api_payload=metadata,
-            id=metadata.get("id"),
-            name=metadata.get("name"),
-            path=resolved_path,
-            source_url=metadata.get("webUrl"),
-            parent_id=metadata.get("parentReference", {}).get("id"),
-            service_id=metadata.get("id"),
-            is_folder="folder" in metadata,
-        )
-
-    @classmethod
-    def from_api_response(
+    def _from_api_response(
         cls,
         api_payload: dict[str, Any],
         client: "SharepointClient",
         current_rel_path: str = "",
+        *,
+        path: str | None = None,
     ) -> "SharepointItem":
         is_folder = "folder" in api_payload
         parent_id = api_payload.get("parentReference", {}).get("id")
-        
-        relative_path = str(api_payload.get("relative_path", "")).strip()
-        path = relative_path if relative_path else api_payload.get("name", "")
-        if current_rel_path:
-             path = f"{current_rel_path}/{path}".strip("/")
+
+        if path is None:
+            relative_path = str(api_payload.get("relative_path", "")).strip()
+            path = relative_path or api_payload.get("name", "")
+            if current_rel_path:
+                path = f"{current_rel_path}/{path}".strip("/")
 
         return cls(
             client=client,
@@ -668,47 +578,8 @@ class SharepointItem(ServiceItem):
             path=path,
             source_url=api_payload.get("webUrl"),
             parent_id=parent_id,
-            service_id=api_payload.get("id"),
             is_folder=is_folder,
         )
-
-    @property
-    def parent(self) -> SharepointItem | None:
-        if self._parent_id:
-            drive_id = self._api_payload.get("parentReference", {}).get("driveId")
-            if drive_id:
-                parent_metadata = self.client.get_item_metadata(drive_id, item_id=self._parent_id)
-                return SharepointItem.from_api_response(api_payload=parent_metadata, client=self.client)
-        return None
-
-    @property
-    def resolved_path(self) -> str | None:
-        return self._resolved_path
-
-    @property
-    def resolved_path_depth(self) -> int | None:
-        return self._resolved_path_depth
-
-    def resolve_path(self, depth: int | None = None) -> str:
-        current_node: SharepointItem = self
-        path_parts = [self.name]
-        current_depth = 0
-        
-        while current_node._parent_id:
-            if depth is not None and current_depth >= depth:
-                break
-            parent_node = current_node.parent
-            if parent_node is None:
-                break
-            
-            path_parts.insert(0, parent_node.name)
-            current_node = parent_node
-            current_depth += 1
-            
-        self._resolved_path = "/".join([p for p in path_parts if p is not None])
-        self._resolved_path_depth = current_depth
-        self._resolved_path_root_id = current_node._service_id
-        return self._resolved_path
 
     @property
     def id(self) -> str:
@@ -721,10 +592,6 @@ class SharepointItem(ServiceItem):
     @property
     def path(self) -> str:
         return self._path or ""
-        
-    @path.setter
-    def path(self, new_path: str) -> None:
-        self._path = new_path
 
     @property
     def service_type(self) -> str:
@@ -743,21 +610,71 @@ class SharepointItem(ServiceItem):
         """Direct children of this directory; empty list for files."""
         if not self.is_directory:
             return []
+        indexed = self._indexed_children()
+        if indexed is not None:
+            return indexed
         contents = self._api_payload.get("children")
         if contents is None:
-            drive_id = self._api_payload.get("parentReference", {}).get("driveId")
+            drive_id = self._drive_id
             if not drive_id:
                 raise ValueError("Missing driveId in SharePoint folder metadata")
-            refreshed = self.client.get_item_metadata(drive_id, item_id=self.id)
-            contents = refreshed.get("children", [])
-            self._api_payload.update(refreshed)
+            contents = self.client.list_children(drive_id, self.id)
 
-        return [
-            SharepointItem.from_api_response(
+        child_items = [
+            SharepointItem._from_api_response(
                 child_payload, client=self.client, current_rel_path=self.path
             )
             for child_payload in contents
         ]
+        return self._cache_children(child_items)
+
+    def _scan_descendants(self) -> list["ServiceItem"]:
+        if "children" in self._api_payload:
+            return super()._scan_descendants()
+        if not self._drive_id:
+            raise ValueError("Missing driveId in SharePoint folder metadata")
+        metadata_by_id = {
+            str(entry["id"]): entry
+            for entry in self.client.scan_descendants(drive_id=self._drive_id)
+            if entry.get("id")
+        }
+        by_parent: dict[str, list[dict[str, Any]]] = {}
+        for entry in metadata_by_id.values():
+            parent_id = entry.get("parentReference", {}).get("id")
+            if parent_id:
+                by_parent.setdefault(str(parent_id), []).append(entry)
+
+        descendants: list[ServiceItem] = []
+        pending: list[tuple[SharepointItem, dict[str, Any]]] = [
+            (self, child) for child in by_parent.get(self.id, [])
+        ]
+        while pending:
+            parent, payload = pending.pop(0)
+            item = SharepointItem._from_api_response(
+                payload, client=self.client, current_rel_path=parent.path
+            )
+            descendants.append(item)
+            pending.extend((item, child) for child in by_parent.get(item.id, []))
+        return descendants
+
+    def _resolve_children(self, name: str) -> list["ServiceItem"]:
+        indexed = self._indexed_children()
+        if indexed is not None:
+            return [child for child in indexed if child.name == name]
+        if not self._drive_id:
+            return super()._resolve_children(name)
+        try:
+            payload = self.client.resolve_descendant(
+                drive_id=self._drive_id, parent_path=self.path, name=name
+            )
+        except GraphApiDriveError as exc:
+            if exc.status_code == 404:
+                return []
+            raise
+        item = SharepointItem._from_api_response(
+            payload, client=self.client, current_rel_path=self.path
+        )
+        return [item]
 
     def refresh(self, *, include_children: bool = True) -> "SharepointItem":
         """Re-fetch the API payload (and optionally children) from Graph."""
@@ -767,55 +684,20 @@ class SharepointItem(ServiceItem):
                 f"Missing driveId in SharePoint "
                 f"{'folder' if self.is_directory else 'item'} metadata"
             )
+        old_name = self.name
+        old_path = Path(self.path)
         refreshed = self.client.get_item_metadata(drive_id, item_id=self.id)
-        if self.is_directory and not include_children and "children" in self._api_payload:
-            refreshed["children"] = self._api_payload["children"]
+        self._invalidate_traversal()
         self._api_payload = refreshed
         self._name = refreshed.get("name")
+        if self.path and old_path.name == old_name:
+            self._path = str(old_path.with_name(self.name)).replace("\\", "/")
         self._id = refreshed.get("id")
         self._source_url = refreshed.get("webUrl")
         self._is_folder = "folder" in refreshed
         self._parent_id = refreshed.get("parentReference", {}).get("id")
+        self._drive_id = refreshed.get("parentReference", {}).get("driveId")
         return self
-
-    def export(self, target_mime_type: str | None = None, output_path: str | None = None) -> bytes | str:
-        """Export this item if possible, otherwise download it."""
-        # Microsoft Graph API allows exporting via PDF. 
-        # Example format: pdf
-        # https://learn.microsoft.com/en-us/graph/api/driveitem-get-content-format?view=graph-rest-1.0&tabs=http
-        if target_mime_type == "application/pdf":
-            # Just add format=pdf to the download url basically.
-            # But the most robust way via graph is to hit /content?format=pdf
-            pass # fallthrough below for now to regular download if not supported
-            
-            if self.is_directory:
-                 raise NotImplementedError("Cannot export a directory")
-            
-            drive_id = self._api_payload.get("parentReference", {}).get("driveId")
-            if drive_id:
-                url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{self.id}/content?format=pdf"
-                
-                target = Path(output_path) if output_path else None
-                if target and target.is_dir():
-                    target = target / (str(Path(self.name).with_suffix(".pdf")))
-                elif target:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                
-                response = requests.get(url, headers=self.client.auth_header, stream=True)
-                if response.status_code == 302:
-                    redirect_url = response.headers.get("Location")
-                    if redirect_url:
-                        response = requests.get(redirect_url, stream=True)
-                response.raise_for_status()
-                
-                if target:
-                    with open(target, "wb") as f:
-                        for chunk in response.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                    return ""
-                return response.content
-
-        return self.download(target_dir=output_path) if output_path else b""
 
     def download(self, target_dir: str | Path) -> None:
         """Download this item.
@@ -836,27 +718,9 @@ class SharepointItem(ServiceItem):
         if not drive_id:
             raise ValueError("Missing driveId in Sharepoint item metadata")
 
-        url = self._api_payload.get(
-            "@microsoft.graph.downloadUrl",
-            f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{self.id}/content",
+        content = self.client.download_content(
+            drive_id=drive_id,
+            item_id=self.id,
+            download_url=self._api_payload.get("@microsoft.graph.downloadUrl"),
         )
-
-        response = requests.get(url, headers=self.client.auth_header, stream=True)
-        if response.status_code == 302:
-            redirect_url = response.headers.get("Location")
-            if redirect_url:
-                response = requests.get(redirect_url, stream=True)
-        response.raise_for_status()
-
-        with open(target, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatible aliases
-# ---------------------------------------------------------------------------
-# Old code that imports or subclasses ``SharepointFile`` / ``SharepointFolder``
-# will continue to work because these names now point to ``SharepointItem``.
-SharepointFile = SharepointItem
-SharepointFolder = SharepointItem
+        target.write_bytes(content)

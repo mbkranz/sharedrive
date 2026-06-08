@@ -10,10 +10,7 @@ from sharedrive.clients.aws import S3Client, S3Item
 
 
 def client_error(code: str = "404") -> ClientError:
-    return ClientError(
-        {"Error": {"Code": code, "Message": "not found"}},
-        "HeadObject",
-    )
+    return ClientError({"Error": {"Code": code, "Message": "not found"}}, "HeadObject")
 
 
 class FakeS3Client:
@@ -65,6 +62,16 @@ def test_get_from_weburl_resolves_s3_object() -> None:
     assert not item.is_directory
 
 
+def test_s3_item_move_is_explicitly_unsupported() -> None:
+    client = S3Client(client=FakeS3Client())
+    item = S3Item(
+        client=client, bucket="example-bucket", key="file.csv", is_directory=False
+    )
+
+    with pytest.raises(NotImplementedError, match="Moving S3 items"):
+        item.move("new-parent")
+
+
 def test_get_from_weburl_resolves_bucket_root_as_directory() -> None:
     fake_s3 = FakeS3Client()
     client = S3Client(client=fake_s3)
@@ -113,43 +120,28 @@ def test_get_from_weburl_resolves_prefix_after_missing_object() -> None:
     ]
 
 
-def test_s3_item_from_path_resolves_object_key() -> None:
+def test_client_get_from_path_resolves_object_key() -> None:
     fake_s3 = FakeS3Client(
         head_objects={("example-bucket", "path/file.csv"): {"ContentLength": 3}}
     )
     client = S3Client(client=fake_s3)
 
-    item = S3Item.from_path("example-bucket", "path/file.csv", client=client)
+    item = client.get_from_path(bucket="example-bucket", key="path/file.csv")
 
     assert item.bucket == "example-bucket"
     assert item.path == "path/file.csv"
     assert not item.is_directory
 
 
-def test_s3_item_from_path_resolves_bucket_root() -> None:
+def test_client_get_from_path_resolves_bucket_root() -> None:
     fake_s3 = FakeS3Client()
     client = S3Client(client=fake_s3)
 
-    item = S3Item.from_path("example-bucket", client=client)
+    item = client.get_from_path(bucket="example-bucket")
 
     assert item.bucket == "example-bucket"
     assert item.path == ""
     assert item.is_directory
-
-
-def test_s3_item_from_path_uses_registry_client_when_omitted(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake_s3 = FakeS3Client(
-        head_objects={("example-bucket", "path/file.csv"): {"ContentLength": 3}}
-    )
-    client = S3Client(client=fake_s3)
-
-    monkeypatch.setattr("sharedrive.registry.get_client", lambda _name: client)
-
-    item = S3Item.from_path("example-bucket", "path/file.csv")
-
-    assert item.path == "path/file.csv"
 
 
 def test_get_from_weburl_propagates_missing_object_and_prefix() -> None:
@@ -212,4 +204,46 @@ def test_s3_item_download_uses_boto3_download_file(tmp_path: Path) -> None:
 
     assert fake_s3.download_calls == [
         ("example-bucket", "archive/file.txt", str(tmp_path / "file.txt"))
+    ]
+
+
+def test_s3_recursive_traversal_pages_and_synthesizes_directories() -> None:
+    class PagingS3(FakeS3Client):
+        def list_objects_v2(self, **kwargs: Any) -> dict[str, Any]:
+            self.list_calls.append(kwargs)
+            if "ContinuationToken" not in kwargs:
+                return {
+                    "IsTruncated": True,
+                    "NextContinuationToken": "page-2",
+                    "Contents": [{"Key": "archive/nested/a.txt"}],
+                }
+            return {
+                "IsTruncated": False,
+                "Contents": [
+                    {"Key": "archive/nested/deeper/b.txt"},
+                    {"Key": "archive/marker/"},
+                ],
+            }
+
+    fake_s3 = PagingS3()
+    item = S3Item(
+        client=S3Client(client=fake_s3),
+        bucket="example-bucket",
+        key="archive/",
+        is_directory=True,
+    )
+
+    assert [(child.path, child.is_directory) for child in item.iter_items()] == [
+        ("archive/nested/", True),
+        ("archive/nested/a.txt", False),
+        ("archive/nested/deeper/", True),
+        ("archive/nested/deeper/b.txt", False),
+    ]
+    assert fake_s3.list_calls == [
+        {"Bucket": "example-bucket", "Prefix": "archive/"},
+        {
+            "Bucket": "example-bucket",
+            "Prefix": "archive/",
+            "ContinuationToken": "page-2",
+        },
     ]

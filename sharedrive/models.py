@@ -190,19 +190,20 @@ class GDriveApiFile(pydantic.BaseModel,validate_assignment=True):
     
     model_config = pydantic.ConfigDict()
     
-    kind: Annotated[GDriveKind, Literal["file"]]
-    id: Optional[str]
-    name: Optional[str]
+    kind: Annotated[GDriveKind, Literal["file"]] = "file"
+    id: Optional[str] = None
+    name: Optional[str] = None
     mimeType: Optional[str] = None
     parents: GDriveParents
     webViewLink: Optional[str] = None
+    driveId: Optional[str] = None
     
     
 class GDriveApiDrive(pydantic.BaseModel,validate_assignment=True):
     
-    kind: Annotated[GDriveKind, Literal["drive"]]
-    id: Optional[str]
-    name: Optional[str]
+    kind: Annotated[GDriveKind, Literal["drive"]] = "drive"
+    id: Optional[str] = None
+    name: Optional[str] = None
 
 GDriveApiItem = Annotated[Union[GDriveApiFile, GDriveApiDrive],Field(discriminator="kind")]
     
