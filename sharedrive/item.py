@@ -114,7 +114,12 @@ class ServiceItem(ABC):
 
     @property
     def parent_id(self) -> ServiceId | None:
-        """Best-known parent identifier for this item, when available."""
+        """Best-known parent identifier for this item, when available.
+
+        ``_parent_id`` is provider metadata from remote APIs. When unavailable,
+        ``_traversal_parent_id`` is a traversal-time fallback inferred while
+        walking descendants.
+        """
         return getattr(self, "_parent_id", None) or getattr(
             self, "_traversal_parent_id", None
         )
