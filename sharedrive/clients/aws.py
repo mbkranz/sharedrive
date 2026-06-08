@@ -271,13 +271,13 @@ class S3Item(ServiceItem):
                         key=current,
                         is_directory=True,
                     )
-                    directory._parent_id = str(parent.id)
+                    directory._traversal_parent_id = str(parent.id)
                     items[current] = directory
                 parent = directory
             file_item = S3Item(
                 client=self.client, bucket=self.bucket, key=key, is_directory=False
             )
-            file_item._parent_id = str(parent.id)
+            file_item._traversal_parent_id = str(parent.id)
             items[key] = file_item
         return sorted(items.values(), key=lambda item: (item.path, item.name))
 
