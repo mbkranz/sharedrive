@@ -10,7 +10,6 @@ from sharedrive.clients.googledrive import (
     GoogleBaseClient,
     GoogleDriveClient,
 )
-from sharedrive import get_client
 from sharedrive.exceptions import GoogleDriveError
 
 
@@ -377,13 +376,3 @@ def test_gdrive_item_from_path_trailing_slash_requires_directory() -> None:
     with pytest.raises(NotADirectoryError, match="directory"):
         client.get_from_path("My Drive", "summary.csv/")
 
-
-@pytest.mark.skip(reason="requires configured Google Drive credentials")
-def test_gdrive_item_move() -> None:
-
-    test_file_id = "1lvWns43FFPerUjFpHPFfFnPLr-B-ERAqG83AVC4bpME"
-    test_folder_id = "1tjz78WXDCkzyRb6WNlt0VvNSrK9PrByC"
-
-    client = get_client("googledrive")
-    file = client.get_from_id(test_file_id)
-    file.move(test_folder_id)
