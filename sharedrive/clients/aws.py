@@ -161,12 +161,19 @@ class S3Client(BaseClient):
 
 class S3Item(ServiceItem):
     def __init__(
-        self, *, client: S3Client, bucket: str, key: str, is_directory: bool
+        self,
+        *,
+        client: S3Client,
+        bucket: str,
+        key: str,
+        is_directory: bool,
+        parent_id: str | None = None,
     ) -> None:
         self.client = client
         self.bucket = bucket
         self.key = key
         self._is_directory = is_directory
+        self._parent_id = parent_id
 
     def move(self, new_parent_id: str) -> "S3Item":
         raise NotImplementedError("Moving S3 items is not implemented")
@@ -228,8 +235,8 @@ class S3Item(ServiceItem):
                     bucket=self.bucket,
                     key=child_prefix,
                     is_directory=True,
+                    parent_id=str(self.id),
                 )
-                child_item._parent_id = str(self.id)
                 children.append(child_item)
 
         for item in contents:
@@ -241,8 +248,8 @@ class S3Item(ServiceItem):
                 bucket=self.bucket,
                 key=child_key,
                 is_directory=False,
+                parent_id=str(self.id),
             )
-            child_item._parent_id = str(self.id)
             children.append(child_item)
 
         self._cache_children(children)
