@@ -43,7 +43,6 @@ API_MODULES = [
     {"module": "sharedrive.helpers", "path": ROOT / "sharedrive" / "helpers.py"},
     {"module": "sharedrive.models", "path": ROOT / "sharedrive" / "models.py"},
     {"module": "sharedrive.item", "path": ROOT / "sharedrive" / "item.py"},
-    {"module": "sharedrive.catalog", "path": ROOT / "sharedrive" / "catalog.py"},
     {
         "module": "sharedrive.clients.aws",
         "path": ROOT / "sharedrive" / "clients" / "aws.py",

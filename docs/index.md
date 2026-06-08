@@ -70,10 +70,20 @@ item.refresh()
 for child in item.children:
     print(child.path)
 
-item.refresh_tree()
+folder = item.get_path("reports")
+for entry in folder.iter_items():
+    print(entry.path, entry.is_directory)
+
+for file_item in folder.iter_files():
+    print(file_item.path)
 ```
 
-Runtime items use `refresh()` to reload remote state in memory and `refresh_tree()` to hydrate an entire folder subtree before traversal. Descriptor metadata updates use `SharedriveCatalog.fetch(..., persist=True)`.
+Runtime item paths are relative to their bucket, Google Drive root, or
+SharePoint document library. `get_path()` is relative to the current item,
+`iter_items()` yields both directories and files, and `iter_files()` filters the
+same traversal to files. Recursive traversal reuses an in-memory hierarchy
+snapshot until `refresh()` or a mutation invalidates it. Descriptor metadata
+updates use `SharedriveCatalog.fetch(..., persist=True)`.
 
 ## Machine-readable transfer output
 

@@ -39,7 +39,11 @@ Auto-generated from source signatures and docstrings.
 ### Constants
 
 - `CATALOG_PROFILE = 'data-package-catalog'`
+- `ENTITY_TYPE_ALIASES = {'file': 'File', 'object': 'File', 'blob': 'File', 'document': 'File', 'spreadsheet': 'File', 'directory': 'Directory', 'folder': 'Directory', 'container': 'Container', 'bucket': 'Container'}`
+- `SERVICE_TYPE_ALIASES = {'google': 'GoogleDrive', 'googledrive': 'GoogleDrive', 'google_drive': 'GoogleDrive', 'google-drive': 'GoogleDrive', 'drive': 'GoogleDrive', 'sharepoint': 'SharePoint', 'share_point': 'SharePoint', 'share-point': 'SharePoint', 's3': 'S3'}`
 - `SUPPORTED_SERVICE_TYPES = {'GoogleDrive', 'SharePoint', 'S3'}`
+- `EntityTypeValue = Annotated[str, BeforeValidator(normalize_entity_type)]`
+- `ServiceTypeValue = Annotated[str, BeforeValidator(normalize_service_type)]`
 
 ### Functions
 
@@ -55,8 +59,7 @@ Auto-generated from source signatures and docstrings.
   - Normalize OpenMetadata-style drive/storage entity names.
 - `def normalize_service_type(value: str | None) -> str | None`
   - Normalize OpenMetadata-style drive/storage service names.
-- `def resolve_cache_path(resource: 'DriveResource', output_dir: Path) -> Path`
-  - Resolve a resource's `_cache` path under the requested output directory.
+- `def resolve_cache_path(cache: str | None, basepath: str | None)`
 - `def resolve_entity_type(locator: str, *, service_type: str, entity_type: str | None = None) -> str`
   - Return the declared or inferred entity type.
 - `def resolve_service_type(locator: str, service_type: str | None = None) -> str`
@@ -64,137 +67,86 @@ Auto-generated from source signatures and docstrings.
 
 ### Classes
 
+#### `CatalogSelector`
+- Normalized selector for catalog/package/resource lookup.
+- Methods:
+  - `def matches(self, model: Model, *, path: str | None = None) -> bool`
+    - Return True if this selector matches a model name or dot-path.
+
 #### `DriveCatalog`
+- A registry, library, or folder containing independent data entities.
 - Fields:
   - `profile: str`
-  - `accessURL: Optional[str]`
-  - `serviceType: Optional[str]`
-  - `entityType: Optional[str]`
-  - `resources: list[DriveResource]`
-  - `packages: list[DrivePackage]`
-  - `catalogs: list['DriveCatalog']`
+  - `basepath: Optional[str]`
+  - `name: Optional[str]`
+  - `title: Optional[str]`
+  - `description: Optional[str]`
+  - `resources: list[DriveResourceChild]`
+  - `packages: list[DrivePackageChild]`
+  - `catalogs: list[DriveCatalogChild]`
 - Methods:
-  - `def adapter_name(self) -> str`
-  - `def to_dict(self)`
-  - `def empty(cls) -> 'DriveCatalog'`
+  - `def model_post_init(self, _) -> None`
+  - `def assert_valid_entity_paths(self)`
+  - `def get_package(self, name: str) -> DrivePackageChild`
+    - Get a package by name or dot-path, traversing catalog references lazily.
+  - `def get_resource(self, name: str) -> DriveResourceChild`
+    - Get a resource by name or dot-path, traversing catalog references lazily.
+  - `def get_catalog(self, name: str) -> DriveCatalog | DriveCatalogReference | DriveRemoteCatalog`
+    - Get a catalog by name or dot-path.
+  - `def dereference(self) -> 'DriveCatalog'`
+  - `def from_path_dereferenced(cls, path: str) -> 'DriveCatalog'`
 
-#### `DrivePackage`
-- Logical Data Package; not used as a remote folder surrogate.
+#### `DriveCatalogReference`
+- Unresolved reference to an external DriveCatalog document.
 - Fields:
-  - `resources: list['DriveResource | DrivePackage']`
-  - `sources: list[DriveSource]`
+  - `conformsTo: type[DriveCatalogChild]`
 
-#### `DriveResource`
+#### `DriveRemotePackage`
+- Data Package package with shared-drive adapter metadata.
+- Fields:
+  - `accessUrl: RemoteAccessUrl`
+  - `cache: Optional[LocalCachePath]`
+  - `serviceType: Optional[ServiceTypeValue]`
+  - `serviceId: Optional[str]`
+  - `entityType: Optional[EntityTypeValue]`
+
+#### `DriveRemoteResource`
 - Data Package resource with shared-drive adapter metadata.
 - Fields:
-  - `cache: Annotated[Optional[str], Field(default=None, alias='_cache', validation_alias=AliasChoices('_cache', 'cache'))]`
-  - `serviceType: Optional[str]`
-  - `entityType: Optional[str]`
-  - `sources: list[DriveSource]`
-- Methods:
-  - `def adapter_name(self) -> str`
-  - `def from_drive_metadata(cls, *, name: str, path: str, service_type: str, entity_type: str, source_url: str, format_str: str | None = None, drive_id: str | None = None) -> 'DriveResource'`
-    - Create a standards-aligned resource from runtime drive metadata.
-
-#### `DriveSource`
-- Provenance source.
+  - `path: RemotePathUrl`
+  - `serviceType: Optional[ServiceTypeValue]`
+  - `serviceId: Optional[str]`
+  - `entityType: Optional[EntityTypeValue]`
+  - `cache: Optional[LocalCachePath]`
 
 
 ## `sharedrive.item`
 
 ### Classes
 
-#### `DriveFile`
-- Backward-compatible file item base class.
-- Methods:
-  - `def is_directory(self) -> bool`
-
-#### `DriveFolder`
-- Backward-compatible folder item base class.
-- Methods:
-  - `def is_directory(self) -> bool`
-
 #### `ServiceItem`
-- Abstract base for a single item (file or directory) on a remote drive.
+- Base interface for files and directories in a remote service.
 - Methods:
-  - `def id(self) -> str`
+  - `def id(self) -> ServiceId`
   - `def name(self) -> str`
   - `def path(self) -> str`
-  - `def service_type(self) -> str`
+  - `def service_type(self) -> ServiceTypeValue`
   - `def source_url(self) -> str`
   - `def is_directory(self) -> bool`
   - `def refresh(self, *, include_children: bool = True) -> 'ServiceItem'`
     - Refresh this runtime item from its backing service.
   - `def children(self) -> list['ServiceItem']`
     - Direct child items for directories; always empty for files.
-  - `def iter_files(self) -> Iterable['ServiceItem']`
-    - Recursively yield all leaf (non-directory) items.
-  - `def refresh_tree(self) -> 'ServiceItem'`
-    - Recursively refresh this item and all of its descendants.
+  - `def get_path(self, relative_path: str | Path) -> 'ServiceItem'`
+    - Resolve a descendant item by traversing child names in *relative_path*.
+  - `def iter_items(self, *, recursive: bool = True) -> Iterator['ServiceItem']`
+    - Yield child files and directories in deterministic path order.
+  - `def iter_files(self, *, recursive: bool = True) -> Iterator['ServiceItem']`
+    - Yield file descendants, excluding directories and the starting item.
   - `def download(self, target: Path | str) -> None`
     - Download this item to *target*.
-  - `def to_source(self) -> DriveSource`
-    - Convert to a provenance source entry.
-  - `def to_resource(self) -> DriveResource | DrivePackage | DriveCatalog`
+  - `def to_catalog(self) -> DriveRemoteCatalog | DriveRemoteResource`
     - Convert to a descriptor resource, package, or catalog entry.
-  - `def to_dp(self) -> DriveResource | DrivePackage`
-    - Deprecated alias for :meth:`to_resource`.
-
-
-## `sharedrive.catalog`
-
-### Classes
-
-#### `AuthCheckResult`
-- Fields:
-  - `adapter: str`
-  - `ok: bool`
-  - `message: str`
-- Methods:
-  - `def to_dict(self) -> dict[str, str | bool]`
-
-#### `CatalogSelector`
-- Normalised selector for catalog entities.
-- Methods:
-  - `def tokens(self) -> frozenset[str] | None`
-    - The normalised set of filter tokens, or ``None`` for "select all".
-  - `def matches(self, ref: Any) -> bool`
-    - Return True if *ref* matches any selector token.
-
-#### `DownloadSummary`
-- Fields:
-  - `total_resources: int`
-  - `downloaded: int`
-  - `skipped: int`
-  - `dry_run_actions: int`
-  - `failures: int`
-- Methods:
-  - `def ok(self) -> bool`
-
-#### `FetchSummary`
-- Fields:
-  - `resource_name: str`
-  - `generated_resources: int`
-  - `dry_run: bool`
-  - `changed: bool`
-  - `failures: int`
-  - `errors: list[str]`
-- Methods:
-  - `def ok(self) -> bool`
-
-#### `SharedriveCatalog`
-- Python workflow API for one shared-drive descriptor catalog.
-- Methods:
-  - `def from_path(cls, path: Path | str) -> 'SharedriveCatalog'`
-  - `def save(self, path: Path | str | None = None) -> Path`
-    - Write the loaded descriptor model to disk.
-  - `def client(self, adapter: str) -> Any`
-  - `def references(self, selector: str | Iterable[str] | None = None) -> list[Any]`
-  - `def resources(self, selector: str | Iterable[str] | None = None) -> list[DriveResource]`
-  - `def adapter_names(self, selector: str | Iterable[str] | None = None) -> list[str]`
-  - `def check_auth(self, selector: str | Iterable[str] | None = None, *, adapters: Iterable[str] | None = None) -> list[AuthCheckResult]`
-  - `def fetch(self, selector: str | None = None, *, dry_run: bool = False, depth: int = -1, log: LogFn | None = print, persist: bool | Path | str = False) -> list[FetchSummary]`
-  - `def download(self, selector: str | Iterable[str] | None = None, *, output_dir: Path | str = Path('resources'), dry_run: bool = False, check_auth: bool = False, log: LogFn | None = print) -> DownloadSummary`
 
 
 ## `sharedrive.clients.aws`
@@ -203,7 +155,6 @@ Auto-generated from source signatures and docstrings.
 
 - `def check_s3_credentials() -> None`
   - Validate that AWS credentials are available for S3 operations.
-- S3 URL parsing is internal to `S3Client.get_from_weburl(...)`.
 
 ### Classes
 
@@ -212,9 +163,14 @@ Auto-generated from source signatures and docstrings.
   - `def build_default(cls) -> 'S3Client'`
   - `def check_auth(cls) -> None`
   - `def get_from_weburl(self, url: str) -> 'S3Item'`
+  - `def get_from_path(self, *, bucket: str, key: str = '') -> 'S3Item'`
+  - `def resolve_descendant(self, *, bucket: str, parent_key: str, name: str) -> 'S3Item'`
+  - `def list_children(self, *, bucket: str, prefix: str) -> tuple[list[dict[str, Any]], list[str]]`
+  - `def scan_descendants(self, *, bucket: str, prefix: str) -> list[dict[str, Any]]`
 
 #### `S3Item`
 - Methods:
+  - `def move(self, new_parent_id: str) -> 'S3Item'`
   - `def id(self) -> str`
   - `def name(self) -> str`
   - `def path(self) -> str`
@@ -237,7 +193,6 @@ Auto-generated from source signatures and docstrings.
   - `capabilities: ClassVar[AdapterCapabilities]`
 - Methods:
   - `def refresh(self) -> None`
-  - `def get_from_weburl(self, url: str)`
   - `def build_default(cls) -> 'GoogleBaseClient'`
     - Construct from environment variables / settings.
   - `def check_auth(cls) -> None`
@@ -246,42 +201,51 @@ Auto-generated from source signatures and docstrings.
 #### `GoogleDriveClient`
 - Google Drive client (ID-first) with read/write and full export coverage.
 - Methods:
-  - `def list_files(self, *, query: str | None = None, fields: str = 'id, name, mimeType, parents', page_size: int = 100)`
+  - `def list_files(self, folder_file_id: str | None = None, queries: list[str] | None = None, params: Dict[str, Any] | None = None, page_size: int = 100) -> list[GDriveApiFile]`
     - List all files the authenticated user has access to.
-  - `def list_folder_contents(self, folder_id: str, *, recursive: bool = False) -> list[Dict[str, Any]]`
-    - List folder descendants and annotate each entry with a relative_path.
-  - `def list_folder_files(self, folder_id: str, *, recursive: bool = True) -> list[Dict[str, Any]]`
-    - List files contained in a folder, optionally descending into child folders.
-  - `def list_folder_files_from_weburl(self, web_url: str, *, recursive: bool = True) -> list[Dict[str, Any]]`
-    - Resolve a folder URL and list files contained within it.
-  - `def get_file(self, file_id: str, **kwargs) -> Dict[str, Any]`
+  - `def list_children(self, parent_id: str, *, drive_id: str | None = None, name: str | None = None) -> list[GDriveApiFile]`
+  - `def scan_descendants(self, *, drive_id: str | None = None) -> list[GDriveApiFile]`
+  - `def resolve_descendant(self, *, parent_id: str, name: str, drive_id: str | None = None) -> list[GDriveApiFile]`
+  - `def list_drives(self, *, page_size: int = 100) -> list[GDriveApiDrive]`
+    - List all Shared Drives the authenticated user has access to.
+  - `def get_file(self, file_id: str, **kwargs) -> GDriveApiFile`
   - `def infer_export_mime_type(self, file_id: str) -> Optional[str]`
   - `def download_file(self, file_id: str, output_path: Optional[str] = None, mime_type: Optional[str] = None, acknowledge_abuse: bool = False, byte_range: Optional[str] = None, supports_all_drives: bool = True, **kwargs) -> Union[bytes, str]`
   - `def export_file(self, file_id: str, mime_type: Optional[str] = None, output_path: Optional[str] = None, supports_all_drives: bool = True, **kwargs) -> Union[bytes, str]`
-  - `def create_file(self, parent_folder_id: str, file_in_bytes: Optional[bytes] = None, mime_type: Optional[str] = None, name: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None, supports_all_drives: bool = True, **kwargs) -> Dict[str, Any]`
-  - `def update_file(self, file_id: str, file_in_bytes_or_path: Optional[Union[str, bytes]] = None, mime_type: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]`
-  - `def create_folder(self, parent_folder_id: str, name: str) -> Dict[str, Any]`
-  - `def get_from_weburl(self, web_url: str, fields: str = '*') -> ServiceItem`
-    - Return metadata for a Google Drive file or folder given a web URL,
-  - `def download_from_weburl(self, web_url: str, **kwargs) -> Union[bytes, str]`
-  - `def export_from_weburl(self, web_url: str, mime_type: Optional[str] = None, **kwargs) -> Union[bytes, str]`
-  - `def update_from_weburl(self, web_url: str, **kwargs) -> Dict[str, Any]`
+  - `def create_file(self, name: str, parent_id: str, content: bytes, mime_type: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None, supports_all_drives: bool = True, **kwargs) -> GDriveItem`
+  - `def update_file(self, id: str, params: Optional[Dict[str, Any]] = None, metadata: Optional[Dict[str, Any]] = None, file_in_bytes_or_path: Optional[Union[str, bytes]] = None, mime_type: Optional[str] = None, **kwargs) -> GDriveItem`
+  - `def create_folder(self, parent_folder_id: str, name: str) -> GDriveItem`
+  - `def get_from_weburl(self, url: str) -> GDriveItem`
+    - Resolve a Google Drive file or folder URL.
+  - `def get_from_id(self, file_id: str) -> GDriveItem`
+    - Resolve a Google Drive item ID.
+  - `def get_from_path(self, drive_name: str, path: str = '') -> GDriveItem`
+    - Resolve a path relative to a My Drive or Shared Drive root.
 
 #### `GDriveItem`
 - A Google Drive file or folder item backed by the Drive REST API.
 - Methods:
-  - `def id(self) -> str`
+  - `def client(self) -> 'GoogleDriveClient'`
+  - `def parent_id(self) -> Optional[str]`
+  - `def mime_type(self) -> Optional[str]`
+  - `def children(self) -> list['ServiceItem']`
+    - Direct children of this directory; empty list for files.
+  - `def id(self) -> ServiceId`
   - `def name(self) -> str`
   - `def path(self) -> str`
-  - `def service_type(self) -> str`
   - `def source_url(self) -> str`
   - `def is_directory(self) -> bool`
-  - `def children(self) -> list['GDriveItem']`
-    - Direct children of this directory; empty list for files.
+  - `def service_type(self) -> ServiceTypeValue`
   - `def refresh(self, *, include_children: bool = True) -> 'GDriveItem'`
     - Re-fetch raw metadata (and optionally children) from the API.
-  - `def download(self, target_dir: str | Path) -> None`
+  - `def export(self, target_mime_type: Optional[str] = None, output_path: Optional[str] = None) -> Union[bytes, str]`
+    - Export this item if it's a Google Workspace file, otherwise download it.
+  - `def download(self, target: str | Path) -> None`
     - Download this item.
+  - `def move(self, new_parent_id: str) -> 'ServiceItem'`
+    - Move this item to a new parent directory.
+  - `def add_comment(self, body: str) -> 'ServiceItem'`
+    - Post a comment on this file via the Drive v3 comments API.
 
 
 ## `sharedrive.auth.google`
@@ -394,23 +358,24 @@ Auto-generated from source signatures and docstrings.
     - Retrieves the default document drive associated with a SharePoint site.
   - `def get_item_metadata(self, drive: str, *, item_path: str | None = None, item_id: str | None = None, fields: list[str] | None = None)`
     - get item metadata based on relative file path or item id within the drive
-  - `def resolve_weburl(self, url: str) -> dict[str, str]`
+  - `def list_children(self, drive_id: str, item_id: str, *, fields: list[str] | None = None) -> list[dict[str, Any]]`
+  - `def scan_descendants(self, *, drive_id: str) -> list[dict[str, Any]]`
+  - `def resolve_descendant(self, *, drive_id: str, parent_path: str, name: str) -> dict[str, Any]`
+  - `def get_from_weburl(self, url: str) -> 'SharepointItem'`
+  - `def get_from_path(self, *, site_name: str, item_path: str = '/', library_name: str | None = None) -> 'SharepointItem'`
   - `def download_content(self, drive_id = None, item_id = None, download_url = None)`
     - takes in the components needed to download content --
-  - `def get_from_weburl(self, url: str) -> ServiceItem`
-  - `def download(self, metadata, path)`
-  - `def get_file(self, site_name, file_path, metadata_only = False)`
-    - gets file item metadata and file
-  - `def get_folder(self, site_name: str, path: str)`
-    - Retrieve the contents of a folder, with optional recursion depth.
-  - `def upload_new_content(self, site_name, folder_path, local_file_path)`
-    - [IN DEVELOPMENT] Uploads a file to a specified SharePoint folder with proper Content-Type.
-  - `def update_content(self, site_name, folder_path, local_file_path, create_if_missing = False)`
-    - [IN DEVELOPMENT] Updates an existing file in SharePoint, or creates it if not found (optional).
+  - `def create_file(self, *, site_name: str, folder_path: str, local_file_path: str | Path) -> 'SharepointItem'`
+    - Create or replace a file at a drive-relative folder path.
+  - `def update_file(self, *, site_name: str, folder_path: str, local_file_path: str | Path) -> 'SharepointItem'`
+    - Replace the content of an existing file.
+  - `def upload_file(self, *, site_name: str, folder_path: str, local_file_path: str | Path, create_if_missing: bool = True) -> 'SharepointItem'`
+    - Update a file, optionally creating it when it does not exist.
 
 #### `SharepointItem`
-- A SharePoint file or folder item backed by the Graph API.
+- A SharePoint file or folder item backed by Microsoft Graph.
 - Methods:
+  - `def move(self, new_parent_id: str) -> 'SharepointItem'`
   - `def id(self) -> str`
   - `def name(self) -> str`
   - `def path(self) -> str`
@@ -420,38 +385,6 @@ Auto-generated from source signatures and docstrings.
   - `def children(self) -> list['SharepointItem']`
     - Direct children of this directory; empty list for files.
   - `def refresh(self, *, include_children: bool = True) -> 'SharepointItem'`
-    - Re-fetch raw metadata (and optionally children) from the Graph API.
-  - `def download(self, target_dir: str | Path) -> None`
-    - Download this item.
-
-#### `SharepointFile`
-- A SharePoint file or folder item backed by the Graph API.
-- Methods:
-  - `def id(self) -> str`
-  - `def name(self) -> str`
-  - `def path(self) -> str`
-  - `def service_type(self) -> str`
-  - `def source_url(self) -> str`
-  - `def is_directory(self) -> bool`
-  - `def children(self) -> list['SharepointItem']`
-    - Direct children of this directory; empty list for files.
-  - `def refresh(self, *, include_children: bool = True) -> 'SharepointItem'`
-    - Re-fetch raw metadata (and optionally children) from the Graph API.
-  - `def download(self, target_dir: str | Path) -> None`
-    - Download this item.
-
-#### `SharepointFolder`
-- A SharePoint file or folder item backed by the Graph API.
-- Methods:
-  - `def id(self) -> str`
-  - `def name(self) -> str`
-  - `def path(self) -> str`
-  - `def service_type(self) -> str`
-  - `def source_url(self) -> str`
-  - `def is_directory(self) -> bool`
-  - `def children(self) -> list['SharepointItem']`
-    - Direct children of this directory; empty list for files.
-  - `def refresh(self, *, include_children: bool = True) -> 'SharepointItem'`
-    - Re-fetch raw metadata (and optionally children) from the Graph API.
+    - Re-fetch the API payload (and optionally children) from Graph.
   - `def download(self, target_dir: str | Path) -> None`
     - Download this item.

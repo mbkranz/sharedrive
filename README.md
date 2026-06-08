@@ -255,13 +255,22 @@ item.refresh()
 for child in item.children:
   print(child.path)
 
-item.refresh_tree()
+proposal = item.get_path("01-proposal-process")
+for entry in proposal.iter_items():
+  print(entry.path, entry.is_directory)
+
+for file_item in proposal.iter_files():
+  print(file_item.path)
 ```
 
 Runtime items returned by service clients are live adapter-backed objects.
 Use `refresh()` to reload a file or folder from the backing service.
-Use `refresh_tree()` when you want a folder and its descendants refreshed recursively before traversal.
-For folders, `children` exposes the current immediate child items and `iter_files()` flattens nested files.
+Runtime `path` values are relative to the provider container: an S3 bucket,
+Google Drive root, or SharePoint document library. `get_path()` resolves a path
+relative to the current item. For folders, `children` exposes immediate child
+items, `iter_items()` yields files and directories, and `iter_files()` yields
+only files. Recursive traversal uses a stable in-memory snapshot until
+`refresh()` or a successful mutation invalidates it.
 Descriptor fetch remains a catalog workflow: `sharedrive fetch ...` updates descriptor metadata, while runtime item refresh updates in-memory remote objects. In Python, use `SharedriveCatalog.fetch(..., persist=True)` when fetched metadata should be written back to the descriptor.
 
 ## Descriptor format
